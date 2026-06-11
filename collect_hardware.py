@@ -1,0 +1,549 @@
+"""
+Asset Sentinel POC — collect_hardware.py
+=========================================
+Collects hardware information from a Windows machine using WMI.
+Part of the Asset Sentinel Proof of Concept (Phase 1 — Hardware Collection).
+
+Run:  python collect_hardware.py
+Requires: Python 3.11, pywin32, wmi (Windows only)
+"""
+
+import socket
+import json
+import hashlib
+import logging
+from datetime import datetime, timezone
+from typing import Optional
+
+# ---------------------------------------------------------------------------
+# Logging — prints to console during POC; swap for file handler in production
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+logger = logging.getLogger("collect_hardware")
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# Serial number values that OEMs use when they haven't programmed a real value.
+# Treat any of these as "not available" (None).
+PLACEHOLDER_SERIALS: set[str] = {
+    "to be filled by o.e.m.",
+    "default string",
+    "none",
+    "n/a",
+    "00000000",
+    "0",
+    "not applicable",
+    "",
+    "unknown",
+    "system serial number",
+    "chassis serial number",
+    "base board serial number",
+}
+
+# Network adapter description fragments to skip.
+# We want physical adapters only — ignore virtual / tunnel / VPN interfaces.
+IGNORED_ADAPTER_KEYWORDS: list[str] = [
+    "vmware",
+    "hyper-v",
+    "virtual",
+    "vpn",
+    "tunnel",
+    "bluetooth",
+    "miniport",
+    "loopback",
+    "isatap",
+    "teredo",
+    "6to4",
+    "wan miniport",
+    "microsoft wi-fi direct",
+    "microsoft hosted network",
+    "tap-",          # OpenVPN TAP adapters
+    "tap0901",       # OpenVPN legacy
+    "cisco",         # Cisco VPN adapters
+    "juniper",       # Juniper VPN adapters
+]
+
+# All-zeros UUID — means the manufacturer didn't set one
+NULL_UUID = "00000000-0000-0000-0000-000000000000"
+
+
+# ---------------------------------------------------------------------------
+# Helper: sanitise a serial-number string
+# ---------------------------------------------------------------------------
+
+def _sanitise_serial(value: Optional[str]) -> Optional[str]:
+    """
+    Strip whitespace and return None if the value is a known placeholder.
+    Returns the cleaned string otherwise.
+    """
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if cleaned.lower() in PLACEHOLDER_SERIALS:
+        logger.debug("Serial value %r recognised as placeholder — treating as None", value)
+        return None
+    return cleaned
+
+
+# ---------------------------------------------------------------------------
+# Helper: safe WMI query
+# ---------------------------------------------------------------------------
+
+def _wmi_query(wmi_conn, wmi_class: str, fields: list[str]) -> list[dict]:
+    """
+    Execute a WMI query and return a list of dicts.
+    Returns an empty list on any error — never raises.
+    """
+    try:
+        results = wmi_conn.query(f"SELECT {', '.join(fields)} FROM {wmi_class}")
+        rows = []
+        for item in results:
+            row = {}
+            for field in fields:
+                try:
+                    row[field] = getattr(item, field, None)
+                except Exception:
+                    row[field] = None
+            rows.append(row)
+        return rows
+    except Exception as exc:
+        logger.warning("WMI query failed for %s: %s", wmi_class, exc)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Individual collectors
+# ---------------------------------------------------------------------------
+
+def collect_bios_serial(wmi_conn) -> Optional[str]:
+    """Win32_BIOS.SerialNumber — the machine-level serial (Service Tag on Dell)."""
+    rows = _wmi_query(wmi_conn, "Win32_BIOS", ["SerialNumber"])
+    if rows:
+        return _sanitise_serial(rows[0].get("SerialNumber"))
+    return None
+
+
+def collect_baseboard_serial(wmi_conn) -> Optional[str]:
+    """Win32_BaseBoard.SerialNumber — the board-level serial."""
+    rows = _wmi_query(wmi_conn, "Win32_BaseBoard", ["SerialNumber", "Manufacturer", "Product"])
+    if rows:
+        return _sanitise_serial(rows[0].get("SerialNumber"))
+    return None
+
+
+def collect_baseboard_details(wmi_conn) -> dict:
+    """Return manufacturer and product name from Win32_BaseBoard."""
+    rows = _wmi_query(wmi_conn, "Win32_BaseBoard", ["Manufacturer", "Product"])
+    if rows:
+        return {
+            "baseboard_manufacturer": rows[0].get("Manufacturer"),
+            "baseboard_product": rows[0].get("Product"),
+        }
+    return {"baseboard_manufacturer": None, "baseboard_product": None}
+
+
+def collect_uuid(wmi_conn) -> Optional[str]:
+    """Win32_ComputerSystemProduct.UUID — firmware UUID from SMBIOS."""
+    rows = _wmi_query(wmi_conn, "Win32_ComputerSystemProduct", ["UUID"])
+    if rows:
+        value = rows[0].get("UUID")
+        if value and value.strip() != NULL_UUID:
+            return value.strip()
+    return None
+
+
+def collect_cpu_name(wmi_conn) -> Optional[str]:
+    """Win32_Processor.Name — CPU model string."""
+    rows = _wmi_query(wmi_conn, "Win32_Processor", ["Name", "ProcessorId"])
+    if rows:
+        name = rows[0].get("Name")
+        return name.strip() if name else None
+    return None
+
+
+def collect_cpu_processor_id(wmi_conn) -> Optional[str]:
+    """Win32_Processor.ProcessorId — used as fallback composite component."""
+    rows = _wmi_query(wmi_conn, "Win32_Processor", ["ProcessorId"])
+    if rows:
+        pid = rows[0].get("ProcessorId")
+        return pid.strip() if pid else None
+    return None
+
+
+def collect_ram_total_gb(wmi_conn) -> Optional[float]:
+    """
+    Win32_PhysicalMemory.Capacity — sum across all installed sticks.
+    Returns total RAM in GB rounded to 2 decimal places.
+    """
+    rows = _wmi_query(wmi_conn, "Win32_PhysicalMemory", ["Capacity"])
+    if not rows:
+        return None
+    try:
+        total_bytes = sum(
+            int(row["Capacity"])
+            for row in rows
+            if row.get("Capacity") is not None
+        )
+        if total_bytes == 0:
+            return None
+        return round(total_bytes / (1024 ** 3), 2)
+    except (ValueError, TypeError) as exc:
+        logger.warning("Could not calculate total RAM: %s", exc)
+        return None
+
+
+def collect_hostname() -> Optional[str]:
+    """socket.gethostname() — always available, no WMI needed."""
+    try:
+        return socket.gethostname()
+    except Exception as exc:
+        logger.warning("Could not get hostname: %s", exc)
+        return None
+
+
+def collect_ip_address(hostname: Optional[str]) -> Optional[str]:
+    """Resolve the machine's primary IP from its hostname."""
+    if not hostname:
+        return None
+    try:
+        ip = socket.gethostbyname(hostname)
+        # Ignore loopback — means DNS resolution failed or machine is not networked
+        if ip.startswith("127."):
+            logger.warning("Hostname resolved to loopback (%s) — no network?", ip)
+            return ip
+        return ip
+    except Exception as exc:
+        logger.warning("Could not resolve IP for hostname %r: %s", hostname, exc)
+        return None
+
+
+def collect_mac_address(wmi_conn) -> Optional[str]:
+    """
+    Find the primary physical network adapter's MAC address.
+    Skips virtual, VPN, Bluetooth, and disabled adapters.
+    Falls back to uuid.getnode() if WMI returns nothing usable.
+    """
+    rows = _wmi_query(
+        wmi_conn,
+        "Win32_NetworkAdapter",
+        ["MACAddress", "Description", "AdapterType", "NetEnabled", "NetConnectionStatus"],
+    )
+
+    candidates = []
+    for row in rows:
+        mac = row.get("MACAddress")
+        description = (row.get("Description") or "").lower()
+        net_enabled = row.get("NetEnabled")
+        connection_status = row.get("NetConnectionStatus")
+
+        # Must have a MAC address
+        if not mac:
+            continue
+
+        # Must be enabled
+        if net_enabled is False:
+            continue
+
+        # Skip adapters that match ignored keywords
+        if any(keyword in description for keyword in IGNORED_ADAPTER_KEYWORDS):
+            logger.debug("Skipping adapter %r (matches ignore list)", row.get("Description"))
+            continue
+
+        # NetConnectionStatus 2 = connected, 7 = media disconnected (still physical)
+        # Prefer connected adapters but don't discard disconnected ones
+        priority = 0 if connection_status == 2 else 1
+        candidates.append((priority, mac))
+
+    if candidates:
+        candidates.sort(key=lambda x: x[0])
+        return candidates[0][1]
+
+    # Fallback: derive MAC from uuid.getnode()
+    logger.warning("No physical adapter found via WMI — falling back to uuid.getnode()")
+    try:
+        import uuid as _uuid
+        node = _uuid.getnode()
+        mac_hex = f"{node:012X}"
+        return ":".join(mac_hex[i:i+2] for i in range(0, 12, 2))
+    except Exception as exc:
+        logger.warning("uuid.getnode() fallback also failed: %s", exc)
+        return None
+
+
+def collect_windows_version() -> Optional[str]:
+    """
+    Collect Windows version string using the platform module.
+    Does not require WMI or admin rights.
+    """
+    try:
+        import platform
+        return platform.version()
+    except Exception as exc:
+        logger.warning("Could not get Windows version: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Composite hardware fingerprint (last-resort identifier)
+# ---------------------------------------------------------------------------
+
+def build_composite_id(
+    baseboard_product: Optional[str],
+    cpu_processor_id: Optional[str],
+    mac_address: Optional[str],
+) -> Optional[str]:
+    """
+    Build a SHA256 fingerprint from stable, non-serial hardware fields.
+    Used only when BIOS serial, BaseBoard serial, and UUID are all unavailable.
+    The composite is NOT a serial number — it identifies the hardware combination.
+    """
+    parts = [
+        baseboard_product or "",
+        cpu_processor_id or "",
+        mac_address or "",
+    ]
+    if all(p == "" for p in parts):
+        logger.error("Composite ID cannot be built — all source fields are empty")
+        return None
+
+    fingerprint = "|".join(parts)
+    digest = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
+    logger.info("Composite ID built from: %r", fingerprint)
+    return digest
+
+
+# ---------------------------------------------------------------------------
+# Determine collection method
+# ---------------------------------------------------------------------------
+
+def determine_collection_method(
+    bios_serial: Optional[str],
+    baseboard_serial: Optional[str],
+    uuid: Optional[str],
+    composite_id: Optional[str],
+) -> str:
+    """
+    Records which identifier source succeeded, in priority order.
+    This field is stored in the DB to track data quality per machine.
+    """
+    if bios_serial:
+        return "bios_serial"
+    if baseboard_serial:
+        return "baseboard_serial"
+    if uuid:
+        return "uuid"
+    if composite_id:
+        return "composite"
+    return "none"
+
+
+# ---------------------------------------------------------------------------
+# Main collection function
+# ---------------------------------------------------------------------------
+
+def collect_hardware() -> dict:
+    """
+    Collect all hardware fields from the local Windows machine.
+    Returns a single dict — never raises an exception.
+    All fields are None if collection fails for that field.
+    """
+    logger.info("Starting hardware collection...")
+
+    result: dict = {
+        # Identity fields
+        "hostname": None,
+        "ip_address": None,
+        "mac_address": None,
+        # Serial / unique ID fields
+        "bios_serial": None,
+        "baseboard_serial": None,
+        "uuid": None,
+        "composite_id": None,
+        # Hardware fields
+        "cpu_name": None,
+        "ram_total_gb": None,
+        # Motherboard metadata
+        "baseboard_manufacturer": None,
+        "baseboard_product": None,
+        # OS
+        "windows_version": None,
+        # Meta
+        "collection_method": "none",
+        "collected_at": datetime.now(timezone.utc).isoformat(),
+        "collection_errors": [],
+    }
+
+    # -----------------------------------------------------------------------
+    # Step 1: Fields that don't need WMI — collect first
+    # -----------------------------------------------------------------------
+    result["hostname"] = collect_hostname()
+    result["ip_address"] = collect_ip_address(result["hostname"])
+    result["windows_version"] = collect_windows_version()
+
+    # -----------------------------------------------------------------------
+    # Step 2: Initialise WMI connection
+    # -----------------------------------------------------------------------
+    wmi_conn = None
+    try:
+        import wmi
+        wmi_conn = wmi.WMI()
+        logger.info("WMI connection established.")
+    except ImportError:
+        msg = "wmi module not installed. Run: pip install wmi pywin32"
+        logger.error(msg)
+        result["collection_errors"].append(msg)
+    except Exception as exc:
+        msg = f"WMI connection failed: {exc}"
+        logger.error(msg)
+        result["collection_errors"].append(msg)
+
+    # -----------------------------------------------------------------------
+    # Step 3: WMI-based collection (skipped gracefully if wmi_conn is None)
+    # -----------------------------------------------------------------------
+    if wmi_conn is not None:
+
+        # MAC address (WMI-based, with physical adapter filtering)
+        try:
+            result["mac_address"] = collect_mac_address(wmi_conn)
+        except Exception as exc:
+            msg = f"MAC address collection failed: {exc}"
+            logger.warning(msg)
+            result["collection_errors"].append(msg)
+
+        # BIOS serial
+        try:
+            result["bios_serial"] = collect_bios_serial(wmi_conn)
+            if result["bios_serial"]:
+                logger.info("BIOS serial collected: %s", result["bios_serial"])
+            else:
+                logger.warning("BIOS serial is placeholder or unavailable.")
+        except Exception as exc:
+            msg = f"BIOS serial collection failed: {exc}"
+            logger.warning(msg)
+            result["collection_errors"].append(msg)
+
+        # BaseBoard serial
+        try:
+            result["baseboard_serial"] = collect_baseboard_serial(wmi_conn)
+            if result["baseboard_serial"]:
+                logger.info("BaseBoard serial collected: %s", result["baseboard_serial"])
+            else:
+                logger.warning("BaseBoard serial is placeholder or unavailable.")
+        except Exception as exc:
+            msg = f"BaseBoard serial collection failed: {exc}"
+            logger.warning(msg)
+            result["collection_errors"].append(msg)
+
+        # BaseBoard details (manufacturer + product — used for composite)
+        try:
+            details = collect_baseboard_details(wmi_conn)
+            result["baseboard_manufacturer"] = details["baseboard_manufacturer"]
+            result["baseboard_product"] = details["baseboard_product"]
+        except Exception as exc:
+            msg = f"BaseBoard details collection failed: {exc}"
+            logger.warning(msg)
+            result["collection_errors"].append(msg)
+
+        # UUID
+        try:
+            result["uuid"] = collect_uuid(wmi_conn)
+            if result["uuid"]:
+                logger.info("UUID collected: %s", result["uuid"])
+            else:
+                logger.warning("UUID is null or unavailable.")
+        except Exception as exc:
+            msg = f"UUID collection failed: {exc}"
+            logger.warning(msg)
+            result["collection_errors"].append(msg)
+
+        # CPU name
+        try:
+            result["cpu_name"] = collect_cpu_name(wmi_conn)
+        except Exception as exc:
+            msg = f"CPU name collection failed: {exc}"
+            logger.warning(msg)
+            result["collection_errors"].append(msg)
+
+        # RAM total
+        try:
+            result["ram_total_gb"] = collect_ram_total_gb(wmi_conn)
+        except Exception as exc:
+            msg = f"RAM collection failed: {exc}"
+            logger.warning(msg)
+            result["collection_errors"].append(msg)
+
+    # -----------------------------------------------------------------------
+    # Step 4: Composite ID (built if all serial fields are None)
+    # -----------------------------------------------------------------------
+    if not any([result["bios_serial"], result["baseboard_serial"], result["uuid"]]):
+        logger.warning(
+            "No serial or UUID found — falling back to composite ID."
+        )
+        try:
+            cpu_processor_id = collect_cpu_processor_id(wmi_conn) if wmi_conn else None
+            result["composite_id"] = build_composite_id(
+                baseboard_product=result.get("baseboard_product"),
+                cpu_processor_id=cpu_processor_id,
+                mac_address=result.get("mac_address"),
+            )
+        except Exception as exc:
+            msg = f"Composite ID build failed: {exc}"
+            logger.error(msg)
+            result["collection_errors"].append(msg)
+
+    # -----------------------------------------------------------------------
+    # Step 5: Determine collection method
+    # -----------------------------------------------------------------------
+    result["collection_method"] = determine_collection_method(
+        bios_serial=result["bios_serial"],
+        baseboard_serial=result["baseboard_serial"],
+        uuid=result["uuid"],
+        composite_id=result["composite_id"],
+    )
+
+    logger.info(
+        "Hardware collection complete. Method: %s | Errors: %d",
+        result["collection_method"],
+        len(result["collection_errors"]),
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    data = collect_hardware()
+
+    print("\n" + "=" * 60)
+    print("  ASSET SENTINEL — Hardware Collection Result")
+    print("=" * 60)
+    print(json.dumps(data, indent=2, default=str))
+    print("=" * 60)
+
+    # Summary
+    print("\nSUMMARY")
+    print(f"  Hostname        : {data['hostname']}")
+    print(f"  IP Address      : {data['ip_address']}")
+    print(f"  MAC Address     : {data['mac_address']}")
+    print(f"  BIOS Serial     : {data['bios_serial'] or '[placeholder/unavailable]'}")
+    print(f"  BaseBoard Serial: {data['baseboard_serial'] or '[placeholder/unavailable]'}")
+    print(f"  UUID            : {data['uuid'] or '[null/unavailable]'}")
+    print(f"  Composite ID    : {data['composite_id'] or '[not needed]'}")
+    print(f"  CPU             : {data['cpu_name']}")
+    print(f"  RAM             : {data['ram_total_gb']} GB")
+    print(f"  Windows Version : {data['windows_version']}")
+    print(f"  Collection Method: {data['collection_method'].upper()}")
+
+    if data["collection_errors"]:
+        print(f"\n  WARNINGS ({len(data['collection_errors'])}):")
+        for err in data["collection_errors"]:
+            print(f"    - {err}")
+    else:
+        print("\n  No errors during collection.")
