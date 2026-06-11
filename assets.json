@@ -1,0 +1,36 @@
+[
+  {
+    "hostname": "DESKTOP-PETBKU1",
+    "ip_address": "192.168.1.5",
+    "mac_address": "80:91:33:AE:0F:B7",
+    "bios_serial": "CND93565RF",
+    "baseboard_serial": "PHQNFB2MYCQ25J",
+    "uuid": "337B0328-9ACB-E911-8102-040E3C0716A8",
+    "composite_id": null,
+    "cpu_name": "Intel(R) Core(TM) i5-7200U CPU @ 2.50GHz",
+    "ram_total_gb": 8.0,
+    "baseboard_manufacturer": "HP",
+    "baseboard_product": "84A6",
+    "windows_version": "10.0.19045",
+    "collection_method": "bios_serial",
+    "collected_at": "2026-06-11T20:18:36.243876+00:00",
+    "collection_errors": []
+  },
+  {
+    "hostname": "DESKTOP-PETBKU1",
+    "ip_address": "192.168.1.5",
+    "mac_address": "80:91:33:AE:0F:B7",
+    "bios_serial": "CND93565RF",
+    "baseboard_serial": "PHQNFB2MYCQ25J",
+    "uuid": "337B0328-9ACB-E911-8102-040E3C0716A8",
+    "composite_id": null,
+    "cpu_name": "Intel(R) Core(TM) i5-7200U CPU @ 2.50GHz",
+    "ram_total_gb": 4.0,
+    "baseboard_manufacturer": "HP",
+    "baseboard_product": "84A6",
+    "windows_version": "10.0.19045",
+    "collection_method": "bios_serial",
+    "collected_at": "2026-06-11T20:35:28.402412+00:00",
+    "collection_errors": []
+  }
+]
