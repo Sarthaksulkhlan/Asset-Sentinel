@@ -44,7 +44,7 @@ def save_alert(alert_type, hostname, severity, details):
     Creates the file if it does not exist.
 
     Parameters:
-        alert_type : str  - e.g. "RAM_CHANGE"
+        alert_type : str  - e.g. "MOTHERBOARD_CHANGE"
         hostname   : str  - machine hostname
         severity   : str  - "LOW", "MEDIUM", "HIGH", "CRITICAL"
         details    : dict - alert-specific data
@@ -92,30 +92,34 @@ def load_assets():
 
 
 # ---------------------------------------------------------------------------
-# Detect RAM change
+# Detect motherboard change
 # ---------------------------------------------------------------------------
 
-def detect_ram_change(previous, current):
+def detect_motherboard_change(previous, current):
     """
-    Compare ram_total_gb between two snapshots.
-    Returns a change dict if RAM changed, None if unchanged.
+    Compare bios_serial and baseboard_serial between two snapshots.
+    Returns a change dict if either value changed, None if unchanged.
     """
-    prev_ram = previous.get("ram_total_gb")
-    curr_ram = current.get("ram_total_gb")
+    prev_bios      = previous.get("bios_serial")
+    curr_bios      = current.get("bios_serial")
+    prev_baseboard = previous.get("baseboard_serial")
+    curr_baseboard = current.get("baseboard_serial")
 
-    if prev_ram is None or curr_ram is None:
-        print("[WARNING] RAM data missing in one or both snapshots.")
-        return None
+    bios_changed      = (prev_bios != curr_bios)
+    baseboard_changed = (prev_baseboard != curr_baseboard)
 
-    if prev_ram == curr_ram:
+    if not bios_changed and not baseboard_changed:
         return None
 
     return {
         "hostname":               current.get("hostname", "Unknown"),
         "ip_address":             current.get("ip_address", "Unknown"),
-        "previous_ram":           prev_ram,
-        "current_ram":            curr_ram,
-        "difference_gb":          round(curr_ram - prev_ram, 2),
+        "prev_bios_serial":       prev_bios,
+        "curr_bios_serial":       curr_bios,
+        "prev_baseboard_serial":  prev_baseboard,
+        "curr_baseboard_serial":  curr_baseboard,
+        "bios_changed":           bios_changed,
+        "baseboard_changed":      baseboard_changed,
         "detected_at":            datetime.now().isoformat(),
         "previous_snapshot_time": previous.get("collected_at", "Unknown"),
         "current_snapshot_time":  current.get("collected_at", "Unknown"),
@@ -127,18 +131,26 @@ def detect_ram_change(previous, current):
 # ---------------------------------------------------------------------------
 
 def print_alert(change):
-    direction = "INCREASED" if change["difference_gb"] > 0 else "DECREASED"
     print()
-    print("=" * 60)
-    print("  WARNING - ASSET SENTINEL - RAM CHANGE DETECTED")
-    print("=" * 60)
-    print(f"  Hostname     : {change['hostname']}")
-    print(f"  IP Address   : {change['ip_address']}")
-    print(f"  Previous RAM : {change['previous_ram']} GB")
-    print(f"  Current RAM  : {change['current_ram']} GB")
-    print(f"  Change       : {direction} by {abs(change['difference_gb'])} GB")
-    print(f"  Detected At  : {change['detected_at']}")
-    print("=" * 60)
+    print("=" * 70)
+    print("  CRITICAL - ASSET SENTINEL - MOTHERBOARD CHANGE DETECTED")
+    print("=" * 70)
+    print(f"  Hostname              : {change['hostname']}")
+    print(f"  IP Address            : {change['ip_address']}")
+    print(f"  Detected At           : {change['detected_at']}")
+    print()
+    print("  BIOS Serial")
+    print(f"    Previous            : {change['prev_bios_serial'] or 'N/A'}")
+    print(f"    Current             : {change['curr_bios_serial'] or 'N/A'}")
+    print(f"    Changed             : {'YES' if change['bios_changed'] else 'NO'}")
+    print()
+    print("  Baseboard Serial")
+    print(f"    Previous            : {change['prev_baseboard_serial'] or 'N/A'}")
+    print(f"    Current             : {change['curr_baseboard_serial'] or 'N/A'}")
+    print(f"    Changed             : {'YES' if change['baseboard_changed'] else 'NO'}")
+    print()
+    print("  ACTION REQUIRED: Investigate this machine immediately.")
+    print("=" * 70)
     print()
 
 
@@ -147,29 +159,33 @@ def print_alert(change):
 # ---------------------------------------------------------------------------
 
 def send_email_alert(change):
-    direction = "increased" if change["difference_gb"] > 0 else "decreased"
-
-    subject = f"[Asset Sentinel] RAM Change Detected on {change['hostname']}"
+    subject = "[CRITICAL] Motherboard Change Detected - Asset Sentinel"
 
     body = (
-        "Asset Sentinel - RAM Change Alert\n"
-        "===================================\n\n"
-        "A RAM change has been detected on a monitored machine.\n\n"
+        "Asset Sentinel - CRITICAL Motherboard Change Alert\n"
+        "====================================================\n\n"
+        "A motherboard change has been detected on a monitored machine.\n"
+        "This may indicate hardware tampering or an unauthorized replacement.\n\n"
         "Machine Details\n"
         "---------------\n"
-        f"Hostname     : {change['hostname']}\n"
-        f"IP Address   : {change['ip_address']}\n\n"
-        "RAM Change\n"
-        "----------\n"
-        f"Previous RAM : {change['previous_ram']} GB\n"
-        f"Current RAM  : {change['current_ram']} GB\n"
-        f"Change       : RAM has {direction} by {abs(change['difference_gb'])} GB\n\n"
-        "Timestamps\n"
-        "----------\n"
-        f"Previous Snapshot : {change['previous_snapshot_time']}\n"
-        f"Current Snapshot  : {change['current_snapshot_time']}\n"
-        f"Alert Generated   : {change['detected_at']}\n\n"
-        "This is an automated alert from Asset Sentinel.\n"
+        f"Hostname              : {change['hostname']}\n"
+        f"IP Address            : {change['ip_address']}\n"
+        f"Detection Time        : {change['detected_at']}\n\n"
+        "BIOS Serial\n"
+        "-----------\n"
+        f"Previous              : {change['prev_bios_serial'] or 'N/A'}\n"
+        f"Current               : {change['curr_bios_serial'] or 'N/A'}\n"
+        f"Changed               : {'YES' if change['bios_changed'] else 'NO'}\n\n"
+        "Baseboard Serial\n"
+        "----------------\n"
+        f"Previous              : {change['prev_baseboard_serial'] or 'N/A'}\n"
+        f"Current               : {change['curr_baseboard_serial'] or 'N/A'}\n"
+        f"Changed               : {'YES' if change['baseboard_changed'] else 'NO'}\n\n"
+        "Snapshot Timestamps\n"
+        "-------------------\n"
+        f"Previous Snapshot     : {change['previous_snapshot_time']}\n"
+        f"Current Snapshot      : {change['current_snapshot_time']}\n\n"
+        "This is an automated critical alert from Asset Sentinel.\n"
         "Please investigate this machine immediately."
     )
 
@@ -187,7 +203,7 @@ def send_email_alert(change):
             server.login(SENDER_EMAIL, SENDER_PASSWORD)
             server.sendmail(SENDER_EMAIL, ADMIN_EMAIL, message.as_string())
 
-        print(f"[EMAIL] Alert sent to {ADMIN_EMAIL}")
+        print(f"[EMAIL] Critical alert sent to {ADMIN_EMAIL}")
 
     except smtplib.SMTPAuthenticationError:
         print("[EMAIL ERROR] Authentication failed.")
@@ -215,28 +231,33 @@ def run_detector():
     previous = assets[-2]
     current  = assets[-1]
 
-    print(f"[INFO] Comparing last 2 snapshots...")
-    print(f"       Previous : {previous.get('collected_at', 'Unknown')} | RAM: {previous.get('ram_total_gb')} GB")
-    print(f"       Current  : {current.get('collected_at', 'Unknown')} | RAM: {current.get('ram_total_gb')} GB")
+    print(f"[INFO] Comparing last 2 snapshots for motherboard changes...")
+    print(f"       Previous : {previous.get('collected_at', 'Unknown')}")
+    print(f"                  BIOS: {previous.get('bios_serial', 'N/A')} | Baseboard: {previous.get('baseboard_serial', 'N/A')}")
+    print(f"       Current  : {current.get('collected_at', 'Unknown')}")
+    print(f"                  BIOS: {current.get('bios_serial', 'N/A')} | Baseboard: {current.get('baseboard_serial', 'N/A')}")
 
-    change = detect_ram_change(previous, current)
+    change = detect_motherboard_change(previous, current)
 
     if change is None:
-        print("\n[OK] No RAM change detected. All good.")
+        print("\n[OK] No motherboard change detected. All good.")
         return
 
-    # RAM changed - print alert, log to alerts.json, send email
+    # Motherboard changed - print alert, log to alerts.json, send email
     print_alert(change)
 
     save_alert(
-        alert_type = "RAM_CHANGE",
+        alert_type = "MOTHERBOARD_CHANGE",
         hostname   = change["hostname"],
-        severity   = "HIGH",
+        severity   = "CRITICAL",
         details    = {
             "ip_address":             change["ip_address"],
-            "previous_ram_gb":        change["previous_ram"],
-            "current_ram_gb":         change["current_ram"],
-            "difference_gb":          change["difference_gb"],
+            "prev_bios_serial":       change["prev_bios_serial"],
+            "curr_bios_serial":       change["curr_bios_serial"],
+            "prev_baseboard_serial":  change["prev_baseboard_serial"],
+            "curr_baseboard_serial":  change["curr_baseboard_serial"],
+            "bios_changed":           change["bios_changed"],
+            "baseboard_changed":      change["baseboard_changed"],
             "previous_snapshot_time": change["previous_snapshot_time"],
             "current_snapshot_time":  change["current_snapshot_time"],
         }

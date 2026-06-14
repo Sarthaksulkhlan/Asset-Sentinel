@@ -1,0 +1,47 @@
+[
+  {
+    "alert_type": "RAM_CHANGE",
+    "hostname": "DESKTOP-PETBKU1",
+    "severity": "HIGH",
+    "timestamp": "2026-06-13T02:27:36.038678",
+    "details": {
+      "ip_address": "192.168.1.5",
+      "previous_ram_gb": 8.0,
+      "current_ram_gb": 4.0,
+      "difference_gb": -4.0,
+      "previous_snapshot_time": "2026-06-11T20:18:36.243876+00:00",
+      "current_snapshot_time": "2026-06-11T20:35:28.402412+00:00"
+    }
+  },
+  {
+    "alert_type": "RAM_CHANGE",
+    "hostname": "DESKTOP-PETBKU1",
+    "severity": "HIGH",
+    "timestamp": "2026-06-13T02:29:12.997340",
+    "details": {
+      "ip_address": "192.168.1.5",
+      "previous_ram_gb": 8.0,
+      "current_ram_gb": 4.0,
+      "difference_gb": -4.0,
+      "previous_snapshot_time": "2026-06-11T20:18:36.243876+00:00",
+      "current_snapshot_time": "2026-06-11T20:35:28.402412+00:00"
+    }
+  },
+  {
+    "alert_type": "MOTHERBOARD_CHANGE",
+    "hostname": "DESKTOP-PETBKU1",
+    "severity": "CRITICAL",
+    "timestamp": "2026-06-13T02:33:16.052399",
+    "details": {
+      "ip_address": "192.168.1.5",
+      "prev_bios_serial": "CND93565RF",
+      "curr_bios_serial": "FAKE235",
+      "prev_baseboard_serial": "PHQNFB2MYCQ25J",
+      "curr_baseboard_serial": "PHQNFB2MYCQ25J",
+      "bios_changed": true,
+      "baseboard_changed": false,
+      "previous_snapshot_time": "2026-06-11T20:18:36.243876+00:00",
+      "current_snapshot_time": "2026-06-11T20:35:28.402412+00:00"
+    }
+  }
+]
