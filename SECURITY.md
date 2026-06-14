@@ -1,4 +1,4 @@
-Security & Responsible Use
+# Security & Responsible Use
 
 Asset Sentinel is a centralized IT asset monitoring platform designed to collect hardware inventory data and identify hardware configuration changes across Windows-based systems.
 
@@ -6,7 +6,7 @@ This platform is intended exclusively for authorized system administration, asse
 
 ---
 
-Data & Asset Information
+## Data & Asset Information
 
 Asset Sentinel collects hardware-related information, including:
 
@@ -29,7 +29,7 @@ The platform is designed to focus solely on hardware inventory and configuration
 
 ---
 
-Secrets & Credentials
+## Secrets & Credentials
 
 Asset Sentinel may require credentials for email notifications and future third-party integrations.
 
@@ -44,7 +44,7 @@ Organizations should implement appropriate access controls and credential manage
 
 ---
 
-Reporting Security Issues
+## Reporting Security Issues
 
 If you identify a security vulnerability or potential security concern, please report it responsibly to the project maintainer.
 
@@ -59,7 +59,7 @@ To support responsible disclosure practices, please refrain from publicly sharin
 
 ---
 
-Scope & Limitations
+## Scope & Limitations
 
 Asset Sentinel is designed specifically for hardware inventory monitoring and hardware change detection.
 
