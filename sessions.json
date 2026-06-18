@@ -1,0 +1,12 @@
+[
+  {
+    "event_type": "LOGIN",
+    "username": "Victus",
+    "hostname": "AI",
+    "ip_address": "192.168.1.148",
+    "session_id": null,
+    "login_timestamp": "2026-06-17T09:40:03.842041+00:00",
+    "device_status": "Online",
+    "recorded_at": "2026-06-17T09:40:03.842041+00:00"
+  }
+]

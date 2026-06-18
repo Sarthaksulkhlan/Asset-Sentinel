@@ -43,5 +43,31 @@
       "previous_snapshot_time": "2026-06-11T20:18:36.243876+00:00",
       "current_snapshot_time": "2026-06-11T20:35:28.402412+00:00"
     }
+  },
+  {
+    "alert_type": "RAM_CHANGE",
+    "hostname": "DESKTOP-PETBKU1",
+    "severity": "HIGH",
+    "timestamp": "2026-06-17T14:29:00.832014",
+    "details": {
+      "ip_address": "192.168.1.5",
+      "previous_ram_gb": 8.0,
+      "current_ram_gb": 4.0,
+      "difference_gb": -4.0,
+      "previous_snapshot_time": "2026-06-11T20:18:36.243876+00:00",
+      "current_snapshot_time": "2026-06-11T20:35:28.402412+00:00"
+    }
+  },
+  {
+    "alert_type": "LOGIN",
+    "hostname": "AI",
+    "severity": "MEDIUM",
+    "timestamp": "2026-06-17T09:40:03.842041+00:00",
+    "details": {
+      "username": "Victus",
+      "ip_address": "192.168.1.148",
+      "session_id": null,
+      "login_timestamp": "2026-06-17T09:40:03.842041+00:00"
+    }
   }
 ]

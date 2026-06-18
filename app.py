@@ -3,6 +3,15 @@ from pathlib import Path
 from flask import Flask, jsonify
 from flask_cors import CORS
 
+# Import session tracking modules
+from activity_api import (
+    get_current_user,
+    get_current_session,
+    get_device_status_endpoint,
+    get_sessions_history,
+    get_sessions_count,
+)
+
 # ---------------------------------------------------------------------------
 # App setup
 # ---------------------------------------------------------------------------
@@ -61,16 +70,124 @@ def get_alerts():
     return jsonify(alerts)
 
 
+# ============================================================================
+# Session Tracking APIs (Feature 1: Login Tracking)
+# ============================================================================
+
+@app.route("/current-user", methods=["GET"])
+def current_user():
+    """
+    GET /current-user
+    Returns the currently logged-in user information.
+    
+    Response:
+        {
+            "username": "Victus",
+            "hostname": "AI",
+            "device_status": "Online"
+        }
+    """
+    data, status_code = get_current_user()
+    return jsonify(data), status_code
+
+
+@app.route("/current-session", methods=["GET"])
+def current_session():
+    """
+    GET /current-session
+    Returns comprehensive current session information.
+    
+    Response:
+        {
+            "username": "Victus",
+            "hostname": "AI",
+            "ip_address": "192.168.1.148",
+            "session_id": "1",
+            "login_timestamp": "2026-06-17T09:40:03.842041+00:00",
+            "device_status": "Online",
+            "collection_timestamp": "2026-06-17T09:40:03.842041+00:00"
+        }
+    """
+    data, status_code = get_current_session()
+    return jsonify(data), status_code
+
+
+@app.route("/device-status", methods=["GET"])
+def device_status():
+    """
+    GET /device-status
+    Returns device online/offline status.
+    
+    Response:
+        {
+            "device_status": "Online",
+            "hostname": "AI",
+            "last_activity": "2026-06-17T09:40:03.842041+00:00"
+        }
+    """
+    data, status_code = get_device_status_endpoint()
+    return jsonify(data), status_code
+
+
+@app.route("/sessions", methods=["GET"])
+def sessions():
+    """
+    GET /sessions
+    Returns all login/logout events history.
+    
+    Response:
+        [
+            {
+                "event_type": "LOGIN",
+                "username": "Victus",
+                "hostname": "AI",
+                "ip_address": "192.168.1.148",
+                "session_id": "1",
+                "login_timestamp": "2026-06-17T09:40:03.842041+00:00",
+                "device_status": "Online",
+                "recorded_at": "2026-06-17T09:40:03.842041+00:00"
+            }
+        ]
+    """
+    data, status_code = get_sessions_history()
+    return jsonify(data), status_code
+
+
+@app.route("/sessions/count", methods=["GET"])
+def sessions_count():
+    """
+    GET /sessions/count
+    Returns count of login/logout events.
+    
+    Response:
+        {
+            "total_sessions": 1,
+            "total_logins": 1,
+            "total_logouts": 0
+        }
+    """
+    data, status_code = get_sessions_count()
+    return jsonify(data), status_code
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    print("=" * 50)
+    print("=" * 70)
     print("  Asset Sentinel Backend")
     print("  Running on http://localhost:5000")
-    print("  Endpoints:")
+    print("=" * 70)
+    print("  Hardware Monitoring APIs:")
     print("    GET /api/assets")
     print("    GET /api/alerts")
-    print("=" * 50)
+    print("=" * 70)
+    print("  Session & Activity Tracking APIs (Feature 1):")
+    print("    GET /current-user")
+    print("    GET /current-session")
+    print("    GET /device-status")
+    print("    GET /sessions")
+    print("    GET /sessions/count")
+    print("=" * 70)
     app.run(host="0.0.0.0", port=5000, debug=True)
