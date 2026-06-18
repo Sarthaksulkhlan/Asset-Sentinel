@@ -1,0 +1,2083 @@
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { 
+  Shield, 
+  Search, 
+  Filter, 
+  Download, 
+  ChevronLeft, 
+  ChevronRight, 
+  HelpCircle, 
+  LogOut, 
+  AlertTriangle, 
+  TrendingUp, 
+  Menu, 
+  Laptop, 
+  Smartphone, 
+  Server, 
+  CheckCircle2, 
+  Activity, 
+  Clock, 
+  Database,
+  RefreshCw,
+  Cpu,
+  MapPin,
+  X,
+  FileSpreadsheet,
+  Zap,
+  Lock,
+  RotateCcw,
+  Sparkles,
+  Sliders,
+  HardDrive,
+  Layers,
+  Fingerprint,
+  Globe,
+  ShieldAlert,
+  LogIn
+} from "lucide-react";
+import { Asset, SecurityFeedItem, KPIStats } from "../types";
+import { INITIAL_ASSETS, STREAMING_FEED_PRESETS } from "../data";
+import { SentinelLogo } from "./SentinelLogo";
+import AssetHistory from "./AssetHistory";
+
+interface DashboardPageProps {
+  userEmail: string;
+  onSignOut: () => void;
+  onNavigate: (view: "landing" | "login" | "dashboard" | "demo") => void;
+  isDemoMode?: boolean;
+}
+
+export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemoMode = false }: DashboardPageProps) {
+  // Master fleet list held in state for fully reactive user experiences
+  const [assets, setAssets] = useState<Asset[]>(INITIAL_ASSETS);
+  const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
+  const [isMonitoringOpen, setIsMonitoringOpen] = useState(false);
+  const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [liveLogs, setLiveLogs] = useState<SecurityFeedItem[]>(() => {
+    // Starting logs pool
+    return [
+      { timestamp: "08:14:02", node: "SYSTEM", message: "Telemetry link bound successfully with Cupertino root cluster.", type: "info" },
+      { timestamp: "08:14:05", node: "FORENSICS", message: "Fleet verification cycle completed. 14,209 keys verified.", type: "info" }
+    ];
+  });
+
+  // Local state to track tactical operation overrides and custom user-generated logs
+  const [localLogs, setLocalLogs] = useState<SecurityFeedItem[]>([]);
+  const [localOverrides, setLocalOverrides] = useState<Record<string, Partial<Asset>>>({});
+
+  // Unified list of active log lines combined together
+  const displayedLogs = useMemo(() => {
+    return [...localLogs, ...liveLogs];
+  }, [localLogs, liveLogs]);
+
+  // Dynamic simulation dials state for the active asset details window (fluctuates in real-time)
+  const [telemetryCPU, setTelemetryCPU] = useState(34);
+  const [telemetryRAM, setTelemetryRAM] = useState(58);
+  const [telemetryNET, setTelemetryNET] = useState(120);
+
+  // States specifically for the Demo mode graphs and active hardware cards
+  const [ramValue, setRamValue] = useState(72);
+  const [biosHash, setBiosHash] = useState("0x0F3C99B2");
+  const [chartWavePath, setChartWavePath] = useState("");
+  const [chartGridCells, setChartGridCells] = useState<string[]>([]);
+
+  // AI Forensics audit states
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditReport, setAuditReport] = useState<string | null>(null);
+  const [auditRiskScore, setAuditRiskScore] = useState<number | null>(null);
+  const [auditSeverity, setAuditSeverity] = useState<string | null>(null);
+  const assetsTableRef = useRef<HTMLDivElement | null>(null);
+
+  const handleShowDevices = () => {
+    setSearchQuery("");
+    setCurrentPage(1);
+    setSelectedAsset(null);
+    assetsTableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const handleSidebarAction = (action: () => void) => {
+    action();
+    setIsMobileSidebarOpen(false);
+  };
+
+  const scrollToSection = (sectionId: string) => {
+    const section = document.getElementById(sectionId);
+    if (section) {
+      section.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const handleOpenMonitoringPanel = () => {
+    setIsMonitoringOpen(true);
+  };
+
+  const handleCloseMonitoringPanel = () => {
+    setIsMonitoringOpen(false);
+  };
+
+  const handleOpenAnalyticsPanel = () => {
+    setIsAnalyticsOpen(true);
+  };
+
+  const handleCloseAnalyticsPanel = () => {
+    setIsAnalyticsOpen(false);
+  };
+
+  const monitoringTarget = useMemo<Asset | null>(() => {
+    return assets.length > 0 ? assets[0] : null;
+  }, [assets]);
+
+  const monitoringMetrics = useMemo(() => {
+    const totalAlerts = liveLogs.length;
+    const criticalCount = liveLogs.filter((log: SecurityFeedItem) => log.type === "critical").length;
+    const warningCount = liveLogs.filter((log: SecurityFeedItem) => log.type === "warning").length;
+    const ramChanges = liveLogs.filter((log: SecurityFeedItem) => /ram[_ ]change/i.test(log.message)).slice(-5);
+    const motherboardChanges = liveLogs.filter((log: SecurityFeedItem) => /motherboard[_ ]change/i.test(log.message)).slice(-5);
+    const lastScanTime = liveLogs.length > 0 ? liveLogs[liveLogs.length - 1].timestamp : monitoringTarget?.lastLogin || "N/A";
+
+    return {
+      totalAlerts,
+      criticalCount,
+      warningCount,
+      ramChanges,
+      motherboardChanges,
+      lastScanTime,
+    };
+  }, [liveLogs, monitoringTarget]);
+
+  const [isAssetHistoryOpen, setIsAssetHistoryOpen] = useState(false);
+
+  const handleOpenAssetHistory = () => setIsAssetHistoryOpen(true);
+  const handleCloseAssetHistory = () => setIsAssetHistoryOpen(false);
+
+  const analyticsTarget = useMemo<Asset | null>(() => {
+    return assets.find((asset: Asset) => asset.alertStatus === "critical") || assets[0] || null;
+  }, [assets]);
+
+  const analyticsMetrics = useMemo(() => {
+    const totalAlerts = liveLogs.length;
+    const criticalCount = liveLogs.filter((log: SecurityFeedItem) => log.type === "critical").length;
+    const warningCount = liveLogs.filter((log: SecurityFeedItem) => log.type === "warning").length;
+    const infoCount = liveLogs.filter((log: SecurityFeedItem) => log.type === "info").length;
+    const recentRamChanges = liveLogs.filter((log: SecurityFeedItem) => /ram[_ ]change/i.test(log.message)).slice(-5);
+    const recentMotherboardChanges = liveLogs.filter((log: SecurityFeedItem) => /motherboard[_ ]change/i.test(log.message)).slice(-5);
+    const lastScanTime = liveLogs.length > 0 ? liveLogs[liveLogs.length - 1].timestamp : analyticsTarget?.lastLogin || "N/A";
+    const uniqueDevicesMonitored = new Set(liveLogs.map((log: SecurityFeedItem) => log.node)).size;
+
+    const alertCountsByNode = liveLogs.reduce<Record<string, number>>((acc, log) => {
+      acc[log.node] = (acc[log.node] || 0) + 1;
+      return acc;
+    }, {});
+    const mostAlertedNode = Object.entries(alertCountsByNode).sort((a, b) => b[1] - a[1])[0]?.[0] || analyticsTarget?.hostname || "None";
+    const mostRecentDevice = liveLogs.length > 0 ? liveLogs[liveLogs.length - 1].node : analyticsTarget?.hostname || "None";
+    const highestRiskDevice = assets.find((asset: Asset) => asset.status === "Overload" || asset.alertStatus === "critical")?.hostname || analyticsTarget?.hostname || "None";
+    const deviceIntegrityScore = Math.max(46, 100 - criticalCount * 12 - warningCount * 6);
+    const securityPostureSummary = criticalCount > 0
+      ? "Elevated risk posture requires immediate SOC intervention."
+      : warningCount > 0
+      ? "Cautionary posture; continue monitoring and validate controls."
+      : "Strong posture; environment operating within expected security thresholds.";
+    const alertTimeline = [...liveLogs].slice(-8).reverse();
+
+    return {
+      totalAlerts,
+      criticalCount,
+      warningCount,
+      infoCount,
+      recentRamChanges,
+      recentMotherboardChanges,
+      lastScanTime,
+      uniqueDevicesMonitored,
+      mostAlertedNode,
+      mostRecentDevice,
+      highestRiskDevice,
+      deviceIntegrityScore,
+      securityPostureSummary,
+      alertTimeline,
+    };
+  }, [liveLogs, analyticsTarget, assets]);
+
+  const handleNavigateAnalytics = () => {
+    scrollToSection("demo-sentinel-core");
+  };
+
+  const handleNavigateReports = () => {
+    scrollToSection("fleet-telemetry-panel");
+  };
+
+  const handleNavigateCriticalState = () => {
+    const criticalAlerts = liveLogs.filter((log: SecurityFeedItem) => log.type === "critical");
+    if (criticalAlerts.length === 0) {
+      alert("No critical alerts detected.");
+      return;
+    }
+
+    const firstCritical = criticalAlerts[0];
+    const matchedAsset = assets.find((asset: Asset) =>
+      asset.hostname === firstCritical.node ||
+      asset.ipAddress === firstCritical.node ||
+      asset.location === firstCritical.node
+    );
+
+    if (matchedAsset) {
+      handleSelectAsset(matchedAsset);
+    } else {
+      scrollToSection("streaming-events-feed");
+    }
+  };
+  // Initialize grid cells of green/amber states on mount
+  useEffect(() => {
+    const initialCells = Array.from({ length: 64 }, (_, i) => 
+      i === 42 ? "alert" : Math.random() > 0.85 ? "warning" : "nominal"
+    );
+    setChartGridCells(initialCells);
+  }, []);
+
+  // Continuous simulations loops for demo content
+  useEffect(() => {
+    const ramTimer = setInterval(() => {
+      setRamValue((prev: number) => Math.min(98, Math.max(45, prev + Math.floor(Math.random() * 7) - 3)));
+    }, 1200);
+
+    const biosTimer = setInterval(() => {
+      const chars = "0123456789ABCDEF";
+      setBiosHash((prev: string) => prev.slice(0, 8) + chars[Math.floor(Math.random() * 16)]);
+    }, 900);
+
+    const gridTimer = setInterval(() => {
+      setChartGridCells((prev: string[]) => 
+        prev.map((state: string, idx: number) => {
+          if (idx === 42) return "alert";
+          if (Math.random() > 0.94) {
+            return Math.random() > 0.65 ? "warning" : "nominal";
+          }
+          return state;
+        })
+      );
+    }, 2000);
+
+    let tick = 0;
+    const waveTimer = setInterval(() => {
+      tick += 0.15;
+      const points = [];
+      for (let i = 0; i <= 24; i++) {
+        const x = (i / 24) * 350;
+        const y = 90 + Math.sin(i * 0.45 + tick) * 22 + Math.cos(i * 0.2 + tick * 1.5) * 10;
+        points.push(`${x},${y}`);
+      }
+      setChartWavePath(`M ${points.join(" L ")}`);
+    }, 85);
+
+    return () => {
+      clearInterval(ramTimer);
+      clearInterval(biosTimer);
+      clearInterval(gridTimer);
+      clearInterval(waveTimer);
+    };
+  }, []);
+
+  // Fluctuating real-time telemetry simulator loop
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTelemetryCPU((prev: number) => Math.min(100, Math.max(5, prev + Math.floor(Math.random() * 15) - 7)));
+      setTelemetryRAM((prev: number) => Math.min(100, Math.max(10, prev + Math.floor(Math.random() * 7) - 3)));
+      setTelemetryNET((prev: number) => Math.max(10, prev + Math.floor(Math.random() * 40) - 20));
+    }, 1500);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Adapter mapping functions for robust integration with external Python backend schemas
+  const mapBackendAsset = (item: any): Asset => {
+    const statusRaw = String(item.status || 'Online').toLowerCase();
+    let status: 'Online' | 'Idle' | 'Overload' | 'Offline' = 'Online';
+    if (statusRaw.includes('idle')) status = 'Idle';
+    else if (statusRaw.includes('overload') || statusRaw.includes('critical')) status = 'Overload';
+    else if (statusRaw.includes('offline')) status = 'Offline';
+    else status = 'Online';
+
+    const alertRaw = String(item.alertStatus || item.alert_status || item.severity || 'nominal').toLowerCase();
+    let alertStatus: 'nominal' | 'warning' | 'critical' = 'nominal';
+    if (alertRaw.includes('critical') || alertRaw.includes('error') || alertRaw.includes('danger') || alertRaw.includes('high')) alertStatus = 'critical';
+    else if (alertRaw.includes('warning') || alertRaw.includes('warn') || alertRaw.includes('medium')) alertStatus = 'warning';
+
+    const ipAddressValue = item.ip_address || item.ipAddress || item.ip || "Unassigned";
+    const ramValue = typeof item.ram_total_gb === 'number' ? `${item.ram_total_gb}GB` : String(item.ram_total_gb || item.ram || item.memory || "16GB");
+    const biosSerialValue = item.bios_serial || item.biosSerial || item.serial || item.bios || "Unknown";
+    const baseboardSerial = item.baseboard_serial || item.baseboardSerial || "Unknown";
+
+    const detailHistory = Array.isArray(item.history) ? item.history.slice() : [];
+    if (baseboardSerial !== "Unknown") {
+      detailHistory.push(`Baseboard Serial: ${baseboardSerial}`);
+    }
+    if (item.baseboard_manufacturer) {
+      detailHistory.push(`Baseboard Manufacturer: ${item.baseboard_manufacturer}`);
+    }
+    if (item.mac_address) {
+      detailHistory.push(`MAC Address: ${item.mac_address}`);
+    }
+
+    return {
+      hostname: item.hostname || item.host || item.name || "Unknown",
+      status: status,
+      employee: item.employee || item.owner || item.user || "System Account",
+      ipAddress: ipAddressValue,
+      os: item.windows_version || item.os || item.operating_system || item.platform || "Unknown OS",
+      ram: ramValue,
+      biosSerial: biosSerialValue,
+      lastLogin: item.lastLogin || item.last_login || "08:14 AM",
+      currentWebsite: item.currentWebsite || item.current_website || item.website || "-",
+      alertStatus: alertStatus,
+      location: item.location || item.loc || ipAddressValue || "Remote Workspace",
+      lastReflash: item.lastReflash || item.last_reflash || item.reflash || "2026-06-01",
+      cpuModel: item.cpu_name || item.cpuModel || item.cpu_model || item.cpu || "Unknown CPU",
+      complianceStatus: item.complianceStatus !== undefined ? !!item.complianceStatus : (item.compliance_status !== undefined ? !!item.compliance_status : (alertStatus === 'nominal')),
+      history: detailHistory.length > 0 ? detailHistory : (Array.isArray(item.alerts) ? item.alerts : [])
+    };
+  };
+
+  const mapBackendAlert = (item: any): SecurityFeedItem => {
+    const severityRaw = String(item.severity || item.alert_type || '').toUpperCase();
+    let type: 'info' | 'warning' | 'critical' = 'info';
+    if (severityRaw === 'CRITICAL') type = 'critical';
+    else if (severityRaw === 'HIGH') type = 'warning';
+
+    return {
+      timestamp: item.timestamp || item.time || new Date().toLocaleTimeString(),
+      node: item.hostname || item.host || item.node || "SYSTEM",
+      message: item.alert_type || item.details || item.message || item.msg || item.text || "Anomaly signature detected.",
+      type: type
+    };
+  };
+
+  // Connected real-time polling effect to coordinate with the Python monitoring service
+  useEffect(() => {
+    if (isDemoMode) return;
+
+    let active = true;
+
+    const fetchFleetData = async () => {
+      try {
+        const response = await fetch("/api/assets");
+        if (!response.ok) throw new Error("Assets endpoint error");
+        const data = await response.json();
+        if (active && Array.isArray(data)) {
+          const mapped = data.map(mapBackendAsset).map(asset => {
+            if (localOverrides[asset.hostname]) {
+              return { ...asset, ...localOverrides[asset.hostname] };
+            }
+            return asset;
+          });
+          setAssets(mapped);
+        }
+      } catch (err) {
+        console.warn("[SENTINEL COMPLIANCE] Assets background integration offline. Using secure in-memory cache.");
+      }
+    };
+
+    const fetchAlertData = async () => {
+      try {
+        const response = await fetch("/api/alerts");
+        if (!response.ok) throw new Error("Alerts endpoint error");
+        const data = await response.json();
+        if (active && Array.isArray(data)) {
+          const mapped = data.map(mapBackendAlert);
+          setLiveLogs(mapped);
+        }
+      } catch (err) {
+        console.warn("[SENTINEL COMPLIANCE] Alerts background integration offline. Using secure in-memory cache.");
+      }
+    };
+
+    fetchFleetData();
+    fetchAlertData();
+
+    const assetsTimer = setInterval(fetchFleetData, 5000);
+    const alertsTimer = setInterval(fetchAlertData, 5000);
+
+    return () => {
+      active = false;
+      clearInterval(assetsTimer);
+      clearInterval(alertsTimer);
+    };
+  }, [localOverrides, isDemoMode]);
+
+  // Handle opening of individual asset detail card drawer
+  const handleSelectAsset = (asset: Asset) => {
+    setSelectedAsset(asset);
+    setAuditReport(null);
+    setAuditRiskScore(null);
+    setAuditSeverity(null);
+    // Initialize corresponding starting dials
+    setTelemetryCPU(asset.status === "Overload" ? 94 : asset.status === "Idle" ? 4 : 22);
+    setTelemetryRAM(asset.status === "Overload" ? 88 : asset.status === "Idle" ? 18 : 42);
+  };
+
+  // Search filter computes
+  const filteredAssets = useMemo(() => {
+    const query = searchQuery.toLowerCase().trim();
+    if (!query) return assets;
+    return assets.filter((asset: Asset) => 
+      asset.hostname.toLowerCase().includes(query) ||
+      asset.employee.toLowerCase().includes(query) ||
+      asset.ipAddress.toLowerCase().includes(query) ||
+      asset.os.toLowerCase().includes(query) ||
+      asset.ram.toLowerCase().includes(query)
+    );
+  }, [assets, searchQuery]);
+
+  // Pagination bounds (5 per page)
+  const itemsPerPage = 5;
+  const totalPages = Math.ceil(filteredAssets.length / itemsPerPage) || 1;
+  const currentAssets = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredAssets.slice(start, start + itemsPerPage);
+  }, [filteredAssets, currentPage]);
+
+  // Adjust pagination page if query shifts bounds
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [searchQuery, totalPages, currentPage]);
+
+  // Compute stats dynamically from live backend state
+  const kpiStats = useMemo<KPIStats>(() => {
+    const online = assets.filter((a: Asset) => a.status === "Online").length;
+    const idle = assets.filter((a: Asset) => a.status === "Idle").length;
+    const overload = assets.filter((a: Asset) => a.status === "Overload").length;
+    const offline = assets.filter((a: Asset) => a.status === "Offline").length;
+
+    const uniqueUsers = new Set(
+      assets.map((asset: Asset) => (asset.employee || "System Account").trim() || "System Account")
+    ).size;
+
+    const criticalAlertCount = liveLogs.filter((log: SecurityFeedItem) => log.type === "critical").length;
+
+    return {
+      totalAssets: assets.length,
+      onlineDevices: online,
+      offlineDevices: offline,
+      activeUsers: uniqueUsers,
+      criticalAlerts: criticalAlertCount,
+      securityIncidents: overload + (idle > 1 ? 1 : 0),
+    };
+  }, [assets, liveLogs]);
+
+  // AI Compliance Audit request using full-stack Gemini API endpoint
+  const handleAICorporateAudit = async (asset: Asset) => {
+    setAuditLoading(true);
+    setAuditReport(null);
+    setAuditRiskScore(null);
+    setAuditSeverity(null);
+
+    const padZero = (n: number) => n.toString().padStart(2, '0');
+    const now = new Date();
+    const timeStr = `${padZero(now.getHours())}:${padZero(now.getMinutes())}:${padZero(now.getSeconds())}`;
+
+    // Append trigger statement in logs console
+    setLocalLogs((prev: SecurityFeedItem[]) => [
+      { timestamp: timeStr, node: "AI-FORENSIC-CORE", message: `Initiating deep digital compliance scan on endpoint ${asset.hostname}...`, type: "info" },
+      ...prev
+    ]);
+
+    try {
+      const response = await fetch("/api/audit-asset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(asset)
+      });
+      
+      if (!response.ok) {
+        throw new Error("Terminal link refused or timed out during compliance query.");
+      }
+
+      const reportData = await response.json();
+      
+      // Update states with beautiful AI forensic results
+      setAuditReport(reportData.analysis);
+      setAuditRiskScore(reportData.riskScore);
+      setAuditSeverity(reportData.severity);
+
+      // Append result log
+      setLocalLogs((prev: SecurityFeedItem[]) => [
+        { 
+          timestamp: timeStr, 
+          node: "AI-FORENSIC-CORE", 
+          message: `Audit completed on ${asset.hostname}. Severity: ${reportData.severity.toUpperCase()}. Risk Factor: ${reportData.riskScore}/100.`, 
+          type: reportData.severity === "critical" ? "critical" : reportData.severity === "warning" ? "warning" : "info" 
+        },
+        ...prev
+      ]);
+    } catch (err: any) {
+      console.error(err);
+      setAuditReport(`### CONNECTION ERROR\n\nFailed to establish diagnostic telemetry handshake with Sentinel AI Forensics Server. Ensure your Gemini API service key is bound in settings correctly.\n\n*Error details: ${err.message || "Endpoint error - Host refused connect"}`);
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  // Tactical Operations Handler: Trigger Simulated Alert Swap
+  const handleTriggerTelemetryAlert = (asset: Asset) => {
+    const overrideVal = {
+      status: "Overload" as const,
+      alertStatus: "critical" as const,
+      complianceStatus: false,
+      history: [
+        `CRITICAL Telemetry Event: Unauthorized hardware modification signature detected [${new Date().toLocaleTimeString()}].`,
+        "Active memory controller module reporting capacity mismatch mismatch.",
+        ...asset.history
+      ]
+    };
+
+    setLocalOverrides((prev: Record<string, Partial<Asset>>) => ({
+      ...prev,
+      [asset.hostname]: overrideVal
+    }));
+
+    // Instantly apply locally
+    setAssets((prev: Asset[]) => prev.map((a: Asset) => a.hostname === asset.hostname ? { ...a, ...overrideVal } : a));
+    
+    // Update active drawer context in real-time
+    setSelectedAsset((prev: Asset | null) => prev && prev.hostname === asset.hostname ? { ...prev, ...overrideVal } : prev);
+    setTelemetryCPU(94);
+    setTelemetryRAM(89);
+
+    const padZero = (n: number) => n.toString().padStart(2, '0');
+    const now = new Date();
+    const timeStr = `${padZero(now.getHours())}:${padZero(now.getMinutes())}:${padZero(now.getSeconds())}`;
+
+    // Inject alert to marquee logs
+    setLocalLogs((prev: SecurityFeedItem[]) => [
+      { timestamp: timeStr, node: asset.hostname, message: "CRITICAL COMPONENT TAMPER: RAM capacity altered dynamically without certificate authorization!", type: "critical" },
+      ...prev
+    ]);
+  };
+
+  // Tactical Operations Handler: Quarantine Endpoint
+  const handleTacticalQuarantine = (asset: Asset) => {
+    const overrideVal = {
+      status: "Offline" as const,
+      alertStatus: "warning" as const,
+      complianceStatus: false,
+      ipAddress: "QUARANTINED",
+      currentWebsite: "-",
+      history: [
+        `ADMIN QUARANTINE PROTOCOL: Local server severed dynamic IP access pathways [${new Date().toLocaleTimeString()}].`,
+        "Endpoint designated as hazardous. Subnet whitelisting revoked.",
+        ...asset.history
+      ]
+    };
+
+    setLocalOverrides((prev: Record<string, Partial<Asset>>) => ({
+      ...prev,
+      [asset.hostname]: overrideVal
+    }));
+
+    // Instantly apply locally
+    setAssets((prev: Asset[]) => prev.map((a: Asset) => a.hostname === asset.hostname ? { ...a, ...overrideVal } : a));
+
+    // Update active drawer context in real-time
+    setSelectedAsset((prev: Asset | null) => prev && prev.hostname === asset.hostname ? { ...prev, ...overrideVal } : prev);
+    setTelemetryCPU(0);
+    setTelemetryRAM(5);
+
+    const padZero = (n: number) => n.toString().padStart(2, '0');
+    const now = new Date();
+    const timeStr = `${padZero(now.getHours())}:${padZero(now.getMinutes())}:${padZero(now.getSeconds())}`;
+
+    // Inject quarantine log
+    setLocalLogs((prev: SecurityFeedItem[]) => [
+      { timestamp: timeStr, node: "COMMAND-GATE", message: `TACTICAL OPERATION SUCCESSFUL: Severed communication channels to node ${asset.hostname}.`, type: "warning" },
+      ...prev
+    ]);
+  };
+
+  // Tactical Operations Handler: Re-flash BIOS Reset
+  const handleReflashBIOSReset = (asset: Asset) => {
+    const overrideVal = {
+      status: "Online" as const,
+      alertStatus: "nominal" as const,
+      complianceStatus: true,
+      ipAddress: asset.hostname === "MOB-MKT-004" ? "Unassigned" : `10.14.22.${Math.floor(Math.random() * 200) + 12}`,
+      history: [
+        `SENTINEL CERTIFICATION HANDSHAKE: BIOS re-flashed. Cryprographic root baseline verified. [${new Date().toLocaleTimeString()}].`,
+        "Integrity restored. Active alarms wiped cleanly.",
+        ...asset.history
+      ]
+    };
+
+    setLocalOverrides((prev: Record<string, Partial<Asset>>) => ({
+      ...prev,
+      [asset.hostname]: overrideVal
+    }));
+
+    // Instantly apply locally
+    setAssets((prev: Asset[]) => prev.map((a: Asset) => a.hostname === asset.hostname ? { ...a, ...overrideVal } : a));
+
+    // Update active drawer context in real-time
+    setSelectedAsset((prev: Asset | null) => prev && prev.hostname === asset.hostname ? { ...prev, ...overrideVal } : prev);
+    setTelemetryCPU(24);
+    setTelemetryRAM(42);
+    setAuditReport(null);
+    setAuditRiskScore(null);
+    setAuditSeverity(null);
+
+    const padZero = (n: number) => n.toString().padStart(2, '0');
+    const now = new Date();
+    const timeStr = `${padZero(now.getHours())}:${padZero(now.getMinutes())}:${padZero(now.getSeconds())}`;
+
+    // Inject reflash log
+    setLocalLogs((prev: SecurityFeedItem[]) => [
+      { timestamp: timeStr, node: asset.hostname, message: "RE-FLASH BIOS VERIFICATION: Re-established secure state. Root keys match signature profile securely.", type: "info" },
+      ...prev
+    ]);
+  };
+
+  // Client-side CSV generator report function
+  const handleExportCSVReport = () => {
+    const csvHeader = "Hostname,Status,Employee,IP Address,OS,Memory RAM,BIOS Serial,Last Login,Location,CPU Model,Compliance Secured\n";
+    const csvRows = assets.map((a: Asset) => {
+      const values = [
+        a.hostname,
+        a.status,
+        a.employee,
+        a.ipAddress,
+        a.os,
+        a.ram,
+        a.biosSerial,
+        a.lastLogin,
+        a.location,
+        a.cpuModel,
+        a.complianceStatus ? "Yes" : "No",
+      ];
+      return values.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',');
+    }).join("\n");
+
+    const blob = new Blob([csvHeader + csvRows], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Asset_Sentinel_Fleet_Report_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    const padZero = (n: number) => n.toString().padStart(2, '0');
+    const now = new Date();
+    const timeStr = `${padZero(now.getHours())}:${padZero(now.getMinutes())}:${padZero(now.getSeconds())}`;
+
+    setLiveLogs((prev: SecurityFeedItem[]) => [
+      { timestamp: timeStr, node: "COMMAND-GATE", message: "LOCAL CSV EXPORT TRIGGERED: Generated spreadsheet report covering all node assets.", type: "info" },
+      ...prev
+    ]);
+  };
+
+  if (isDemoMode) {
+    return (
+      <div id="command-dashboard-screen" className="flex flex-col h-screen overflow-hidden antialiased bg-[#0A0C10] text-[#dae3ee] font-sans selection:bg-[#00d1ff]/20">
+        
+        {/* Top Demode Banner / Header */}
+        <header className="h-16 bg-[#141c24] border-b border-[#3c494e]/30 flex items-center justify-between px-6 select-none shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-[#222b33] border border-[#3c494e] flex items-center justify-center glow-accent">
+              <SentinelLogo className="w-5.5 h-5.5" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-black text-[#00d1ff] tracking-wider uppercase leading-none">
+                Asset Sentinel Command Center
+              </span>
+              <span className="text-[9px] text-[#bbc9cf] font-mono tracking-widest mt-0.5 font-bold uppercase">
+                Demo Mode – Read Only Preview
+              </span>
+            </div>
+          </div>
+          <button 
+            onClick={() => onNavigate("landing")}
+            className="flex items-center gap-1.5 text-xs text-[#00d1ff] border border-[#00d1ff]/30 rounded-lg px-4 py-2 hover:bg-[#00d1ff]/10 transition-all font-bold uppercase tracking-wider active:scale-95 cursor-pointer shadow-[0_0_12px_rgba(0,209,255,0.15)]"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Exit Demo
+          </button>
+        </header>
+
+        {/* Restricted content wrapper - NOT scrollable horizontally, perfectly designed for maximum density */}
+        <div className="flex-1 overflow-y-auto p-6 md:p-8 flex flex-col gap-6 pb-28">
+          
+          {/* Section 1: System Overview (KPI Scorecard Cards) */}
+          <section id="demo-system-overview">
+            <h2 className="text-xs font-black uppercase tracking-widest text-[#bbc9cf] mb-3 flex items-center gap-2 select-none">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#00d1ff]"></span>
+              System Overview
+            </h2>
+            
+            <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+              {/* Card 1 */}
+              <div className="glass-panel rounded-xl p-4 flex flex-col gap-2 bg-[#161B22]/80 border border-white/5 select-none relative overflow-hidden group">
+                <div className="flex justify-between items-start">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-[#bbc9cf]">Total Assets</span>
+                  <Server className="w-3.5 h-3.5 text-[#859399]" />
+                </div>
+                <div className="text-2xl font-black text-[#dae3ee] mt-1">
+                  {kpiStats.totalAssets.toLocaleString()}
+                </div>
+                <div className="flex items-center gap-1 text-[#00d1ff] text-[10px] mt-2 font-mono">
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  <span>{kpiStats.totalAssets > 0 ? `${((kpiStats.onlineDevices / kpiStats.totalAssets) * 100).toFixed(1)}% Online` : "Loading..."}</span>
+                </div>
+              </div>
+
+              {/* Card 2 */}
+              <div className="glass-panel rounded-xl p-4 flex flex-col gap-2 bg-[#161B22]/80 border border-white/5 select-none relative overflow-hidden group">
+                <div className="flex justify-between items-start">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-[#bbc9cf]">Online Devices</span>
+                  <div className="w-2 h-2 rounded-full bg-[#00d1ff] glow-active"></div>
+                </div>
+                <div className="text-2xl font-black text-[#dae3ee] mt-1">
+                  {kpiStats.onlineDevices.toLocaleString()}
+                </div>
+                <div className="w-full h-6 mt-2 relative">
+                  <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 24">
+                    <path fill="none" stroke="#00d1ff" strokeWidth="2" d="M 0 18 Q 15 12 30 15 T 60 8 T 80 14 T 100 3" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* Card 3 */}
+              <div className="glass-panel rounded-xl p-4 flex flex-col gap-2 bg-[#161B22]/80 border border-white/5 select-none relative overflow-hidden group">
+                <div className="flex justify-between items-start">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-[#bbc9cf]">Offline Devices</span>
+                  <div className="w-2 h-2 rounded-full bg-[#859399]"></div>
+                </div>
+                <div className="text-2xl font-black text-[#dae3ee] mt-1">
+                  {kpiStats.offlineDevices.toLocaleString()}
+                </div>
+                <div className="text-[10px] text-[#bbc9cf] mt-auto pb-1 font-mono">
+                  {kpiStats.totalAssets > 0 ? `${((kpiStats.offlineDevices / kpiStats.totalAssets) * 100).toFixed(1)}% of total fleet` : "Loading..."}
+                </div>
+              </div>
+
+              {/* Card 4 */}
+              <div className="glass-panel rounded-xl p-4 flex flex-col gap-2 bg-[#161B22]/80 border border-white/5 select-none relative overflow-hidden group">
+                <div className="flex justify-between items-start">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-[#bbc9cf]">Active Users</span>
+                  <Smartphone className="w-3.5 h-3.5 text-[#859399]" />
+                </div>
+                <div className="text-2xl font-black text-[#dae3ee] mt-1">
+                  {kpiStats.activeUsers.toLocaleString()}
+                </div>
+                <div className="text-[10px] text-[#00d1ff] mt-auto pb-1 font-mono">
+                  Verified Identity Posture
+                </div>
+              </div>
+
+              {/* Card 5 */}
+              <div className="glass-panel rounded-xl p-4 flex flex-col gap-2 bg-red-950/10 border border-red-500/25 select-none relative overflow-hidden group">
+                <div className="flex justify-between items-start">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-red-400">Critical Alerts</span>
+                  <div className="w-2 h-2 rounded-full bg-red-400 glow-critical animate-ping"></div>
+                </div>
+                <div className="text-2xl font-black text-red-400 mt-1">
+                  {kpiStats.criticalAlerts.toLocaleString()}
+                </div>
+                <div className="w-full h-6 mt-2 relative">
+                  <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 24">
+                    <path fill="none" stroke="#f87171" strokeWidth="2" d="M 0 18 L 15 18 L 22 2 L 31 22 L 40 18 Z M 40 18 L 100 18" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* Card 6 */}
+              <div className="glass-panel rounded-xl p-4 flex flex-col gap-2 bg-[#161B22]/80 border border-white/5 select-none relative overflow-hidden group">
+                <div className="flex justify-between items-start">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-amber-500">Sec Incidents</span>
+                  <div className="w-2 h-2 rounded-full bg-amber-500 glow-warning"></div>
+                </div>
+                <div className="text-2xl font-black text-amber-500 mt-1">
+                  {kpiStats.securityIncidents.toLocaleString()}
+                </div>
+                <div className="flex items-center gap-1 text-amber-500 text-[10px] mt-auto pb-1 font-mono">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  <span>Requires review</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Section 2: Command Fleet Preview (RAM Integrity Trend) & Subnet Node Grid in two-column */}
+          <section id="demo-live-monitoring">
+            <h2 className="text-xs font-black uppercase tracking-widest text-[#bbc9cf] mb-3 flex items-center gap-2 select-none">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#00d1ff]"></span>
+              Live Monitoring Center
+            </h2>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              
+              {/* RAM Integrity Trend Left Panel */}
+              <div className="glass-panel p-6 rounded-xl border border-[#3c494e]/30 bg-[#161B22]/80 flex flex-col justify-between min-h-[300px]">
+                <div className="flex justify-between items-center mb-3">
+                  <span className="text-[10px] font-mono tracking-widest font-bold text-[#00d1ff] uppercase">RAM Integrity Trend</span>
+                  <span className="bg-[#00d1ff]/10 text-[#00d1ff] border border-[#00d1ff]/20 text-[9px] font-mono font-semibold px-2 py-0.5 rounded flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#00d1ff] animate-ping"></span>
+                    INTEGRITY MONITORING STREAM
+                  </span>
+                </div>
+
+                <div className="h-32 w-full bg-[#070b10] border border-white/5 rounded-lg relative overflow-hidden flex items-end mb-4">
+                  <div className="absolute inset-0 bg-grid opacity-20 pointer-events-none"></div>
+                  <svg className="w-full h-full" viewBox="0 0 350 180" preserveAspectRatio="none">
+                    <defs>
+                      <linearGradient id="waveGradDemo" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#00d1ff" stopOpacity="0.4" />
+                        <stop offset="100%" stopColor="#00d1ff" stopOpacity="0.0" />
+                      </linearGradient>
+                    </defs>
+                    <path d={`${chartWavePath} L 350,180 L 0,180 Z`} fill="url(#waveGradDemo)" />
+                    <path d={chartWavePath} fill="none" stroke="#00d1ff" strokeWidth="2.5" className="drop-shadow-[0_0_6px_#00d1ff]" />
+                  </svg>
+                  <div className="absolute bottom-2 left-2 flex items-center gap-1.5 font-mono text-[8px] text-[#bbc9cf] bg-[#141a22]/80 px-2 py-0.5 rounded border border-white/5 uppercase">
+                    <span>RAM Verification Activity: ACTIVE</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 text-xs font-mono mb-4">
+                  <div className="p-2.5 bg-[#070b10] border border-white/5 rounded-lg flex flex-col justify-between">
+                    <span className="text-[9px] text-[#bbc9cf]/70 uppercase">RAM Change Detection Events</span>
+                    <span className="text-[#00d1ff] font-bold text-sm tracking-wide">0 (NOMINAL)</span>
+                  </div>
+                  <div className="p-2.5 bg-[#070b10] border border-white/5 rounded-lg flex flex-col justify-between">
+                    <span className="text-[9px] text-[#bbc9cf]/70 uppercase">Hardware Validation Activity</span>
+                    <span className="text-emerald-400 font-bold text-sm tracking-wide">99.98% SECURE</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5 font-mono text-[9px]">
+                  <div className="flex items-center justify-between p-2 bg-[#070b10] border border-white/5 rounded">
+                    <span className="text-[#bbc9cf]/80">INTEGRITY TREND ANALYSIS</span>
+                    <span className="text-emerald-400 font-semibold uppercase">100% SECURE MEMORY BASELINE</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Subnet Node Grid Right Panel */}
+              <div className="glass-panel p-6 rounded-xl border border-[#3c494e]/30 bg-[#161B22]/80 flex flex-col justify-between min-h-[300px]">
+                <div className="flex justify-between items-center mb-3">
+                  <span className="text-[10px] font-mono tracking-widest font-bold text-[#bbc9cf] uppercase">Subnet Node Grid Array</span>
+                  <span className="text-[9px] font-mono text-[#00d1ff] font-bold">64 ACTIVE ENDPOINTS</span>
+                </div>
+
+                <div className="grid grid-cols-8 gap-1.5 bg-[#070b10] p-3 border border-white/5 rounded-lg h-32 items-center justify-center mb-4">
+                  {chartGridCells.map((state: string, idx: number) => {
+                    let cellColor = "bg-[#2d363e]/40 border-white/5";
+                    if (state === "nominal") cellColor = "bg-emerald-500/10 border-emerald-400/20 shadow-[0_0_2px_rgba(16,185,129,0.1)]";
+                    if (state === "warning") cellColor = "bg-amber-500/30 border-amber-400/40 shadow-[0_0_3px_rgba(245,158,11,0.2)]";
+                    if (state === "alert") cellColor = "bg-red-500 border-red-400 shadow-[0_0_8px_#ef4444] animate-ping";
+
+                    return (
+                      <div 
+                        key={idx} 
+                        className={`w-full aspect-square rounded-sm border ${cellColor} transition-all duration-300`} 
+                      />
+                    );
+                  })}
+                </div>
+
+                <div className="flex justify-between items-center text-[9px] font-mono text-[#bbc9cf] bg-[#070b10] p-2 rounded border border-white/5 font-semibold">
+                  <div className="flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+                    <span>Verified</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block"></span>
+                    <span>Review Required</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block"></span>
+                    <span>Alert Detected</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </section>
+
+          {/* Section 3: Sentinel Core Hardware Cards */}
+          <section id="demo-sentinel-core" className="mb-8">
+            <h2 className="text-xs font-black uppercase tracking-widest text-[#bbc9cf] mb-3 flex items-center gap-2 select-none">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#00d1ff]"></span>
+              Sentinel Core
+            </h2>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Card 1: RAM Verified */}
+              <div className="glass-panel p-4 rounded-lg bg-[#141c24]/75 border border-[#3c494e]/30 select-none animate-float-1">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-mono text-[9px] text-[#00d1ff] tracking-wider font-semibold">NODE-4912</span>
+                  <Cpu className="w-4 h-4 text-[#00d1ff] animate-spin" />
+                </div>
+                <h4 className="text-xs font-semibold text-[#dae3ee]">RAM Verified (32GB)</h4>
+                <div className="w-full bg-[#2d363e]/50 h-2 mt-4 rounded-full overflow-hidden border border-white/5">
+                  <div style={{ width: `${ramValue}%` }} className="bg-gradient-to-r from-cyan-500 to-[#00d1ff] h-full shadow-[0_0_8px_rgba(0,209,255,0.7)] transition-all duration-500"></div>
+                </div>
+                <div className="flex justify-between items-center text-[8px] font-mono mt-2 text-[#bbc9cf]/80">
+                  <span>CAPACITY NOMINAL</span>
+                  <span className="text-[#00d1ff] font-bold">{ramValue}% LOAD</span>
+                </div>
+              </div>
+
+              {/* Card 2: BIOS Identity Intact */}
+              <div className="glass-panel p-4 rounded-lg bg-[#141c24]/75 border border-[#3c494e]/30 select-none animate-float-2">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-mono text-[9px] text-[#00d1ff] tracking-wider font-semibold">SERVER-DELTA</span>
+                  <Sliders className="w-4 h-4 text-[#00d1ff] animate-pulse" />
+                </div>
+                <h4 className="text-xs font-semibold text-[#dae3ee]">BIOS Identity Intact</h4>
+                <div className="flex flex-col gap-2 mt-4">
+                  <div className="flex gap-1">
+                    <div className="h-1.5 flex-1 bg-[#00d1ff] rounded-full shadow-[0_0_8px_#00d1ff] animate-pulse"></div>
+                    <div className="h-1.5 flex-1 bg-[#00d1ff] rounded-full shadow-[0_0_8px_#00d1ff] animate-pulse" style={{ animationDelay: "0.2s" }}></div>
+                  </div>
+                </div>
+                <div className="font-mono text-[8.5px] mt-2 text-[#bbc9cf]/80 flex justify-between items-center">
+                  <span>UEFI KEYHASH:</span>
+                  <span className="text-cyan-400 font-bold">{biosHash}</span>
+                </div>
+              </div>
+
+              {/* Card 3: RAM Change Detected */}
+              <div className="glass-panel p-4 rounded-lg bg-red-950/10 border border-red-500/30 animate-float-1 animate-warning-border select-none">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-mono text-[9px] text-red-400 tracking-wider font-extrabold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span>
+                    THREAT WARNING
+                  </span>
+                  <HardDrive className="w-4 h-4 text-red-400 animate-pulse" />
+                </div>
+                <h4 className="text-xs font-semibold text-[#dae3ee]">RAM Change Detected</h4>
+                <div className="mt-3 p-1 rounded bg-red-900/20 border border-red-500/20 text-center font-mono text-[9px] text-red-300 animate-pulse">
+                  HW CONFIG MISMATCH
+                </div>
+                <span className="font-mono text-[8.5px] text-red-400/90 mt-2 block font-semibold">EXPECT: 64GB | ACTIVE: 32GB</span>
+              </div>
+
+              {/* Card 4: Motherboard ID Certified */}
+              <div className="glass-panel p-4 rounded-lg bg-[#141c24]/75 border border-[#3c494e]/30 select-none animate-float-2">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-mono text-[9px] text-[#00d1ff] tracking-wider font-semibold">SRV-GAMMA-02</span>
+                  <Layers className="w-4 h-4 text-[#00d1ff] animate-pulse" />
+                </div>
+                <h4 className="text-xs font-semibold text-[#dae3ee]">Motherboard Certified</h4>
+                <div className="mt-4 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-emerald-500/10 border border-emerald-400/20 font-bold">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="font-mono text-[9px] text-emerald-400 uppercase font-extrabold">MB-994 MATCH</span>
+                </div>
+                <span className="font-mono text-[8px] text-[#bbc9cf] mt-2 block text-center uppercase font-light">TPM Security Chip verified</span>
+              </div>
+
+              {/* Card 6: Restricted Site Blocked */}
+              <div className="glass-panel p-4 rounded-lg bg-red-950/10 border border-red-500/20 select-none animate-float-1">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-mono text-[9px] text-red-400 tracking-wider font-bold">NET-MONITOR</span>
+                  <Globe className="w-4 h-4 text-red-500 animate-pulse" />
+                </div>
+                <h4 className="text-xs font-semibold text-[#dae3ee]">Restricted Site Blocked</h4>
+                <div className="mt-3.5 py-1 px-1.5 bg-red-950/30 rounded border border-red-500/10 text-center font-mono text-[8px] text-red-300">
+                  EDGE FIREWALL BLOCKED
+                </div>
+                <span className="font-mono text-[8.5px] text-[#bbc9cf] mt-1.5 block text-center truncate">IP: 185.199.110.153</span>
+              </div>
+            </div>
+          </section>
+
+        </div>
+
+        {/* Pinned Demo Mode Footer Panel */}
+        <footer className="fixed bottom-0 inset-x-0 bg-[#161B21]/95 border-t border-amber-500/30 backdrop-blur-md px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-4 z-50 shadow-2xl">
+          <div className="text-center md:text-left select-none">
+            <span className="text-[#00d1ff] font-extrabold text-sm uppercase font-mono tracking-wider">DEMO MODE</span>
+            <p className="text-[#bbc9cf] text-xs font-light mt-0.5">
+              View-only access. Sign in for complete monitoring, asset management, analytics, audit logs, and security controls.
+            </p>
+          </div>
+          <button 
+            onClick={() => onNavigate("login")}
+            className="flex items-center gap-2 px-6 py-2.5 bg-[#00d1ff] text-[#003543] font-bold rounded-lg hover:bg-cyan-300 tracking-wider text-xs uppercase shadow-[0_0_15px_rgba(0,209,255,0.45)] transition-all active:scale-95 cursor-pointer max-w-max"
+          >
+            <LogIn className="w-4 h-4" />
+            Admin Sign In
+          </button>
+        </footer>
+
+      </div>
+    );
+  }
+
+  return (
+    <div id="command-dashboard-screen" className="flex h-dvh min-h-screen overflow-hidden antialiased bg-[#0A0C10] text-[#dae3ee] font-sans">
+      
+      {/* Side Navigation Bar (exactly styled as left panel of 3rd screenshot) */}
+      {isMobileSidebarOpen && (
+        <button
+          aria-label="Close navigation menu"
+          className="fixed inset-0 bg-[#060f16]/70 backdrop-blur-sm z-40 md:hidden"
+          onClick={() => setIsMobileSidebarOpen(false)}
+        />
+      )}
+
+      <nav id="sidebar-navigation" className={`bg-[#141c24] text-[#a4e6ff] h-screen w-72 max-w-[86vw] md:w-64 fixed left-0 top-0 border-r border-[#3c494e]/30 flex flex-col py-6 px-4 z-50 md:z-40 select-none transition-transform duration-300 ease-out ${isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}>
+        
+        {/* Brand Header with navigation back to Landing Page */}
+        <div 
+          onClick={() => handleSidebarAction(() => onNavigate("landing"))}
+          className="flex items-center gap-3 mb-8 px-2 cursor-pointer hover:opacity-80 active:scale-95 transition-all"
+          title="Return to Landing Page"
+        >
+          <div className="w-10 h-10 rounded-lg bg-[#2d363e] flex items-center justify-center overflow-hidden border border-[#3c494e] glow-accent">
+            <SentinelLogo className="w-6.5 h-6.5" />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-sm font-bold text-[#00d1ff] leading-none uppercase tracking-wide">
+              Asset Sentinel
+            </span>
+            <span className="text-[#bbc9cf] text-[9px] uppercase tracking-[0.2em] mt-1 font-semibold">
+              Enterprise Tier
+            </span>
+          </div>
+        </div>
+
+        {/* Navigation links section */}
+        <ul className="flex-1 flex flex-col gap-1.5 overflow-y-auto">
+          <li>
+            <button 
+              onClick={() => setIsMobileSidebarOpen(false)}
+              className="w-full bg-[#00d1ff]/10 text-[#00d1ff] border-r-4 border-[#00d1ff] flex items-center gap-3 px-3 py-2.5 rounded-l-lg hover:bg-[#00d1ff]/15 transition-all text-xs font-bold uppercase tracking-wider text-left"
+            >
+              <Activity className="w-4.5 h-4.5" />
+              Dashboard
+            </button>
+          </li>
+          <li>
+            <button 
+              onClick={() => handleSidebarAction(handleOpenMonitoringPanel)}
+              className="w-full text-[#bbc9cf] hover:text-[#0a0] hover:bg-[#2d363e]/40 transition-all flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider text-left"
+            >
+              <Cpu className="w-4.5 h-4.5 text-[#bbc9cf]" />
+              Monitoring
+            </button>
+          </li>
+          <li>
+            <button 
+              onClick={() => handleSidebarAction(handleOpenAnalyticsPanel)}
+              className="w-full text-[#bbc9cf] hover:text-[#00d1ff] hover:bg-[#2d363e]/40 transition-all flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider text-left"
+            >
+              <Zap className="w-4.5 h-4.5 text-[#bbc9cf]" />
+              Analytics
+            </button>
+          </li>
+          <li>
+            <button 
+              onClick={() => handleSidebarAction(handleOpenAssetHistory)}
+              className="w-full text-[#bbc9cf] hover:text-[#60a5fa] hover:bg-[#2d363e]/30 transition-all flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider text-left"
+            >
+              <Layers className="w-4.5 h-4.5 text-[#bbc9cf]" />
+              Asset History
+            </button>
+          </li>
+          <li>
+            <button 
+              className="w-full text-[#bbc9cf] hover:text-[#00d1ff] hover:bg-[#2d363e]/40 transition-all flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider text-left"
+              onClick={() => handleSidebarAction(handleShowDevices)}
+            >
+              <Database className="w-4.5 h-4.5 text-[#bbc9cf]" />
+              Devices ({assets.length})
+            </button>
+          </li>
+          {!isDemoMode && (
+            <li>
+              <button 
+                onClick={() => handleSidebarAction(handleNavigateReports)}
+                className="w-full text-[#bbc9cf] hover:text-[#00d1ff] hover:bg-[#2d363e]/40 transition-all flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider text-left"
+              >
+                <FileSpreadsheet className="w-4.5 h-4.5 text-[#bbc9cf]" />
+                Reports
+              </button>
+            </li>
+          )}
+        </ul>
+
+        {/* Critical Alerts Center CTA */}
+        <div className="mt-4 mb-4">
+          <button 
+            onClick={() => handleSidebarAction(handleNavigateCriticalState)}
+            className="w-full flex items-center justify-between bg-red-950/20 border border-red-500/30 hover:bg-red-950/45 transition-colors rounded-lg px-3 py-2.5 group cursor-pointer"
+          >
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-400" />
+              <span className="text-red-400 text-[10px] font-bold uppercase tracking-wider">
+                Critical State
+              </span>
+            </div>
+            <span className="bg-red-500 text-[#001f28] text-xs font-bold px-2 py-0.5 rounded-full animate-pulse indicator-pulse shadow-[0_0_8px_#ef4444]">
+              {kpiStats.criticalAlerts}
+            </span>
+          </button>
+        </div>
+
+        {/* Navigation Sidebar Footer Links */}
+        <div className="border-t border-[#3c494e]/30 pt-4 mt-auto">
+          <ul className="flex flex-col gap-1.5 text-xs">
+            <li>
+              <button 
+                onClick={() => handleSidebarAction(() => alert(`OPERATIONAL WORKSPACE SECURITY PROFILE:\n\nAdmin Token: ${userEmail}\nSession Status: SECURE GATEWAY ENCRYPTION LOGS ACTIVE\nUTC Stamp: ${new Date().toISOString()}`))}
+                className="w-full text-[#bbc9cf] hover:text-[#00d1ff] hover:bg-[#2d363e]/40 transition-all flex items-center gap-3 px-3 py-2 rounded-lg text-left"
+              >
+                <HelpCircle className="w-4.5 h-4.5 text-[#bbc9cf]" />
+                <span>Support Status</span>
+              </button>
+            </li>
+            <li>
+              <button 
+                id="sidebar-signout-btn"
+                onClick={() => handleSidebarAction(isDemoMode ? () => onNavigate("landing") : onSignOut)}
+                className="w-full text-[#bbc9cf] hover:text-red-400 hover:bg-[#2d363e]/40 transition-all flex items-center gap-3 px-3 py-2 rounded-lg text-left pointer-events-auto"
+              >
+                <LogOut className="w-4.5 h-4.5 text-[#bbc9cf]" />
+                <span>{isDemoMode ? "Exit Demo" : "Sign Out"}</span>
+              </button>
+            </li>
+          </ul>
+        </div>
+
+      </nav>
+
+      {/* Main Content Dashboard Frame */}
+      <main id="dashboard-main-canvas" className="flex-1 ml-0 md:ml-64 flex min-h-0 flex-col h-full bg-[#0b141c] relative overflow-hidden">
+        
+        {/* Demo Mode Banner */}
+        {isDemoMode && (
+          <div id="demo-badge-banner" className="bg-amber-950/40 border-b border-amber-500/20 text-amber-300 px-6 py-2.5 flex items-center justify-between text-xs font-mono select-none">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></div>
+              <span className="font-extrabold uppercase tracking-widest">Demo Mode – Read Only Preview</span>
+            </div>
+            <button 
+              onClick={() => onNavigate("landing")}
+              className="text-[10px] uppercase font-bold tracking-widest px-2.5 py-1 rounded bg-amber-600/20 border border-amber-500/30 hover:bg-amber-600/30 transition-all active:scale-95 cursor-pointer text-amber-200"
+            >
+              Exit Demo
+            </button>
+          </div>
+        )}
+
+        {/* Mobile Top Navigation Bar */}
+        <header className="md:hidden h-16 bg-[#182028] border-b border-[#3c494e]/30 flex items-center justify-between px-4 sticky top-0 z-30 select-none">
+          <div className="flex items-center gap-2">
+            <button
+              aria-label="Open navigation menu"
+              onClick={() => setIsMobileSidebarOpen(true)}
+              className="min-h-10 min-w-10 -ml-2 rounded-lg flex items-center justify-center text-[#00d1ff] hover:bg-[#2d363e]/60 active:scale-95 transition-all"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <span className="font-extrabold text-[#dae3ee] tracking-tight">System Overview</span>
+          </div>
+          <button 
+            onClick={isDemoMode ? () => onNavigate("landing") : onSignOut}
+            className="flex items-center gap-1.5 text-xs text-[#bbc9cf] border border-[#3c494e]/50 rounded px-2.5 py-1"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            {isDemoMode ? "Exit Demo" : "Exit"}
+          </button>
+        </header>
+
+        {/* Scrollable command workspace content */}
+        <div id="scrolling-command-workspace" className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 md:p-8 pb-10 md:pb-12 flex flex-col gap-6 select-text selection:bg-[#00d1ff]/20">
+          
+          {/* Desktop Heading Segment */}
+          <div className="hidden md:flex justify-between items-end mb-2">
+            <div>
+              <h1 className="text-3xl font-black text-[#dae3ee] tracking-tight">System Overview</h1>
+              <p className="text-[#bbc9cf] text-sm mt-1">
+                Real-time asset telemetry and compliance posture check.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-bold tracking-wider uppercase text-[#bbc9cf] flex items-center gap-2 bg-[#182028] px-3.5 py-1.5 rounded-full border border-[#00d1ff]/20">
+                <span className="w-2 h-2 rounded-full bg-[#00d1ff] inline-block animate-ping"></span>
+                Secure Live Connection
+              </span>
+            </div>
+          </div>
+
+          {/* KPI Dashboard stats row (Grid of 6 matching the exact KPI metrics in 3rd screenshot) */}
+          <section id="kpi-scorecard-row" className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            
+            {/* KPI 1 */}
+            <div className="glass-panel rounded-xl p-4 flex flex-col gap-2 relative overflow-hidden group hover:border-[#00d1ff]/30 transition-all duration-300 bg-[#161B22]/80 border border-white/5 select-none">
+              <div className="flex justify-between items-start">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-[#bbc9cf]">Total Assets</span>
+                <Server className="w-3.5 h-3.5 text-[#859399]" />
+              </div>
+              <div className="text-2xl font-black text-[#dae3ee] mt-1">
+                {kpiStats.totalAssets.toLocaleString()}
+              </div>
+              <div className="flex items-center gap-1 text-[#00d1ff] text-[10px] mt-2">
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span>+2.4% vs last week</span>
+              </div>
+              <div className="absolute -bottom-8 -right-8 w-20 h-20 bg-[#00d1ff]/5 rounded-full blur-xl group-hover:bg-[#00d1ff]/12 transition-all"></div>
+            </div>
+
+            {/* KPI 2 */}
+            <div className="glass-panel rounded-xl p-4 flex flex-col gap-2 relative overflow-hidden group hover:border-[#00d1ff]/30 transition-all duration-300 bg-[#161B22]/80 border border-white/5 select-none">
+              <div className="flex justify-between items-start">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-[#bbc9cf]">Online Devices</span>
+                <div id="kpi-online-glow" className="w-2 h-2 rounded-full bg-[#00d1ff] glow-active"></div>
+              </div>
+              <div className="text-2xl font-black text-[#dae3ee] mt-1">
+                {kpiStats.onlineDevices.toLocaleString()}
+              </div>
+              <div className="w-full h-6 mt-2 relative">
+                {/* Embedded dynamic SVG sparkline */}
+                <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 24">
+                  <path 
+                    fill="none" 
+                    stroke="#00d1ff" 
+                    strokeWidth="2" 
+                    d="M 0 18 Q 15 12 30 15 T 60 8 T 80 14 T 100 3" 
+                    className="sparkline-path"
+                  />
+                </svg>
+              </div>
+            </div>
+
+            {/* KPI 3 */}
+            <div className="glass-panel rounded-xl p-4 flex flex-col gap-2 relative overflow-hidden group hover:border-[#859399]/40 transition-all duration-300 bg-[#161B22]/80 border border-white/5 select-none">
+              <div className="flex justify-between items-start">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-[#bbc9cf]">Offline Devices</span>
+                <div className="w-2 h-2 rounded-full bg-[#859399]"></div>
+              </div>
+              <div className="text-2xl font-black text-[#dae3ee] mt-1">
+                {kpiStats.offlineDevices.toLocaleString()}
+              </div>
+              <div className="text-[10px] text-[#bbc9cf] mt-auto pb-1 block">
+                14.8% of total fleet
+              </div>
+            </div>
+
+            {/* KPI 4 with tiny micro-avatars */}
+            <div className="glass-panel rounded-xl p-4 flex flex-col gap-2 relative overflow-hidden group hover:border-[#00d1ff]/30 transition-all duration-300 bg-[#161B22]/80 border border-white/5 select-none">
+              <div className="flex justify-between items-start">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-[#bbc9cf]">Active Users</span>
+                <Smartphone className="w-3.5 h-3.5 text-[#859399]" />
+              </div>
+              <div className="text-2xl font-black text-[#dae3ee] mt-1">
+                {kpiStats.activeUsers}
+              </div>
+              <div className="flex items-center -space-x-1.5 mt-auto pb-1">
+                <div className="w-4 h-4 rounded-full bg-slate-700 border border-[#0A0C10] overflow-hidden">
+                  <div className="w-full h-full bg-[#3c494e] text-[6px] text-white flex items-center justify-center font-bold">SJ</div>
+                </div>
+                <div className="w-4 h-4 rounded-full bg-slate-600 border border-[#0A0C10] overflow-hidden">
+                  <div className="w-full h-full bg-[#00566a] text-[6px] text-[#00d1ff] flex items-center justify-center font-bold">MR</div>
+                </div>
+                <div className="w-4 h-4 rounded-full bg-slate-500 border border-[#0A0C10] overflow-hidden">
+                  <div className="w-full h-full bg-orange-900 text-[6px] text-orange-200 flex items-center justify-center font-bold">DK</div>
+                </div>
+                <div className="w-4 h-4 rounded-full bg-[#182028] border border-[#0A0C10] flex items-center justify-center text-[7px] text-[#dae3ee] font-mono font-bold">
+                  +8k
+                </div>
+              </div>
+            </div>
+
+            {/* KPI 5 Critical alert heart-beat sparkline */}
+            <div className="glass-panel rounded-xl p-4 flex flex-col gap-2 relative overflow-hidden bg-red-950/10 border border-red-500/25 select-none">
+              <div className="flex justify-between items-start">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-red-400">Critical Alerts</span>
+                <div className="w-2 h-2 rounded-full bg-red-400 glow-critical animate-ping"></div>
+              </div>
+              <div className="text-2xl font-black text-red-400 mt-1">
+                {kpiStats.criticalAlerts}
+              </div>
+              <div className="w-full h-6 mt-2 relative">
+                <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 24">
+                  <path 
+                    fill="none" 
+                    stroke="#f87171" 
+                    strokeWidth="2" 
+                    d="M 0 18 L 15 18 L 22 2 L 31 22 L 40 18 Z M 40 18 L 100 18" 
+                    className="sparkline-path"
+                  />
+                </svg>
+              </div>
+            </div>
+
+            {/* KPI 6 */}
+            <div className="glass-panel rounded-xl p-4 flex flex-col gap-2 relative overflow-hidden group hover:border-amber-500/40 transition-all duration-300 bg-[#161B22]/80 border border-white/5 select-none">
+              <div className="flex justify-between items-start">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-amber-500">Sec Incidents</span>
+                <div className="w-2 h-2 rounded-full bg-amber-500 glow-warning"></div>
+              </div>
+              <div className="text-2xl font-black text-amber-500 mt-1 col-span-2">
+                {kpiStats.securityIncidents}
+              </div>
+              <div className="flex items-center gap-1 text-amber-500 text-[10px] mt-auto pb-1">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <span>Requires review</span>
+              </div>
+            </div>
+
+          </section>
+
+          {/* Main command data list console block */}
+          <section id="fleet-telemetry-panel" className="flex-none xl:flex-1 glass-panel rounded-xl flex flex-col overflow-hidden min-h-[320px] md:min-h-[500px] bg-[#161B22]/90 border border-white/8 shadow-lg">
+            
+            {/* Table Toolbar Section */}
+            <div className="p-4 border-b border-[#3c494e]/30 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-[#141c24]/50">
+              <div>
+                <h2 className="text-lg font-bold text-[#dae3ee]">Real-Time Fleet Telemetry</h2>
+                <p className="text-xs text-[#bbc9cf] font-light mt-0.5">Filter dynamically and click hostname cell nodes to trigger audits.</p>
+              </div>
+              <div className="flex w-full sm:w-auto items-center gap-2">
+                
+                {/* Functional search block */}
+                <div className="relative w-full sm:w-64">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#bbc9cf]" />
+                  <input 
+                    className="w-full bg-[#0D1117] border border-[#3c494e]/60 text-xs font-mono text-[#dae3ee] rounded-lg pl-9 pr-3 py-2 focus:outline-none focus:border-[#00d1ff] focus:ring-1 focus:ring-[#00d1ff] placeholder-[#859399]/70 transition-all font-light" 
+                    placeholder="Search query (hostname, IP, owner)..." 
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
+                  />
+                  {searchQuery && (
+                    <button 
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#bbc9cf] hover:text-white"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Filter indicators */}
+                <button 
+                  onClick={() => alert("WHETSTONE SYSTEM: Dynamic whitelists filters initialized on subnet routing cards.")}
+                  title="Initialize local subnet Whitelists filter"
+                  className="bg-[#2d363e]/70 hover:bg-[#313a43] border border-[#3c494e] text-[#dae3ee] p-2 rounded-lg flex items-center justify-center transition-colors cursor-pointer"
+                >
+                  <Filter className="w-4 h-4 text-[#bbc9cf]" />
+                </button>
+
+                {/* CSV Export Action Button */}
+                {!isDemoMode && (
+                  <button 
+                    id="excel-export-btn"
+                    onClick={handleExportCSVReport}
+                    title="Generate dynamic corporate CSV spreadsheets report"
+                    className="bg-[#00d1ff]/10 hover:bg-[#00d1ff]/20 border border-[#00d1ff]/30 text-[#00d1ff] p-2 rounded-lg flex items-center justify-center transition-colors cursor-pointer"
+                  >
+                    <Download className="w-4 h-4 text-[#00d1ff]" />
+                  </button>
+                )}
+
+              </div>
+            </div>
+
+            {/* Dynamic Fleet Telemetry Grid Table */}
+            <div ref={assetsTableRef} className="flex-1 min-h-0 overflow-auto overscroll-contain">
+              <table className="w-full text-left border-collapse whitespace-nowrap min-w-[1240px]">
+                <thead className="bg-[#060f16]/90 backdrop-blur-md sticky top-0 z-10 text-[10px] font-bold uppercase tracking-wider text-[#bbc9cf] border-b border-[#3c494e]/50">
+                  <tr>
+                    <th className="py-3.5 px-4 font-semibold">Hostname</th>
+                    <th className="py-3.5 px-4 font-semibold">Security Status</th>
+                    <th className="py-3.5 px-4 font-semibold">Employee / Owner</th>
+                    <th className="py-3.5 px-4 font-semibold">IP Address</th>
+                    <th className="py-3.5 px-4 font-semibold">Operational OS</th>
+                    <th className="py-3.5 px-4 font-semibold">ECC RAM Size</th>
+                    <th className="py-3.5 px-4 font-semibold">BIOS Serial Signature</th>
+                    <th className="py-3.5 px-4 font-semibold">Last Login Target</th>
+                    <th className="py-3.5 px-4 font-semibold">Current Active Path</th>
+                    <th className="py-3.5 px-4 font-semibold text-center">Threat Audits</th>
+                  </tr>
+                </thead>
+                <tbody className="text-xs font-mono tracking-wide text-[#dae3ee] divide-y divide-[#3c494e]/10">
+                  {currentAssets.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="text-center py-12 text-[#bbc9cf] font-mono">
+                        <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2 animate-bounce" />
+                        NO MATCHING CORE ASSETS SIGNATURES RESOLVED IN THIS MEMORY SECTOR.
+                      </td>
+                    </tr>
+                  ) : (
+                    currentAssets.map((asset: Asset, i: number) => {
+                      // Status styling
+                      const getStatusBadge = (status: Asset["status"]) => {
+                        switch(status) {
+                          case "Online":
+                            return (
+                              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#00d1ff]/10 text-[#00d1ff] border border-[#00d1ff]/20">
+                                <span className="w-1.5 h-1.5 rounded-full bg-[#00d1ff]"></span>
+                                <span className="text-[10px] font-semibold">Online</span>
+                              </div>
+                            );
+                          case "Idle":
+                            return (
+                              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/25">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                                <span className="text-[10px] font-semibold">Idle</span>
+                              </div>
+                            );
+                          case "Overload":
+                            return (
+                              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/25 animate-pulse">
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-400"></span>
+                                <span className="text-[10px] font-semibold">Overload</span>
+                              </div>
+                            );
+                          case "Offline":
+                            return (
+                              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-gray-500/15 text-gray-400 border border-gray-500/25">
+                                <span className="w-1.5 h-1.5 rounded-full bg-gray-500"></span>
+                                <span className="text-[10px] font-semibold">Offline</span>
+                              </div>
+                            );
+                        }
+                      };
+
+                      const getAlertIcon = (alertStatus: Asset["alertStatus"]) => {
+                        if (alertStatus === "critical") {
+                          return <AlertTriangle className="w-4 h-4 text-red-500 drop-shadow-[0_0_4px_#ef4444]" />;
+                        } else if (alertStatus === "warning") {
+                          return <AlertTriangle className="w-4 h-4 text-amber-400" />;
+                        }
+                        return <CheckCircle2 className="w-4 h-4 text-[#00d1ff]" />;
+                      };
+
+                      return (
+                        <tr 
+                          key={asset.hostname} 
+                          onClick={() => handleSelectAsset(asset)}
+                          className={`table-row-hover transition-all duration-150 cursor-pointer ${selectedAsset?.hostname === asset.hostname ? "bg-[#00d1ff]/10" : ""}`}
+                        >
+                          <td className="py-3 px-4 font-bold flex items-center gap-2 text-white">
+                            <Laptop className="w-3.5 h-3.5 text-[#859399]" />
+                            {asset.hostname}
+                          </td>
+                          <td className="py-3 px-4">
+                            {getStatusBadge(asset.status)}
+                          </td>
+                          <td className="py-3 px-4 text-[#bbc9cf] font-sans font-medium">{asset.employee}</td>
+                          <td className="py-3 px-4 text-[#a4e6ff]">{asset.ipAddress}</td>
+                          <td className="py-3 px-4 text-[#bbc9cf]">{asset.os}</td>
+                          <td className="py-3 px-4 font-semibold text-white">{asset.ram}</td>
+                          <td className="py-3 px-4 text-[#859399]">{asset.biosSerial}</td>
+                          <td className="py-3 px-4 text-[#bbc9cf] font-sans text-[11px]">{asset.lastLogin}</td>
+                          <td className="py-3 px-4">
+                            {asset.currentWebsite !== "-" ? (
+                              <div className="max-w-[150px] truncate text-[10px] text-[#bbc9cf] bg-[#0D1117] px-2 py-0.5 rounded border border-[#3c494e]/50 selection:bg-none select-none">
+                                {asset.currentWebsite}
+                              </div>
+                            ) : (
+                              <span className="text-[#859399]/40">-</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <div className="flex justify-center select-none">
+                              {getAlertIcon(asset.alertStatus)}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Table Footer with reactive paging controls */}
+            <div className="p-4 border-t border-[#3c494e]/30 flex flex-col sm:flex-row justify-between sm:items-center gap-3 bg-[#060f16]/85 text-[11px] text-[#bbc9cf] select-none">
+              <span className="leading-relaxed">
+                Showing {filteredAssets.length ? (currentPage - 1) * itemsPerPage + 1 : 0} - {Math.min(currentPage * itemsPerPage, filteredAssets.length)} of {filteredAssets.length} filtered assets (Total fleet scaled at 14,209)
+              </span>
+              <div className="flex items-center gap-3 self-end sm:self-auto">
+                <button 
+                  onClick={() => setCurrentPage((prev: number) => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                  className="min-h-10 min-w-10 p-2 hover:bg-[#2d363e]/50 rounded border border-[#3c494e] disabled:opacity-40 transition-colors cursor-pointer"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="px-2 font-mono font-semibold">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button 
+                  onClick={() => setCurrentPage((prev: number) => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                  className="min-h-10 min-w-10 p-2 hover:bg-[#2d363e]/50 rounded border border-[#3c494e] disabled:opacity-40 transition-colors cursor-pointer"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+          </section>
+
+          {/* Scrolling Command Terminal Live Event Logs footer panel */}
+          <section id="streaming-events-feed" className="shrink-0 bg-[#141c24] border border-[#3c494e]/40 rounded-xl p-4 md:p-5 overflow-hidden">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-[#bbc9cf] select-none mb-3 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#00d1ff] animate-pulse"></span>
+              Live Commands & Anomaly Log Stream
+            </h3>
+            <div id="logs-stream-container" className="h-48 sm:h-40 md:h-32 xl:h-28 overflow-y-auto overscroll-contain touch-pan-y flex flex-col gap-1.5 font-mono text-[11px] select-text pr-1">
+              {displayedLogs.map((log: SecurityFeedItem, index: number) => {
+                const getLogColor = (type: string) => {
+                  if (type === "critical") return "text-red-400 font-semibold";
+                  if (type === "warning") return "text-amber-400";
+                  return "text-[#bbc9cf]";
+                };
+
+                return (
+                  <div key={index} className={`flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-4 hover:bg-white/5 p-2 sm:p-1 rounded transition-colors ${getLogColor(log.type)}`}>
+                    <span className="text-[#00d1ff]/50 shrink-0 select-none">[{log.timestamp}]</span>
+                    <span className="bg-[#182028] px-1.5 py-0.1 select-none border border-white/5 rounded shrink-0 leading-none text-[9px] text-[#00d1ff]">{log.node}</span>
+                    <span className="leading-snug">{log.message}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+        </div>
+
+        {/* Global Glassmorphic Sliding Drawer Sheet (slides from the right side) */}
+{isMonitoringOpen && (
+          <div 
+            id="monitoring-modal-scaffolding"
+            className="fixed inset-0 bg-[#060f16]/70 backdrop-blur-md z-50 flex justify-end transition-opacity duration-300"
+            onClick={handleCloseMonitoringPanel}
+          >
+            <div 
+              id="monitoring-modal-drawer"
+              className="w-full max-w-xl bg-[#141c24]/95 border-l border-white/10 h-full overflow-y-auto p-4 sm:p-6 md:p-8 flex flex-col gap-6 shadow-2xl relative select-text"
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+            >
+              <button 
+                id="monitoring-drawer-close-btn"
+                onClick={handleCloseMonitoringPanel}
+                className="absolute top-5 right-5 text-[#bbc9cf] hover:text-white p-1 hover:bg-[#2d363e]/60 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="flex items-start gap-3.5 select-none pr-8 border-b border-[#3c494e]/30 pb-5">
+                <div className="w-11 h-11 rounded-lg bg-[#222b33] border border-[#3c494e] flex items-center justify-center shrink-0">
+                  <Cpu className="w-6 h-6 text-[#00d1ff] fill-[#00d1ff]/5" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-black text-white leading-tight flex items-center gap-2">
+                    Monitoring Panel
+                  </h2>
+                  <p className="text-xs text-[#bbc9cf] font-light mt-1">
+                    Live monitoring detail derived from the current Flask asset and alert feed.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="bg-[#0d1117] border border-white/5 rounded-xl p-4">
+                  <p className="text-[10px] uppercase tracking-wider text-[#7f9faf] mb-3">Asset Overview</p>
+                  <div className="space-y-2 text-sm text-[#bbc9cf]">
+                    <div className="flex justify-between gap-3"><span className="text-[#94a3b8]">Hostname</span><span>{monitoringTarget?.hostname ?? "Unknown"}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-[#94a3b8]">IP Address</span><span>{monitoringTarget?.ipAddress ?? "Unknown"}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-[#94a3b8]">CPU Model</span><span>{monitoringTarget?.cpuModel ?? "Unknown"}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-[#94a3b8]">RAM Size</span><span>{monitoringTarget?.ram ?? "Unknown"}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-[#94a3b8]">BIOS Serial</span><span>{monitoringTarget?.biosSerial ?? "Unknown"}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-[#94a3b8]">Baseboard Serial</span><span>{monitoringTarget?.history.find(item => item.includes("Baseboard Serial"))?.split(": ")[1] ?? "Unknown"}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-[#94a3b8]">MAC Address</span><span>{monitoringTarget?.history.find(item => item.includes("MAC Address"))?.split(": ")[1] ?? "Unknown"}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-[#94a3b8]">Windows Version</span><span>{monitoringTarget?.os ?? "Unknown"}</span></div>
+                  </div>
+                </div>
+
+                <div className="bg-[#0d1117] border border-white/5 rounded-xl p-4">
+                  <p className="text-[10px] uppercase tracking-wider text-[#7f9faf] mb-3">Live Monitoring</p>
+                  <div className="space-y-2 text-sm text-[#bbc9cf]">
+                    <div className="flex justify-between gap-3"><span className="text-[#94a3b8]">Monitoring Status</span><span>{monitoringTarget?.status ?? "Unknown"}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-[#94a3b8]">Last Scan Time</span><span>{monitoringMetrics.lastScanTime}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-[#94a3b8]">Total Alerts</span><span>{monitoringMetrics.totalAlerts}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-[#94a3b8]">Critical Alert Count</span><span>{monitoringMetrics.criticalCount}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-[#94a3b8]">Warning Alert Count</span><span>{monitoringMetrics.warningCount}</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-4">
+                <div className="bg-[#0d1117] border border-white/5 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-[10px] uppercase tracking-wider text-[#7f9faf]">Recent RAM_CHANGE Events</p>
+                  </div>
+                  <div className="space-y-2 text-sm text-[#bbc9cf]">
+                    {monitoringMetrics.ramChanges.length > 0 ? (
+                      monitoringMetrics.ramChanges.map((log, idx) => (
+                        <div key={idx} className="rounded-lg bg-[#141b22] border border-white/5 p-3">
+                          <div className="text-[#94a3b8] text-[10px] uppercase tracking-wider">{log.timestamp}</div>
+                          <div>{log.message}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-[#8697a8] text-sm">No recent RAM change events.</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-[#0d1117] border border-white/5 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-[10px] uppercase tracking-wider text-[#7f9faf]">Recent MOTHERBOARD_CHANGE Events</p>
+                  </div>
+                  <div className="space-y-2 text-sm text-[#bbc9cf]">
+                    {monitoringMetrics.motherboardChanges.length > 0 ? (
+                      monitoringMetrics.motherboardChanges.map((log, idx) => (
+                        <div key={idx} className="rounded-lg bg-[#141b22] border border-white/5 p-3">
+                          <div className="text-[#94a3b8] text-[10px] uppercase tracking-wider">{log.timestamp}</div>
+                          <div>{log.message}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-[#8697a8] text-sm">No recent motherboard change events.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isAnalyticsOpen && (
+          <div 
+            id="analytics-modal-scaffolding"
+            className="fixed inset-0 bg-[#060f16]/80 backdrop-blur-md z-50 flex justify-center items-start p-3 sm:p-6 md:pt-16 transition-opacity duration-300"
+            onClick={handleCloseAnalyticsPanel}
+          >
+            <div 
+              id="analytics-modal-drawer"
+              className="w-full max-w-6xl max-h-[calc(100vh-1.5rem)] md:max-h-[calc(100vh-8rem)] bg-[#0c1318]/95 border border-white/10 rounded-2xl md:rounded-3xl overflow-y-auto shadow-2xl shadow-[#000000]/50"
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+            >
+              <div className="border-b border-[#1f2a34]/70 px-4 sm:px-6 py-5 flex items-start justify-between gap-4 bg-[#0f1720]/80">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full bg-[#002a3f] px-3 py-1 text-[10px] sm:text-xs uppercase tracking-[0.2em] sm:tracking-[0.35em] text-[#7dd3fc] font-semibold">
+                    <Zap className="w-4 h-4" /> Executive Intelligence
+                  </div>
+                  <h2 className="mt-4 text-2xl sm:text-3xl font-black text-white tracking-tight">Analytics Intelligence</h2>
+                  <p className="mt-2 text-sm text-[#9ca3af] leading-relaxed max-w-2xl">
+                    Premium SOC-level analytics synthesized from live asset and alert telemetry, tailored for enterprise security leadership.
+                  </p>
+                </div>
+                <button 
+                  id="analytics-drawer-close-btn"
+                  onClick={handleCloseAnalyticsPanel}
+                  className="text-[#cbd5e1] hover:text-white p-3 rounded-full bg-[#111827]/80 border border-[#334155]/60 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-4 sm:p-6 grid gap-6">
+                <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="rounded-3xl bg-[#111827] border border-[#1f2937]/70 p-5">
+                    <p className="text-[10px] uppercase tracking-[0.35em] text-[#60a5fa] mb-4">Executive Overview</p>
+                    <div className="grid gap-3">
+                      <div className="flex items-center justify-between rounded-2xl bg-[#0f172a]/80 p-3">
+                        <span className="text-xs uppercase text-[#94a3b8]">Total Assets</span>
+                        <span className="text-xl font-semibold text-white">{kpiStats.totalAssets}</span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-2xl bg-[#0f172a]/80 p-3">
+                        <span className="text-xs uppercase text-[#94a3b8]">Online Devices</span>
+                        <span className="text-xl font-semibold text-white">{kpiStats.onlineDevices}</span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-2xl bg-[#0f172a]/80 p-3">
+                        <span className="text-xs uppercase text-[#94a3b8]">Offline Devices</span>
+                        <span className="text-xl font-semibold text-white">{kpiStats.offlineDevices}</span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-2xl bg-[#0f172a]/80 p-3">
+                        <span className="text-xs uppercase text-[#94a3b8]">Critical Alerts</span>
+                        <span className="text-xl font-semibold text-[#f87171]">{analyticsMetrics.criticalCount}</span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-2xl bg-[#0f172a]/80 p-3">
+                        <span className="text-xs uppercase text-[#94a3b8]">Warning Alerts</span>
+                        <span className="text-xl font-semibold text-[#fbbf24]">{analyticsMetrics.warningCount}</span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-2xl bg-[#0f172a]/80 p-3">
+                        <span className="text-xs uppercase text-[#94a3b8]">Active Users</span>
+                        <span className="text-xl font-semibold text-white">{kpiStats.activeUsers}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-3xl bg-[#111827] border border-[#1f2937]/70 p-5 sm:col-span-2 lg:col-span-1">
+                    <p className="text-[10px] uppercase tracking-[0.35em] text-[#60a5fa] mb-4">Security Intelligence</p>
+                    <div className="grid gap-4">
+                      <div className="rounded-3xl bg-[#0f172a]/90 border border-[#1f2937]/70 p-4">
+                        <p className="text-sm text-[#cbd5e1] font-semibold">Device Integrity Score</p>
+                        <p className="mt-3 text-4xl font-black text-white">{analyticsMetrics.deviceIntegrityScore}%</p>
+                        <p className="mt-2 text-xs uppercase tracking-[0.3em] text-[#94a3b8]">Computed from current alert severity and asset health.</p>
+                      </div>
+                      <div className="rounded-3xl bg-[#0f172a]/90 border border-[#1f2937]/70 p-4">
+                        <p className="text-sm text-[#cbd5e1] font-semibold">Security Posture</p>
+                        <p className="mt-3 text-sm text-[#e2e8f0] leading-relaxed">{analyticsMetrics.securityPostureSummary}</p>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="rounded-3xl bg-[#0f172a]/90 border border-[#1f2937]/70 p-4">
+                          <p className="text-[10px] uppercase tracking-[0.35em] text-[#94a3b8] mb-2">RAM Change Events</p>
+                          <p className="text-3xl font-black text-white">{analyticsMetrics.recentRamChanges.length}</p>
+                        </div>
+                        <div className="rounded-3xl bg-[#0f172a]/90 border border-[#1f2937]/70 p-4">
+                          <p className="text-[10px] uppercase tracking-[0.35em] text-[#94a3b8] mb-2">Motherboard Change Events</p>
+                          <p className="text-3xl font-black text-white">{analyticsMetrics.recentMotherboardChanges.length}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="rounded-3xl bg-[#111827] border border-[#1f2937]/70 p-5">
+                    <p className="text-[10px] uppercase tracking-[0.35em] text-[#60a5fa] mb-4">Asset Intelligence</p>
+                    <div className="space-y-3 text-sm text-[#cbd5e1]">
+                      <div className="rounded-3xl bg-[#0f172a]/80 p-4 border border-[#1f2937]/50">
+                        <p className="text-xs uppercase tracking-[0.35em] text-[#94a3b8]">Most Alerted Device</p>
+                        <p className="mt-2 text-lg font-semibold text-white">{analyticsMetrics.mostAlertedNode}</p>
+                      </div>
+                      <div className="rounded-3xl bg-[#0f172a]/80 p-4 border border-[#1f2937]/50">
+                        <p className="text-xs uppercase tracking-[0.35em] text-[#94a3b8]">Most Recent Device</p>
+                        <p className="mt-2 text-lg font-semibold text-white">{analyticsMetrics.mostRecentDevice}</p>
+                      </div>
+                      <div className="rounded-3xl bg-[#0f172a]/80 p-4 border border-[#1f2937]/50">
+                        <p className="text-xs uppercase tracking-[0.35em] text-[#94a3b8]">Unique Devices Monitored</p>
+                        <p className="mt-2 text-lg font-semibold text-white">{analyticsMetrics.uniqueDevicesMonitored}</p>
+                      </div>
+                      <div className="rounded-3xl bg-[#0f172a]/80 p-4 border border-[#1f2937]/50">
+                        <p className="text-xs uppercase tracking-[0.35em] text-[#94a3b8]">Highest Risk Device</p>
+                        <p className="mt-2 text-lg font-semibold text-white">{analyticsMetrics.highestRiskDevice}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-3xl bg-[#111827] border border-[#1f2937]/70 p-5">
+                    <p className="text-[10px] uppercase tracking-[0.35em] text-[#60a5fa] mb-4">Risk Distribution</p>
+                    <div className="space-y-3">
+                      <div className="rounded-3xl bg-[#0f172a]/80 p-4 border border-[#1f2937]/50">
+                        <div className="flex items-center justify-between mb-2"><span className="text-sm text-[#94a3b8]">Critical</span><span className="text-white font-semibold">{analyticsMetrics.criticalCount}</span></div>
+                        <div className="h-2 rounded-full bg-[#111827]"><div className="h-2 rounded-full bg-[#f87171]" style={{ width: `${Math.min(100, analyticsMetrics.criticalCount * 14)}%` }} /></div>
+                      </div>
+                      <div className="rounded-3xl bg-[#0f172a]/80 p-4 border border-[#1f2937]/50">
+                        <div className="flex items-center justify-between mb-2"><span className="text-sm text-[#94a3b8]">Warning</span><span className="text-white font-semibold">{analyticsMetrics.warningCount}</span></div>
+                        <div className="h-2 rounded-full bg-[#111827]"><div className="h-2 rounded-full bg-[#fbbf24]" style={{ width: `${Math.min(100, analyticsMetrics.warningCount * 14)}%` }} /></div>
+                      </div>
+                      <div className="rounded-3xl bg-[#0f172a]/80 p-4 border border-[#1f2937]/50">
+                        <div className="flex items-center justify-between mb-2"><span className="text-sm text-[#94a3b8]">Informational</span><span className="text-white font-semibold">{analyticsMetrics.infoCount}</span></div>
+                        <div className="h-2 rounded-full bg-[#111827]"><div className="h-2 rounded-full bg-[#60a5fa]" style={{ width: `${Math.min(100, analyticsMetrics.infoCount * 12)}%` }} /></div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="rounded-3xl bg-[#111827] border border-[#1f2937]/70 p-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.35em] text-[#60a5fa]">Alert Timeline</p>
+                      <h3 className="mt-2 text-lg font-semibold text-white">Recent alert activity</h3>
+                    </div>
+                    <span className="text-[10px] uppercase tracking-[0.35em] text-[#94a3b8]">Latest 8 events</span>
+                  </div>
+                  <div className="space-y-3">
+                    {analyticsMetrics.alertTimeline.length > 0 ? (
+                      analyticsMetrics.alertTimeline.map((log, idx) => (
+                        <div key={idx} className="grid grid-cols-1 sm:grid-cols-[110px_1fr_120px_90px] gap-2 sm:gap-3 sm:items-center rounded-3xl bg-[#0f172a]/80 p-4 border border-[#1f2937]/50">
+                          <div className="text-[11px] uppercase tracking-[0.25em] text-[#94a3b8]">{log.timestamp}</div>
+                          <div className="text-sm text-white font-semibold">{log.node}</div>
+                          <div className="text-sm text-[#cbd5e1] truncate">{log.message}</div>
+                          <div className={`text-xs font-bold uppercase tracking-[0.3em] ${log.type === "critical" ? "text-[#f87171]" : log.type === "warning" ? "text-[#fbbf24]" : "text-[#60a5fa]"}`}>{log.type}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-[#94a3b8] text-sm">No alert timeline events available.</div>
+                    )}
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isAssetHistoryOpen && (
+          <div
+            id="asset-history-scaffolding"
+            className="fixed inset-0 bg-[#060f16]/70 backdrop-blur-md z-50 flex justify-center items-start p-3 sm:p-6 md:pt-16 transition-opacity duration-300 overflow-y-auto"
+            onClick={handleCloseAssetHistory}
+          >
+            <div className="w-full max-w-6xl p-0 sm:p-6" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+              <AssetHistory assets={assets} liveLogs={liveLogs} onClose={handleCloseAssetHistory} />
+            </div>
+          </div>
+        )}
+
+        {selectedAsset && (
+          <div 
+            id="asset-detail-scaffolding"
+            className="fixed inset-0 bg-[#060f16]/70 backdrop-blur-md z-50 flex justify-end transition-opacity duration-300"
+            onClick={() => setSelectedAsset(null)}
+          >
+            <div 
+              id="asset-detail-drawer"
+              className="w-full max-w-xl bg-[#141c24]/95 border-l border-white/10 h-full overflow-y-auto p-4 sm:p-6 md:p-8 flex flex-col gap-6 shadow-2xl relative select-text"
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+            >
+              
+              {/* Corner Close Box */}
+              <button 
+                id="drawer-close-btn"
+                onClick={() => setSelectedAsset(null)}
+                className="absolute top-5 right-5 text-[#bbc9cf] hover:text-white p-1 hover:bg-[#2d363e]/60 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              {/* Title Block Header */}
+              <div className="flex items-start gap-3.5 select-none pr-8 border-b border-[#3c494e]/30 pb-5">
+                <div className="w-11 h-11 rounded-lg bg-[#222b33] border border-[#3c494e] flex items-center justify-center shrink-0">
+                  <Cpu className="w-6 h-6 text-[#00d1ff] fill-[#00d1ff]/5" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-black text-white leading-tight flex items-center gap-2">
+                    {selectedAsset.hostname}
+                    {selectedAsset.complianceStatus ? (
+                      <span className="text-[9px] uppercase tracking-wider font-semibold text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30">SECURE</span>
+                    ) : (
+                      <span className="text-[9px] uppercase tracking-wider font-semibold text-red-400 bg-red-500/10 px-2.5 py-0.5 rounded-full border border-red-500/30">FLAGGED</span>
+                    )}
+                  </h2>
+                  <p className="text-xs text-[#bbc9cf] font-light mt-1">
+                    Telemetry analysis of endpoint assigned to <strong className="text-[#dae3ee] font-medium">{selectedAsset.employee}</strong>.
+                  </p>
+                </div>
+              </div>
+
+              {/* Grid of Dynamic Dial Progress Rings (visualizes fluctuating variables) */}
+              <div className="grid grid-cols-3 gap-3.5 text-center bg-[#0d1117] p-4 rounded-xl border border-white/5 select-none">
+                
+                {/* Ring 1 */}
+                <div className="flex flex-col items-center">
+                  <div className="relative w-16 h-16 flex items-center justify-center mb-1">
+                    <svg className="w-full h-full transform -rotate-90">
+                      <circle cx="32" cy="32" r="28" stroke="rgba(255,255,255,0.05)" strokeWidth="4" fill="transparent" />
+                      <circle cx="32" cy="32" r="28" stroke="#00d1ff" strokeWidth="4" fill="transparent" 
+                        strokeDasharray={175.9}
+                        strokeDashoffset={175.9 - (175.9 * telemetryCPU) / 100}
+                        className="transition-all duration-700"
+                      />
+                    </svg>
+                    <span className="absolute text-xs font-mono font-bold text-white leading-none">
+                      {selectedAsset.status === "Offline" ? 0 : telemetryCPU}%
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-bold tracking-wider text-[#bbc9cf] uppercase">CPU Load</span>
+                </div>
+
+                {/* Ring 2 */}
+                <div className="flex flex-col items-center">
+                  <div className="relative w-16 h-16 flex items-center justify-center mb-1">
+                    <svg className="w-full h-full transform -rotate-90">
+                      <circle cx="32" cy="32" r="28" stroke="rgba(255,255,255,0.05)" strokeWidth="4" fill="transparent" />
+                      <circle cx="32" cy="32" r="28" stroke="#a4e6ff" strokeWidth="4" fill="transparent" 
+                        strokeDasharray={175.9}
+                        strokeDashoffset={175.9 - (175.9 * telemetryRAM) / 100}
+                        className="transition-all duration-700"
+                      />
+                    </svg>
+                    <span className="absolute text-xs font-mono font-bold text-white leading-none">
+                      {selectedAsset.status === "Offline" ? 0 : telemetryRAM}%
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-bold tracking-wider text-[#bbc9cf] uppercase">Memory in use</span>
+                </div>
+
+                {/* Ring 3 */}
+                <div className="flex flex-col items-center">
+                  <div className="relative w-16 h-16 flex items-center justify-center mb-1">
+                    <svg className="w-full h-full transform -rotate-90">
+                      <circle cx="32" cy="32" r="28" stroke="rgba(255,255,255,0.05)" strokeWidth="4" fill="transparent" />
+                      <circle cx="32" cy="32" r="28" stroke="#00566a" strokeWidth="4" fill="transparent" 
+                        strokeDasharray={175.9}
+                        strokeDashoffset={175.9 - (175.9 * Math.min(100, telemetryNET / 2))}
+                        className="transition-all duration-700"
+                      />
+                    </svg>
+                    <span className="absolute text-[10px] font-mono font-bold text-white leading-none">
+                      {selectedAsset.status === "Offline" ? 0 : telemetryNET} Mbps
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-bold tracking-wider text-[#bbc9cf] uppercase">Tx Packets</span>
+                </div>
+
+              </div>
+
+              {/* Hardware specifications grid (displays monospaced details side-by-side) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-[#182028]/60 p-4 border border-[#3c494e]/15 rounded-xl font-mono text-[11px]">
+                
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[#bbc9cf] text-[9px] uppercase tracking-wider font-bold">Operating System</span>
+                  <span className="text-[#dae3ee] font-semibold">{selectedAsset.os}</span>
+                </div>
+
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[#bbc9cf] text-[9px] uppercase tracking-wider font-bold">Processor Core Model</span>
+                  <span className="text-[#dae3ee] font-semibold">{selectedAsset.cpuModel}</span>
+                </div>
+
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[#bbc9cf] text-[9px] uppercase tracking-wider font-bold">Physical Room Location</span>
+                  <span className="text-[#dae3ee] font-semibold flex items-center gap-1">
+                    <MapPin className="w-3.5 h-3.5 text-[#00d1ff]" />
+                    {selectedAsset.location}
+                  </span>
+                </div>
+
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[#bbc9cf] text-[9px] uppercase tracking-wider font-bold">BIOS Serial Signature</span>
+                  <span className="text-white font-bold">{selectedAsset.biosSerial}</span>
+                </div>
+
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[#bbc9cf] text-[9px] uppercase tracking-wider font-bold">Last BIOS Re-flash</span>
+                  <span className="text-[#dae3ee]">{selectedAsset.lastReflash}</span>
+                </div>
+
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[#bbc9cf] text-[9px] uppercase tracking-wider font-bold">IP Subnet Routing</span>
+                  <span className="text-[#00d1ff] font-bold">{selectedAsset.ipAddress}</span>
+                </div>
+
+              </div>
+
+              {/* Tactical Actions Operations Center */}
+              <div className="flex flex-wrap gap-2 select-none border-t border-[#3c494e]/20 pt-4">
+                
+                {/* AI Compliance trigger */}
+                <button 
+                  onClick={() => handleAICorporateAudit(selectedAsset)}
+                  disabled={auditLoading || selectedAsset.status === "Offline"}
+                  className="flex-1 min-w-full sm:min-w-[200px] bg-gradient-to-r from-[#00566a] to-[#00d1ff] text-[#001f28] py-3 sm:py-2 px-3 rounded-lg flex items-center justify-center gap-2 font-bold text-[11px] uppercase tracking-wider transition-all hover:scale-[1.02] active:scale-95 hover:shadow-[0_0_12px_rgba(0,209,255,0.4)] disabled:opacity-40 disabled:hover:scale-100 disabled:pointer-events-none cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  {auditLoading ? "AI Forensics Scanning..." : "AI Compliance Audit"}
+                </button>
+
+                {/* Simulated swap trigger */}
+                {!isDemoMode && (
+                  <button 
+                    onClick={() => handleTriggerTelemetryAlert(selectedAsset)}
+                    disabled={selectedAsset.status === "Offline" || selectedAsset.status === "Overload"}
+                    className="flex-1 bg-red-950/20 hover:bg-red-950/40 border border-red-500/40 text-red-400 py-2 px-3 rounded-lg flex items-center justify-center gap-2 font-bold text-[11px] uppercase tracking-wider transition-all disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                    title="Simulate card swap alert dynamically on the dashboard"
+                  >
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    Simulate Tamper
+                  </button>
+                )}
+
+                {/* Subnet sever quarantine tool */}
+                {!isDemoMode && (
+                  <button 
+                    onClick={() => handleTacticalQuarantine(selectedAsset)}
+                    disabled={selectedAsset.status === "Offline"}
+                    className="flex-1 bg-amber-950/20 hover:bg-amber-950/40 border border-amber-500/40 text-amber-400 py-2 px-3 rounded-lg flex items-center justify-center gap-2 font-bold text-[11px] uppercase tracking-wider transition-all disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                    title="Sever the dynamic IP subnet communications line on the network router level"
+                  >
+                    <Lock className="w-4 h-4 shrink-0" />
+                    Quarantine Node
+                  </button>
+                )}
+
+                {/* Re-flash BIOS Reset */}
+                {!isDemoMode && (
+                  <button 
+                    onClick={() => handleReflashBIOSReset(selectedAsset)}
+                    className="w-full bg-[#161B22] hover:bg-[#2d363e]/70 border border-white/10 hover:border-white/20 text-white py-2 px-3 rounded-lg flex items-center justify-center gap-2 font-bold text-[11px] uppercase tracking-wide transition-all cursor-pointer"
+                    title="Wipe alerts baseline and restore nominal Apple/Microsoft trusted profiles"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    Re-Flash BIOS & Reset Metrics
+                  </button>
+                )}
+
+              </div>
+
+              {/* AI Forensic results window output */}
+              {(auditLoading || auditReport) && (
+                <div className="bg-[#0D1117] border border-white/5 p-4 rounded-xl flex flex-col gap-3 font-sans shadow-inner selection:bg-[#00d1ff]/20">
+                  
+                  {/* Headline item */}
+                  <div className="flex items-center justify-between border-b border-[#3c494e]/30 pb-2 mb-1">
+                    <span className="text-xs uppercase font-black text-[#00d1ff] tracking-widest flex items-center gap-1.5 font-mono">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Sentinel Forensic AI Analyst
+                    </span>
+                    {auditRiskScore !== null && (
+                      <span className={`text-[10px] font-mono font-extrabold px-2.5 py-0.5 rounded-full ${auditRiskScore > 70 ? "bg-red-950/40 text-red-400 border border-red-500/30" : auditRiskScore > 30 ? "bg-amber-950/40 text-amber-400 border border-amber-500/30" : "bg-emerald-992/30 text-emerald-400 border border-emerald-500/30"}`}>
+                        Risk Index: {auditRiskScore}/100
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Loading Scanline Sequencer */}
+                  {auditLoading ? (
+                    <div className="flex flex-col gap-3 py-6 items-center justify-center text-center select-none font-mono text-[11px] text-[#00d1ff]">
+                      <RefreshCw className="w-8 h-8 animate-spin text-[#00d1ff]" />
+                      <div className="flex flex-col gap-1 mt-2">
+                        <span className="animate-pulse">Handshaking cryptographic node signatures...</span>
+                        <span className="text-[#bbc9cf] text-[9px] font-light">Querying secure full-stack forensic intelligence model [gemini-3.5-flash]</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div id="ai-forensic-report-markdown" className="text-xs text-[#bbc9cf] leading-relaxed select-text space-y-3 prose prose-invert font-light max-w-none">
+                      
+                      {/* Formatted markdown text box */}
+                      <div className="whitespace-pre-line font-mono text-[11px] text-[#dae3ee]">
+                        {auditReport}
+                      </div>
+
+                    </div>
+                  )}
+
+                </div>
+              )}
+
+              {/* Asset Historical logs list panel */}
+              <div className="flex flex-col gap-2.5 border-t border-[#3c494e]/20 pt-4 selection:bg-[#00d1ff]/10">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#bbc9cf] select-none flex items-center gap-1.5">
+                  <Clock className="w-4 h-4 text-[#859399]" />
+                  Internal Endpoint Changelog
+                </h3>
+                <div className="flex flex-col gap-2 h-44 overflow-y-auto pr-1">
+                  {selectedAsset.history.map((logStr: string, lIdx: number) => (
+                    <div key={lIdx} className="bg-[#0d1117] p-2.5 border border-white/5 rounded-lg text-[10.5px] font-mono leading-relaxed text-[#bbc9cf] hover:text-[#dae3ee]">
+                      <span className="text-[#00d1ff] font-bold mr-1.5 select-none font-mono">▸</span>
+                      {logStr}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+      </main>
+
+    </div>
+  );
+}

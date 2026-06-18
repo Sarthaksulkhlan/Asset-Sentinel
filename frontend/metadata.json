@@ -1,0 +1,6 @@
+{
+  "name": "Asset Sentinel",
+  "description": "An advanced, high-fidelity real-time cybersecurity command center for enterprise hardware tracking, RAM change detection, and BIOS compliance monitoring.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
