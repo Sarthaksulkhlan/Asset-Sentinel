@@ -11,6 +11,48 @@ body {
   color: #dae3ee;
 }
 
+#landing-screen {
+  isolation: isolate;
+}
+
+#landing-screen .landing-perf-region {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 720px;
+}
+
+#landing-screen .glass-panel,
+#landing-screen nav,
+#landing-screen footer {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  contain: paint;
+}
+
+#landing-screen .animate-float-1,
+#landing-screen .animate-float-2,
+#landing-screen .animate-float-3,
+#landing-screen .scanline {
+  will-change: transform;
+}
+
+#landing-screen[data-scrolling="true"] .animate-pulse,
+#landing-screen[data-scrolling="true"] .animate-ping,
+#landing-screen[data-scrolling="true"] .animate-spin,
+#landing-screen[data-scrolling="true"] .animate-float-1,
+#landing-screen[data-scrolling="true"] .animate-float-2,
+#landing-screen[data-scrolling="true"] .animate-float-3,
+#landing-screen[data-scrolling="true"] .animate-warning-border,
+#landing-screen[data-scrolling="true"] .scanline {
+  animation-play-state: paused;
+}
+
+#landing-screen[data-scrolling="true"] .glass-panel,
+#landing-screen[data-scrolling="true"] nav,
+#landing-screen[data-scrolling="true"] footer {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
 /* Custom cyber-grid mesh layer */
 .bg-grid {
   background-size: 40px 40px;

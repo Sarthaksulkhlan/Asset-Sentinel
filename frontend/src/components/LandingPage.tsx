@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from "react";
 import { 
   Shield, 
   Cpu, 
@@ -11,18 +11,13 @@ import {
   Sliders, 
   ArrowRight, 
   AlertTriangle, 
-  Terminal,
   LogIn,
   Activity,
   CheckCircle2,
-  Lock,
-  RefreshCw,
-  Zap,
   Server,
   X
 } from "lucide-react";
-import { SecurityFeedItem } from "../types";
-import { STREAMING_FEED_PRESETS, CORE_TELEMETRY_PROTOCOLS } from "../data";
+import { CORE_TELEMETRY_PROTOCOLS } from "../data";
 import ShaderBackground from "./ShaderBackground";
 import { SentinelLogo } from "./SentinelLogo";
 
@@ -30,12 +25,653 @@ interface LandingPageProps {
   onNavigate: (view: "landing" | "login" | "dashboard" | "demo") => void;
 }
 
-export default function LandingPage({ onNavigate }: LandingPageProps) {
-  // Dynamic values states for hardware cards
-  const [ramValue, setRamValue] = useState(72);
-  const [biosHash, setBiosHash] = useState("0x0F3C99B2");
-  const [deviceAlertCell, setDeviceAlertCell] = useState<number | null>(42);
+interface RollingKpiValueProps {
+  value: string;
+  className: string;
+  duration: number;
+}
 
+const KPI_STRIP_DIGITS = Array.from({ length: 160 }, (_, index) => index % 10);
+const GRID_CELL_BASE_CLASS = "w-full aspect-square rounded-sm border transition-all duration-300";
+const HEX_CHARS = "0123456789ABCDEF";
+
+const getGridCellColorClass = (state: string) => {
+  if (state === "nominal") return "bg-emerald-500/10 border-emerald-400/20 shadow-[0_0_2px_rgba(16,185,129,0.1)]";
+  if (state === "warning") return "bg-amber-500/30 border-amber-400/40 shadow-[0_0_3px_rgba(245,158,11,0.2)]";
+  if (state === "alert") return "bg-red-500 border-red-400 shadow-[0_0_8px_#ef4444] animate-ping";
+  return "bg-[#2d363e]/40 border-white/5";
+};
+
+const getGridCellClassName = (state: string) => `${GRID_CELL_BASE_CLASS} ${getGridCellColorClass(state)}`;
+
+const LandingScrollPerformanceController = React.memo(function LandingScrollPerformanceController() {
+  useEffect(() => {
+    const landingScreen = document.getElementById("landing-screen");
+    if (!landingScreen) return;
+
+    let scrollEndTimer = 0;
+
+    const handleScroll = () => {
+      landingScreen.dataset.scrolling = "true";
+      window.clearTimeout(scrollEndTimer);
+      scrollEndTimer = window.setTimeout(() => {
+        delete landingScreen.dataset.scrolling;
+      }, 140);
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      window.clearTimeout(scrollEndTimer);
+      window.removeEventListener("scroll", handleScroll);
+      delete landingScreen.dataset.scrolling;
+    };
+  }, []);
+
+  return null;
+});
+
+const RollingKpiValue = React.memo(function RollingKpiValue({ value, className, duration }: RollingKpiValueProps) {
+  const digitRefs = useRef<Array<HTMLSpanElement | null>>([]);
+  const animationFrameRef = useRef(0);
+  const runIdRef = useRef(0);
+  const valueChars = useMemo(() => value.split(""), [value]);
+  const digitIndexes = useMemo(() => {
+    return valueChars.reduce<number[]>((indexes, char, index) => {
+      if (/\d/.test(char)) indexes.push(index);
+      return indexes;
+    }, []);
+  }, [valueChars]);
+
+  const playAnimation = useCallback(() => {
+    cancelAnimationFrame(animationFrameRef.current);
+
+    const digitCount = digitIndexes.length;
+    const startedAt = performance.now();
+    const runId = runIdRef.current + 1;
+    runIdRef.current = runId;
+    const baseDuration = Math.min(5000, Math.max(3000, duration + 1200));
+
+    const digitAnimations = digitIndexes.map((charIndex, digitOrder) => {
+      const targetDigit = Number(value[charIndex]);
+      const startDigit = Math.floor(Math.random() * 10);
+      const digitRefIndex = digitOrder;
+      const rotations = 7 + digitOrder + Math.floor(Math.random() * 2);
+      const forwardDelta = (targetDigit - startDigit + 10) % 10;
+      const startPosition = 10 + startDigit;
+      const endPosition = startPosition + rotations * 10 + forwardDelta;
+      const digitDuration = Math.min(5000, baseDuration + digitOrder * 180 + digitCount * 24);
+      const settleDelay = digitOrder * 22;
+
+      return {
+        ref: digitRefs.current[digitRefIndex],
+        startPosition,
+        endPosition,
+        duration: digitDuration,
+        delay: settleDelay
+      };
+    });
+
+    const setDigitPosition = (element: HTMLSpanElement | null, position: number) => {
+      if (!element) return;
+      element.style.transform = `translate3d(0, -${position}em, 0)`;
+    };
+
+    digitAnimations.forEach(({ ref, startPosition }) => {
+      setDigitPosition(ref, startPosition);
+    });
+
+    const easeOutQuint = (progress: number) => {
+      return 1 - Math.pow(1 - progress, 5);
+    };
+
+    const tick = (now: number) => {
+      if (runIdRef.current !== runId) return;
+      let isComplete = true;
+
+      digitAnimations.forEach(({ ref, startPosition, endPosition, duration: digitDuration, delay }) => {
+        const elapsed = Math.max(0, now - startedAt - delay);
+        const progress = Math.min(elapsed / digitDuration, 1);
+        const easedProgress = easeOutQuint(progress);
+        const position = progress === 1
+          ? endPosition
+          : startPosition + (endPosition - startPosition) * easedProgress;
+
+        setDigitPosition(ref, position);
+        isComplete = isComplete && progress === 1;
+      });
+
+      if (isComplete) return;
+
+      animationFrameRef.current = requestAnimationFrame(tick);
+    };
+
+    animationFrameRef.current = requestAnimationFrame(tick);
+  }, [digitIndexes, duration, value]);
+
+  useLayoutEffect(() => {
+    playAnimation();
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        playAnimation();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      cancelAnimationFrame(animationFrameRef.current);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [playAnimation]);
+
+  let digitRefIndex = 0;
+
+  return (
+    <span
+      className={className}
+      aria-label={value}
+      style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}
+    >
+      {valueChars.map((char, charIndex) => {
+        if (!/\d/.test(char)) {
+          return (
+            <span key={`${char}-${charIndex}`} aria-hidden="true">
+              {char}
+            </span>
+          );
+        }
+
+        const currentDigitRefIndex = digitRefIndex;
+        digitRefIndex += 1;
+
+        return (
+          <span
+            key={`${char}-${charIndex}`}
+            aria-hidden="true"
+            style={{
+              display: "inline-block",
+              width: "0.62em",
+              height: "1em",
+              lineHeight: "1em",
+              overflow: "hidden",
+              verticalAlign: "-0.04em"
+            }}
+          >
+            <span
+              ref={(element) => {
+                digitRefs.current[currentDigitRefIndex] = element;
+              }}
+              style={{
+                display: "block",
+                lineHeight: "1em",
+                transform: `translate3d(0, -${Number(char)}em, 0)`,
+                willChange: "transform"
+              }}
+            >
+              {KPI_STRIP_DIGITS.map((digit, stripIndex) => (
+                <span
+                  key={stripIndex}
+                  style={{
+                    display: "block",
+                    height: "1em",
+                    lineHeight: "1em"
+                  }}
+                >
+                  {digit}
+                </span>
+              ))}
+            </span>
+          </span>
+        );
+      })}
+    </span>
+  );
+});
+
+const KpiAndMonitoringSections = React.memo(function KpiAndMonitoringSections({
+  onNavigate
+}: {
+  onNavigate: LandingPageProps["onNavigate"];
+}) {
+  const chartWaveLineRef = useRef<SVGPathElement | null>(null);
+  const chartWaveFillRef = useRef<SVGPathElement | null>(null);
+  const [chartGridCells, setChartGridCells] = useState<string[]>(() =>
+    Array.from({ length: 64 }, (_, i) => (
+      i === 42 ? "alert" : Math.random() > 0.85 ? "warning" : "nominal"
+    ))
+  );
+  const [deviceAlertCell, setDeviceAlertCell] = useState<number | null>(42);
+  const [threatLevel, setThreatLevel] = useState(12);
+
+  useEffect(() => {
+    let isVisible = !document.hidden;
+
+    const handleVisibilityChange = () => {
+      isVisible = !document.hidden;
+    };
+
+    const gridTimer = window.setInterval(() => {
+      if (!isVisible) return;
+      setChartGridCells(prev =>
+        prev.map((state, idx) => {
+          if (idx === deviceAlertCell) return "alert";
+          if (Math.random() > 0.94) {
+            return Math.random() > 0.65 ? "warning" : "nominal";
+          }
+          return state;
+        })
+      );
+    }, 2400);
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(gridTimer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [deviceAlertCell]);
+
+  useEffect(() => {
+    let tick = 0;
+    let animationFrameId = 0;
+    let lastFrameAt = 0;
+    let isRunning = false;
+    const points = new Array<string>(25);
+
+    const updateWave = (now: number) => {
+      if (!isRunning) return;
+
+      if (now - lastFrameAt < 100) {
+        animationFrameId = requestAnimationFrame(updateWave);
+        return;
+      }
+
+      lastFrameAt = now;
+      tick += 0.15;
+      for (let i = 0; i <= 24; i++) {
+        const x = (i / 24) * 350;
+        const y = 90 + Math.sin(i * 0.45 + tick) * 22 + Math.cos(i * 0.2 + tick * 1.5) * 10;
+        points[i] = `${x},${y}`;
+      }
+      const wavePath = `M ${points.join(" L ")}`;
+      chartWaveLineRef.current?.setAttribute("d", wavePath);
+      chartWaveFillRef.current?.setAttribute("d", `${wavePath} L 350,180 L 0,180 Z`);
+      animationFrameId = requestAnimationFrame(updateWave);
+    };
+
+    const startWave = () => {
+      if (isRunning || document.hidden) return;
+      isRunning = true;
+      animationFrameId = requestAnimationFrame(updateWave);
+    };
+
+    const stopWave = () => {
+      isRunning = false;
+      cancelAnimationFrame(animationFrameId);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stopWave();
+      } else {
+        startWave();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    startWave();
+
+    return () => {
+      stopWave();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
+
+  const handleResolvePreviewAlarms = useCallback(() => {
+    setDeviceAlertCell(null);
+    setThreatLevel(0);
+    setChartGridCells(prev => prev.map(s => s === "alert" ? "nominal" : s));
+  }, []);
+
+  const handleTriggerPreviewThreat = useCallback(() => {
+    setDeviceAlertCell(42);
+    setThreatLevel(12);
+    setChartGridCells(prev => {
+      const next = [...prev];
+      next[42] = "alert";
+      return next;
+    });
+  }, []);
+
+  return (
+    <>
+      <section id="kpi-banner" className="landing-perf-region grid grid-cols-2 md:grid-cols-4 gap-4 mb-16 select-none">
+        <div className="glass-panel p-6 rounded-xl text-center flex flex-col justify-center border border-[#00d1ff]/10 hover:border-[#00d1ff]/30 transition-all duration-300 bg-[#121c24]/40">
+          <span className="font-mono text-[10px] text-[#bbc9cf] uppercase tracking-widest mb-1.5 block">Protected Devices</span>
+          <RollingKpiValue value="14,209" duration={1980} className="text-3xl md:text-4xl font-black text-[#00d1ff] tracking-tight glow-active" />
+        </div>
+        <div className="glass-panel p-6 rounded-xl text-center flex flex-col justify-center border border-[#00d1ff]/10 hover:border-[#00d1ff]/30 transition-all duration-300 bg-[#121c24]/40">
+          <span className="font-mono text-[10px] text-[#bbc9cf] uppercase tracking-widest mb-1.5 block">Active Sessions</span>
+          <RollingKpiValue value="842" duration={2160} className="text-3xl md:text-4xl font-black text-[#dae3ee] tracking-tight" />
+        </div>
+        <div className={`glass-panel p-6 rounded-xl text-center flex flex-col justify-center transition-all duration-500 bg-[#1a0f12]/30 ${deviceAlertCell ? "border-red-500/40 bg-red-950/15" : "border-[#00d1ff]/10"}`}>
+          <span className={`font-mono text-[10px] uppercase tracking-widest mb-1.5 block ${deviceAlertCell ? "text-red-400" : "text-[#bbc9cf]"}`}>Hardware Alerts</span>
+          <span className={`text-3xl md:text-4xl font-black tracking-tight transition-all ${deviceAlertCell ? "text-red-400 drop-shadow-[0_0_8px_rgba(239,68,68,0.5)]" : "text-emerald-400"}`}>
+            <RollingKpiValue value={deviceAlertCell ? `${threatLevel}` : "0"} duration={1840} className="" />
+          </span>
+        </div>
+        <div className="glass-panel p-6 rounded-xl text-center flex flex-col justify-center border border-[#00d1ff]/10 hover:border-[#00d1ff]/30 transition-all duration-300 bg-[#121c24]/40">
+          <span className="font-mono text-[10px] text-[#bbc9cf] uppercase tracking-widest mb-1.5 block">System Uptime</span>
+          <RollingKpiValue value="99.98%" duration={2380} className="text-3xl md:text-4xl font-black text-[#00d1ff] tracking-tight" />
+        </div>
+      </section>
+
+      <section id="live-monitoring-center" className="landing-perf-region mb-16 relative select-none">
+        <div className="absolute inset-0 bg-[#00d1ff]/5 blur-3xl rounded-full max-w-4xl mx-auto pointer-events-none"></div>
+        
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-x-4 gap-y-2 mb-6">
+          <div>
+            <h2 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight flex items-center gap-2">
+              <Activity className="w-6 h-6 text-[#00d1ff]" />
+              Live Monitoring Center
+            </h2>
+            <p className="text-sm text-[#bbc9cf] font-light mt-1">
+              Real-time telemetry waveform, throughput statistics, and active command subnet node metrics.
+            </p>
+          </div>
+          
+          <div className="flex gap-2">
+            {deviceAlertCell ? (
+              <button 
+                onClick={handleResolvePreviewAlarms}
+                className="px-4 py-2 border border-emerald-500/30 text-emerald-400 bg-emerald-500/5 hover:bg-emerald-500/15 rounded-lg text-xs font-mono font-bold tracking-wide transition-all uppercase flex items-center gap-1.5 active:scale-95 cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                Resolve Subnet Alarms
+              </button>
+            ) : (
+              <button 
+                onClick={handleTriggerPreviewThreat}
+                className="px-4 py-2 border border-red-500/30 text-red-400 bg-red-500/5 hover:bg-red-500/15 rounded-lg text-xs font-mono font-bold tracking-wide transition-all uppercase flex items-center gap-1.5 active:scale-95 cursor-pointer"
+              >
+                <AlertTriangle className="w-4 h-4 animate-pulse" />
+                Simulate Subnet Threat
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="glass-panel rounded-xl border border-[#3c494e]/30 grid grid-cols-1 md:grid-cols-2 bg-[#0a0f14]/90 shadow-2xl relative z-10 overflow-hidden">
+          <div className="p-6 border-b md:border-b-0 md:border-r border-[#3c494e]/20 flex flex-col gap-4 justify-between min-h-[310px]">
+            <div className="flex justify-between items-center">
+              <span className="text-[10px] font-mono tracking-widest font-bold text-[#00d1ff] uppercase">RAM Integrity Trend</span>
+              <span className="bg-[#00d1ff]/10 text-[#00d1ff] border border-[#00d1ff]/20 text-[9px] font-mono font-semibold px-2 py-0.5 rounded flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#00d1ff] animate-ping"></span>
+                INTEGRITY MONITORING STREAM
+              </span>
+            </div>
+            
+            <div className="h-32 w-full bg-[#070b10] border border-white/5 rounded-lg relative overflow-hidden flex items-end">
+              <div className="absolute inset-0 bg-grid opacity-20 pointer-events-none"></div>
+              
+              <svg className="w-full h-full" viewBox="0 0 350 180" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="waveGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#00d1ff" stopOpacity="0.4" />
+                    <stop offset="100%" stopColor="#00d1ff" stopOpacity="0.0" />
+                  </linearGradient>
+                </defs>
+                <path 
+                  ref={chartWaveFillRef}
+                  d="M 0,90 L 350,90 L 350,180 L 0,180 Z" 
+                  fill="url(#waveGrad)" 
+                  className="transition-all duration-100 ease-linear"
+                />
+                <path 
+                  ref={chartWaveLineRef}
+                  d="M 0,90 L 350,90" 
+                  fill="none" 
+                  stroke="#00d1ff" 
+                  strokeWidth="2.5" 
+                  strokeLinecap="round"
+                  className="transition-all duration-100 ease-linear drop-shadow-[0_0_6px_#00d1ff]"
+                />
+              </svg>
+
+              <div className="absolute bottom-2 left-2 flex items-center gap-1.5 font-mono text-[8px] text-[#bbc9cf] bg-[#141a22]/80 px-2 py-0.5 rounded border border-white/5 uppercase">
+                <span>RAM Verification Activity: ACTIVE</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-xs font-mono">
+              <div className="p-2.5 bg-[#070b10] border border-white/5 rounded-lg flex flex-col justify-between">
+                <span className="text-[9px] text-[#bbc9cf]/70 uppercase">RAM Change Detection Events</span>
+                <span className="text-[#00d1ff] font-bold text-sm tracking-wide">0 (NOMINAL)</span>
+              </div>
+              <div className="p-2.5 bg-[#070b10] border border-white/5 rounded-lg flex flex-col justify-between">
+                <span className="text-[9px] text-[#bbc9cf]/70 uppercase">Hardware Validation Activity</span>
+                <span className="text-emerald-400 font-bold text-sm tracking-wide">99.98% SECURE</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5 font-mono text-[9px]">
+              <div className="flex items-center justify-between p-2 bg-[#070b10] border border-white/5 rounded">
+                <span className="text-[#bbc9cf]/80">INTEGRITY TREND ANALYSIS</span>
+                <span className="text-emerald-400 font-semibold uppercase">100% SECURE MEMORY BASELINE</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-6 flex flex-col gap-4 justify-between min-h-[310px]">
+            <div className="flex justify-between items-center">
+              <span className="text-[10px] font-mono tracking-widest font-bold text-[#bbc9cf] uppercase">Subnet Node Grid Array</span>
+              <span className="text-[9px] font-mono text-[#00d1ff] font-bold">64 ACTIVE ENDPOINTS</span>
+            </div>
+            
+            <div className="grid grid-cols-8 gap-1.5 bg-[#070b10] p-3 border border-white/5 rounded-lg h-32 items-center justify-center">
+              {chartGridCells.map((state, idx) => (
+                <div 
+                  key={idx} 
+                  className={getGridCellClassName(state)}
+                  title={`Sector cell ${idx} status: ${state}`}
+                />
+              ))}
+            </div>
+
+            <div className="flex justify-between items-center text-[9px] font-mono text-[#bbc9cf] bg-[#070b10] p-2 rounded border border-white/5 font-semibold">
+              <div className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+                <span>Verified</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block"></span>
+                <span>Review Required</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block"></span>
+                <span>Alert Detected</span>
+              </div>
+            </div>
+
+            <button 
+              onClick={() => onNavigate("dashboard")}
+              className="w-full bg-[#00d1ff]/10 hover:bg-[#00d1ff]/20 border border-[#00d1ff]/30 text-[#00d1ff] text-xs font-bold uppercase py-2.5 rounded-lg transition-all flex items-center justify-center gap-2 active:scale-95"
+            >
+              <Server className="w-4 h-4 text-[#00d1ff]" />
+              Explore Command Live Grid
+            </button>
+          </div>
+        </div>
+      </section>
+    </>
+  );
+});
+
+const HardwareCardsSection = React.memo(function HardwareCardsSection() {
+  const ramValueRef = useRef(72);
+  const ramBarRef = useRef<HTMLDivElement | null>(null);
+  const ramTextRef = useRef<HTMLSpanElement | null>(null);
+  const biosHashRef = useRef<HTMLSpanElement | null>(null);
+
+  const setRamValue = useCallback((nextValue: number) => {
+    ramValueRef.current = nextValue;
+    if (ramBarRef.current) {
+      ramBarRef.current.style.width = `${nextValue}%`;
+    }
+    if (ramTextRef.current) {
+      ramTextRef.current.textContent = `${nextValue}% LOAD`;
+    }
+  }, []);
+
+  const setBiosHash = useCallback((nextHash: string) => {
+    if (biosHashRef.current) {
+      biosHashRef.current.textContent = nextHash;
+    }
+  }, []);
+
+  useEffect(() => {
+    let isVisible = !document.hidden;
+
+    const handleVisibilityChange = () => {
+      isVisible = !document.hidden;
+    };
+
+    const ramTimer = window.setInterval(() => {
+      if (!isVisible) return;
+      setRamValue(Math.min(98, Math.max(45, ramValueRef.current + Math.floor(Math.random() * 7) - 3)));
+    }, 1400);
+
+    const biosTimer = window.setInterval(() => {
+      if (!isVisible) return;
+      const currentHash = biosHashRef.current?.textContent || "0x0F3C99B2";
+      setBiosHash(currentHash.slice(0, 8) + HEX_CHARS[Math.floor(Math.random() * 16)]);
+    }, 1200);
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(ramTimer);
+      window.clearInterval(biosTimer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [setBiosHash, setRamValue]);
+
+  return (
+    <section id="terminal-diagram" className="landing-perf-region relative mb-24">
+      <div className="absolute inset-0 bg-[#00d1ff]/5 blur-3xl rounded-full max-w-2xl mx-auto pointer-events-none"></div>
+      
+      <div className="mb-6">
+        <h2 className="text-xl md:text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+          <ShieldAlert className="w-5.5 h-5.5 text-[#00d1ff]" />
+          Sentinel Core Hardware Cards
+        </h2>
+        <p className="text-xs text-[#bbc9cf] font-light mt-1">
+          Active endpoint digital signatures, biometrics, motherboard TPM handshakes, and cryptographic memory baselines.
+        </p>
+      </div>
+
+      <div className="relative w-full bg-[#0a0f14]/90 p-6 rounded-xl border border-[#3c494e]/30 shadow-2xl z-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 overflow-hidden">
+        <div className="absolute inset-0 opacity-10 pointer-events-none">
+          <div className="absolute top-[20%] w-full h-[1px] bg-gradient-to-r from-transparent via-[#00d1ff] to-transparent"></div>
+          <div className="absolute top-[50%] w-full h-[1px] bg-gradient-to-r from-transparent via-[#00d1ff] to-transparent animate-pulse"></div>
+          <div className="absolute top-[80%] w-full h-[1px] bg-gradient-to-r from-transparent via-[#00d1ff] to-transparent"></div>
+          <div className="absolute left-[20%] h-full w-[1px] bg-gradient-to-b from-transparent via-[#00d1ff] to-transparent"></div>
+          <div className="absolute left-[75%] h-full w-[1px] bg-gradient-to-b from-transparent via-[#00d1ff] to-transparent animate-pulse" style={{ animationDelay: "2s" }}></div>
+        </div>
+
+        <div 
+          className="glass-panel p-4 rounded-lg border-[#00d1ff]/25 bg-[#141c24]/75 select-none relative group cursor-pointer hover:border-[#00d1ff]/60 transition-all duration-300 animate-float-1"
+          onClick={() => setRamValue(Math.min(ramValueRef.current + 5, 99))}
+          title="Click to recalculate secure baseline allocation score"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-mono text-[9px] text-[#00d1ff] tracking-wider font-semibold">NODE-4912</span>
+            <Cpu className="w-4 h-4 text-[#00d1ff] animate-spin" />
+          </div>
+          <h4 className="text-xs font-semibold text-[#dae3ee]">RAM Verified (32GB)</h4>
+          
+          <div className="w-full bg-[#2d363e]/50 h-2 mt-4 rounded-full overflow-hidden relative border border-white/5">
+            <div 
+              ref={ramBarRef}
+              style={{ width: "72%" }}
+              className="bg-gradient-to-r from-cyan-500 to-[#00d1ff] h-full shadow-[0_0_8px_rgba(0,209,255,0.7)] transition-all duration-500 flex items-center justify-end"
+            >
+              <div className="h-full w-1 bg-white/50 animate-pulse"></div>
+            </div>
+          </div>
+          <div className="flex justify-between items-center text-[8px] font-mono mt-2 text-[#bbc9cf]/80">
+            <span>CAPACITY NOMINAL</span>
+            <span ref={ramTextRef} className="text-[#00d1ff] font-bold">72% LOAD</span>
+          </div>
+        </div>
+
+        <div className="glass-panel p-4 rounded-lg border-[#00d1ff]/20 bg-[#141c24]/75 select-none relative cursor-pointer hover:border-[#00d1ff]/50 transition-all duration-300 animate-float-2">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-mono text-[9px] text-[#00d1ff] tracking-wider font-semibold">SERVER-DELTA</span>
+            <Sliders className="w-4 h-4 text-[#00d1ff] animate-pulse" />
+          </div>
+          <h4 className="text-xs font-semibold text-[#dae3ee]">BIOS Identity Intact</h4>
+          
+          <div className="flex flex-col gap-2 mt-4">
+            <div className="flex gap-1">
+              <div className="h-1.5 flex-1 bg-[#00d1ff] rounded-full shadow-[0_0_8px_#00d1ff] animate-pulse"></div>
+              <div className="h-1.5 flex-1 bg-[#00d1ff] rounded-full shadow-[0_0_8px_#00d1ff] animate-pulse" style={{ animationDelay: "0.2s" }}></div>
+              <div className="h-1.5 flex-1 bg-gradient-to-r from-[#00d1ff] to-[#a4e6ff] rounded-full shadow-[0_0_8px_#00d1ff] animate-pulse" style={{ animationDelay: "0.4s" }}></div>
+            </div>
+            <div className="h-1.5 w-3/4 bg-[#00d1ff] rounded-full animate-pulse" style={{ animationDelay: "0.1s" }}></div>
+          </div>
+          <div className="font-mono text-[8.5px] mt-2 text-[#bbc9cf]/80 flex justify-between items-center">
+            <span>UEFI KEYHASH:</span>
+            <span ref={biosHashRef} className="text-cyan-400 font-bold">0x0F3C99B2</span>
+          </div>
+        </div>
+
+        <div className="glass-panel p-4 rounded-lg border-red-500/30 bg-red-950/10 cursor-pointer hover:border-red-500/60 transition-all duration-300 animate-float-1 animate-warning-border select-none">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-mono text-[9px] text-red-400 tracking-wider font-extrabold">NODE-7714</span>
+            <HardDrive className="w-4 h-4 text-red-400 animate-pulse" />
+          </div>
+          <h4 className="text-xs font-semibold text-[#dae3ee]">RAM Change Detected</h4>
+          <div className="mt-3 p-1 rounded bg-red-900/20 border border-red-500/20 text-center font-mono text-[9px] text-red-300 animate-pulse">
+            HW CONFIG MISMATCH
+          </div>
+          <span className="font-mono text-[8.5px] text-red-400/90 mt-2 block font-semibold">EXPECT: 64GB | ACTIVE: 32GB</span>
+        </div>
+
+        <div className="glass-panel p-4 rounded-lg border-[#00d1ff]/20 bg-[#141c24]/75 select-none cursor-pointer hover:border-[#00d1ff]/50 transition-all duration-300 animate-float-2">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-mono text-[9px] text-[#00d1ff] tracking-wider font-semibold">SRV-GAMMA-02</span>
+            <Layers className="w-4 h-4 text-[#00d1ff] animate-pulse" />
+          </div>
+          <h4 className="text-xs font-semibold text-[#dae3ee]">Motherboard Certified</h4>
+          
+          <div className="mt-4 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-emerald-500/10 border border-emerald-400/20 font-bold">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="font-mono text-[9px] text-emerald-400 uppercase font-extrabold">MB-994 MATCH</span>
+          </div>
+          <span className="font-mono text-[8px] text-[#bbc9cf] mt-2 block text-center uppercase font-light">TPM Security Chip verified</span>
+        </div>
+
+        <div className="glass-panel p-4 rounded-lg border-red-500/20 bg-red-950/10 animate-float-1 select-none cursor-pointer hover:border-red-500/40 transition-all duration-300">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-mono text-[9px] text-red-400 tracking-wider font-bold">NET-MONITOR</span>
+            <Globe className="w-4 h-4 text-red-500 animate-pulse" />
+          </div>
+          <h4 className="text-xs font-semibold text-[#dae3ee]">Restricted Site Blocked</h4>
+          
+          <div className="mt-3.5 py-1 px-1.5 bg-red-950/30 rounded border border-red-500/10 text-center font-mono text-[8px] text-red-300">
+            EDGE FIREWALL BLOCKED
+          </div>
+          <span className="font-mono text-[8.5px] text-[#bbc9cf] mt-1.5 block text-center truncate">IP: 185.199.110.153</span>
+        </div>
+      </div>
+    </section>
+  );
+});
+
+export default function LandingPage({ onNavigate }: LandingPageProps) {
   // Early access form states
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [companyName, setCompanyName] = useState("");
@@ -46,90 +682,44 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
 
 
 
-  // Dashboard preview chart state (waveform path coordinates)
-  const [chartWavePath, setChartWavePath] = useState("");
-  const [chartGridCells, setChartGridCells] = useState<string[]>([]);
-  const [threatLevel, setThreatLevel] = useState(12);
+  const protocolCards = useMemo(() => {
+    return CORE_TELEMETRY_PROTOCOLS.map((protocol, i) => {
+      const renderIcon = () => {
+        switch(protocol.icon) {
+          case "Cpu": return <Cpu className="w-5 h-5 text-[#00d1ff]" />;
+          case "HardDrive": return <HardDrive className="w-5 h-5 text-[#00d1ff]" />;
+          case "Layers": return <Layers className="w-5 h-5 text-[#00d1ff]" />;
+          case "ShieldAlert": return <ShieldAlert className="w-5 h-5 text-[#00d1ff]" />;
+          case "Fingerprint": return <Fingerprint className="w-5 h-5 text-[#00d1ff]" />;
+          case "Globe": return <Globe className="w-5 h-5 text-[#00d1ff]" />;
+          case "BellRing": return <BellRing className="w-5 h-5 text-[#00d1ff]" />;
+          case "Sliders": return <Sliders className="w-5 h-5 text-[#00d1ff]" />;
+          default: return <Shield className="w-5 h-5 text-[#00d1ff]" />;
+        }
+      };
 
-  // Initialize grid cells of green/amber states on mount
-  useEffect(() => {
-    const initialCells = Array.from({ length: 64 }, (_, i) => 
-      i === 42 ? "alert" : Math.random() > 0.85 ? "warning" : "nominal"
-    );
-    setChartGridCells(initialCells);
-  }, []);
-
-  // Continuous simulations loops
-  useEffect(() => {
-    // 1. RAM fluctuates
-    const ramTimer = setInterval(() => {
-      setRamValue(prev => Math.min(98, Math.max(45, prev + Math.floor(Math.random() * 7) - 3)));
-    }, 1200);
-
-    // 2. BIOS UEFI hashes cycle
-    const biosTimer = setInterval(() => {
-      const chars = "0123456789ABCDEF";
-      setBiosHash(prev => prev.slice(0, 8) + chars[Math.floor(Math.random() * 16)]);
-    }, 900);
-
-    // 3. Grid Cells ripple & random warn
-    const gridTimer = setInterval(() => {
-      setChartGridCells(prev => 
-        prev.map((state, idx) => {
-          if (idx === deviceAlertCell) return "alert"; // keep simulated alert stable until resolved
-          if (Math.random() > 0.94) {
-            return Math.random() > 0.65 ? "warning" : "nominal";
-          }
-          return state;
-        })
+      return (
+        <div 
+          key={i} 
+          className="glass-panel p-6 rounded-xl hover:bg-[#1C2128]/75 transition-all duration-300 group border border-[#3c494e]/15 hover:border-[#00d1ff]/40 select-none cursor-pointer hover:shadow-[0_0_15px_rgba(0,209,255,0.06)]"
+        >
+          <div className="w-10 h-10 rounded-full bg-[#182028] flex items-center justify-center mb-4 border border-[#3c494e]/30 group-hover:border-[#00d1ff]/60 group-hover:shadow-[0_0_12px_rgba(0,209,255,0.25)] transition-all">
+            {renderIcon()}
+          </div>
+          <h3 className="text-base font-bold text-[#dae3ee] mb-2 group-hover:text-[#00d1ff] transition-colors font-mono">
+            {protocol.title}
+          </h3>
+          <p className="text-[#bbc9cf] text-xs leading-relaxed font-light">
+            {protocol.description}
+          </p>
+        </div>
       );
-    }, 2000);
-
-    return () => {
-      clearInterval(ramTimer);
-      clearInterval(biosTimer);
-      clearInterval(gridTimer);
-    };
-  }, [deviceAlertCell]);
-
-  // Generate dynamic wave trace points for performance chart
-  useEffect(() => {
-    let tick = 0;
-    const waveTimer = setInterval(() => {
-      tick += 0.15;
-      const points = [];
-      for (let i = 0; i <= 24; i++) {
-        const x = (i / 24) * 350;
-        // Superpose sine waves for elegant natural noise oscilloscope wave
-        const y = 90 + Math.sin(i * 0.45 + tick) * 22 + Math.cos(i * 0.2 + tick * 1.5) * 10;
-        points.push(`${x},${y}`);
-      }
-      setChartWavePath(`M ${points.join(" L ")}`);
-    }, 85);
-
-    return () => clearInterval(waveTimer);
-  }, []);
-
-  // Resolve Simulated UI alarms on the preview dashboard
-  const handleResolvePreviewAlarms = () => {
-    setDeviceAlertCell(null);
-    setThreatLevel(0);
-    setChartGridCells(prev => prev.map(s => s === "alert" ? "nominal" : s));
-  };
-
-  // Re-enable simulated threat
-  const handleTriggerPreviewThreat = () => {
-    setDeviceAlertCell(42);
-    setThreatLevel(12);
-    setChartGridCells(prev => {
-      const next = [...prev];
-      next[42] = "alert";
-      return next;
     });
-  };
+  }, []);
 
   return (
     <div id="landing-screen" className="relative min-h-screen bg-[#0A0C10] text-[#dae3ee] font-sans overflow-x-hidden selection:bg-[#00d1ff]/20">
+      <LandingScrollPerformanceController />
       
       {/* Interactive WebGL Matrix/Network Background Overlay shader */}
       <ShaderBackground />
@@ -173,7 +763,7 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
       {/* Hero Header Area */}
       <main className="relative z-10 px-6 md:px-12 max-w-7xl mx-auto pt-16 pb-20">
         
-        <section id="hero-heading" className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center mb-16 relative">
+        <section id="hero-heading" className="landing-perf-region grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center mb-16 relative">
           
           {/* LEFT COLUMN: Primary content and actions */}
           <div className="lg:col-span-7 flex flex-col items-start text-left space-y-6">
@@ -267,306 +857,13 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
 
         </section>
 
-        {/* Global KPI Stats Scorecard */}
-        <section id="kpi-banner" className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-16 select-none">
-          <div className="glass-panel p-6 rounded-xl text-center flex flex-col justify-center border border-[#00d1ff]/10 hover:border-[#00d1ff]/30 transition-all duration-300 bg-[#121c24]/40">
-            <span className="font-mono text-[10px] text-[#bbc9cf] uppercase tracking-widest mb-1.5 block">Protected Devices</span>
-            <span className="text-3xl md:text-4xl font-black text-[#00d1ff] tracking-tight glow-active">14,209</span>
-          </div>
-          <div className="glass-panel p-6 rounded-xl text-center flex flex-col justify-center border border-[#00d1ff]/10 hover:border-[#00d1ff]/30 transition-all duration-300 bg-[#121c24]/40">
-            <span className="font-mono text-[10px] text-[#bbc9cf] uppercase tracking-widest mb-1.5 block">Active Sessions</span>
-            <span className="text-3xl md:text-4xl font-black text-[#dae3ee] tracking-tight">842</span>
-          </div>
-          <div className={`glass-panel p-6 rounded-xl text-center flex flex-col justify-center transition-all duration-500 bg-[#1a0f12]/30 ${deviceAlertCell ? "border-red-500/40 bg-red-950/15" : "border-[#00d1ff]/10"}`}>
-            <span className={`font-mono text-[10px] uppercase tracking-widest mb-1.5 block ${deviceAlertCell ? "text-red-400" : "text-[#bbc9cf]"}`}>Hardware Alerts</span>
-            <span className={`text-3xl md:text-4xl font-black tracking-tight transition-all ${deviceAlertCell ? "text-red-400 drop-shadow-[0_0_8px_rgba(239,68,68,0.5)]" : "text-emerald-400"}`}>
-              {deviceAlertCell ? threatLevel : "0"}
-            </span>
-          </div>
-          <div className="glass-panel p-6 rounded-xl text-center flex flex-col justify-center border border-[#00d1ff]/10 hover:border-[#00d1ff]/30 transition-all duration-300 bg-[#121c24]/40">
-            <span className="font-mono text-[10px] text-[#bbc9cf] uppercase tracking-widest mb-1.5 block">System Uptime</span>
-            <span className="text-3xl md:text-4xl font-black text-[#00d1ff] tracking-tight">99.98%</span>
-          </div>
-        </section>
+        <KpiAndMonitoringSections onNavigate={onNavigate} />
 
-        {/* Live Monitoring Center - Newly Redesigned Viewport-Saving Section */}
-        <section id="live-monitoring-center" className="mb-16 relative select-none">
-          <div className="absolute inset-0 bg-[#00d1ff]/5 blur-3xl rounded-full max-w-4xl mx-auto pointer-events-none"></div>
-          
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-x-4 gap-y-2 mb-6">
-            <div>
-              <h2 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight flex items-center gap-2">
-                <Activity className="w-6 h-6 text-[#00d1ff]" />
-                Live Monitoring Center
-              </h2>
-              <p className="text-sm text-[#bbc9cf] font-light mt-1">
-                Real-time telemetry waveform, throughput statistics, and active command subnet node metrics.
-              </p>
-            </div>
-            
-            <div className="flex gap-2">
-              {deviceAlertCell ? (
-                <button 
-                  onClick={handleResolvePreviewAlarms}
-                  className="px-4 py-2 border border-emerald-500/30 text-emerald-400 bg-emerald-500/5 hover:bg-emerald-500/15 rounded-lg text-xs font-mono font-bold tracking-wide transition-all uppercase flex items-center gap-1.5 active:scale-95 cursor-pointer"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  Resolve Subnet Alarms
-                </button>
-              ) : (
-                <button 
-                  onClick={handleTriggerPreviewThreat}
-                  className="px-4 py-2 border border-red-500/30 text-red-400 bg-red-500/5 hover:bg-red-500/15 rounded-lg text-xs font-mono font-bold tracking-wide transition-all uppercase flex items-center gap-1.5 active:scale-95 cursor-pointer"
-                >
-                  <AlertTriangle className="w-4 h-4 animate-pulse" />
-                  Simulate Subnet Threat
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="glass-panel rounded-xl border border-[#3c494e]/30 grid grid-cols-1 md:grid-cols-2 bg-[#0a0f14]/90 shadow-2xl relative z-10 overflow-hidden">
-            
-            {/* Left Panel: RAM Integrity Trend */}
-            <div className="p-6 border-b md:border-b-0 md:border-r border-[#3c494e]/20 flex flex-col gap-4 justify-between min-h-[310px]">
-              <div className="flex justify-between items-center">
-                <span className="text-[10px] font-mono tracking-widest font-bold text-[#00d1ff] uppercase">RAM Integrity Trend</span>
-                <span className="bg-[#00d1ff]/10 text-[#00d1ff] border border-[#00d1ff]/20 text-[9px] font-mono font-semibold px-2 py-0.5 rounded flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#00d1ff] animate-ping"></span>
-                  INTEGRITY MONITORING STREAM
-                </span>
-              </div>
-              
-              {/* Compact Dynamic Waveform representation */}
-              <div className="h-32 w-full bg-[#070b10] border border-white/5 rounded-lg relative overflow-hidden flex items-end">
-                <div className="absolute inset-0 bg-grid opacity-20 pointer-events-none"></div>
-                
-                <svg className="w-full h-full" viewBox="0 0 350 180" preserveAspectRatio="none">
-                  <defs>
-                    <linearGradient id="waveGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#00d1ff" stopOpacity="0.4" />
-                      <stop offset="100%" stopColor="#00d1ff" stopOpacity="0.0" />
-                    </linearGradient>
-                  </defs>
-                  <path 
-                    d={`${chartWavePath} L 350,180 L 0,180 Z`} 
-                    fill="url(#waveGrad)" 
-                    className="transition-all duration-100 ease-linear"
-                  />
-                  <path 
-                    d={chartWavePath} 
-                    fill="none" 
-                    stroke="#00d1ff" 
-                    strokeWidth="2.5" 
-                    strokeLinecap="round"
-                    className="transition-all duration-100 ease-linear drop-shadow-[0_0_6px_#00d1ff]"
-                  />
-                </svg>
-
-                <div className="absolute bottom-2 left-2 flex items-center gap-1.5 font-mono text-[8px] text-[#bbc9cf] bg-[#141a22]/80 px-2 py-0.5 rounded border border-white/5 uppercase">
-                  <span>RAM Verification Activity: ACTIVE</span>
-                </div>
-              </div>
-
-              {/* Hardware Integrity Specs */}
-              <div className="grid grid-cols-2 gap-3 text-xs font-mono">
-                <div className="p-2.5 bg-[#070b10] border border-white/5 rounded-lg flex flex-col justify-between">
-                  <span className="text-[9px] text-[#bbc9cf]/70 uppercase">RAM Change Detection Events</span>
-                  <span className="text-[#00d1ff] font-bold text-sm tracking-wide">0 (NOMINAL)</span>
-                </div>
-                <div className="p-2.5 bg-[#070b10] border border-white/5 rounded-lg flex flex-col justify-between">
-                  <span className="text-[9px] text-[#bbc9cf]/70 uppercase">Hardware Validation Activity</span>
-                  <span className="text-emerald-400 font-bold text-sm tracking-wide">99.98% SECURE</span>
-                </div>
-              </div>
-
-              {/* Integrity Monitoring Trend */}
-              <div className="flex flex-col gap-1.5 font-mono text-[9px]">
-                <div className="flex items-center justify-between p-2 bg-[#070b10] border border-white/5 rounded">
-                  <span className="text-[#bbc9cf]/80">INTEGRITY TREND ANALYSIS</span>
-                  <span className="text-emerald-400 font-semibold uppercase">100% SECURE MEMORY BASELINE</span>
-                </div>
-              </div>
-
-            </div>
-
-            {/* Right Panel: Interactive Subnet Node Grid */}
-            <div className="p-6 flex flex-col gap-4 justify-between min-h-[310px]">
-              <div className="flex justify-between items-center">
-                <span className="text-[10px] font-mono tracking-widest font-bold text-[#bbc9cf] uppercase">Subnet Node Grid Array</span>
-                <span className="text-[9px] font-mono text-[#00d1ff] font-bold">64 ACTIVE ENDPOINTS</span>
-              </div>
-              
-              {/* Tightened 8x8 Grid representing monitored assets */}
-              <div className="grid grid-cols-8 gap-1.5 bg-[#070b10] p-3 border border-white/5 rounded-lg h-32 items-center justify-center">
-                {chartGridCells.map((state, idx) => {
-                  let cellColor = "bg-[#2d363e]/40 border-white/5";
-                  if (state === "nominal") cellColor = "bg-emerald-500/10 border-emerald-400/20 shadow-[0_0_2px_rgba(16,185,129,0.1)]";
-                  if (state === "warning") cellColor = "bg-amber-500/30 border-amber-400/40 shadow-[0_0_3px_rgba(245,158,11,0.2)]";
-                  if (state === "alert") cellColor = "bg-red-500 border-red-400 shadow-[0_0_8px_#ef4444] animate-ping";
-
-                  return (
-                    <div 
-                      key={idx} 
-                      className={`w-full aspect-square rounded-sm border ${cellColor} transition-all duration-300`} 
-                      title={`Sector cell ${idx} status: ${state}`}
-                    />
-                  );
-                })}
-              </div>
-
-              {/* Status color definitions legend */}
-              <div className="flex justify-between items-center text-[9px] font-mono text-[#bbc9cf] bg-[#070b10] p-2 rounded border border-white/5 font-semibold">
-                <div className="flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
-                  <span>Verified</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block"></span>
-                  <span>Review Required</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block"></span>
-                  <span>Alert Detected</span>
-                </div>
-              </div>
-
-              {/* Instant dashboard dispatch button */}
-              <button 
-                onClick={() => onNavigate("dashboard")}
-                className="w-full bg-[#00d1ff]/10 hover:bg-[#00d1ff]/20 border border-[#00d1ff]/30 text-[#00d1ff] text-xs font-bold uppercase py-2.5 rounded-lg transition-all flex items-center justify-center gap-2 active:scale-95"
-              >
-                <Server className="w-4 h-4 text-[#00d1ff]" />
-                Explore Command Live Grid
-              </button>
-            </div>
-
-          </div>
-        </section>
-
-        {/* Sentinel Core Hardware Cards Grid Panel */}
-        <section id="terminal-diagram" className="relative mb-24">
-          <div className="absolute inset-0 bg-[#00d1ff]/5 blur-3xl rounded-full max-w-2xl mx-auto pointer-events-none"></div>
-          
-          <div className="mb-6">
-            <h2 className="text-xl md:text-2xl font-bold text-white tracking-tight flex items-center gap-2">
-              <ShieldAlert className="w-5.5 h-5.5 text-[#00d1ff]" />
-              Sentinel Core Hardware Cards
-            </h2>
-            <p className="text-xs text-[#bbc9cf] font-light mt-1">
-              Active endpoint digital signatures, biometrics, motherboard TPM handshakes, and cryptographic memory baselines.
-            </p>
-          </div>
-
-          <div className="relative w-full bg-[#0a0f14]/90 p-6 rounded-xl border border-[#3c494e]/30 shadow-2xl z-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 overflow-hidden">
-            
-            {/* Background Cybernetic Digital Stream Lines */}
-            <div className="absolute inset-0 opacity-10 pointer-events-none">
-              <div className="absolute top-[20%] w-full h-[1px] bg-gradient-to-r from-transparent via-[#00d1ff] to-transparent"></div>
-              <div className="absolute top-[50%] w-full h-[1px] bg-gradient-to-r from-transparent via-[#00d1ff] to-transparent animate-pulse"></div>
-              <div className="absolute top-[80%] w-full h-[1px] bg-gradient-to-r from-transparent via-[#00d1ff] to-transparent"></div>
-              <div className="absolute left-[20%] h-full w-[1px] bg-gradient-to-b from-transparent via-[#00d1ff] to-transparent"></div>
-              <div className="absolute left-[75%] h-full w-[1px] bg-gradient-to-b from-transparent via-[#00d1ff] to-transparent animate-pulse" style={{ animationDelay: "2s" }}></div>
-            </div>
-
-            {/* Core Card 1: RAM Verified (ANIMATED IN-REALTIME) */}
-            <div 
-              className="glass-panel p-4 rounded-lg border-[#00d1ff]/25 bg-[#141c24]/75 select-none relative group cursor-pointer hover:border-[#00d1ff]/60 transition-all duration-300 animate-float-1"
-              onClick={() => setRamValue(prev => Math.min(prev + 5, 99))}
-              title="Click to recalculate secure baseline allocation score"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-mono text-[9px] text-[#00d1ff] tracking-wider font-semibold">NODE-4912</span>
-                <Cpu className="w-4 h-4 text-[#00d1ff] animate-spin" />
-              </div>
-              <h4 className="text-xs font-semibold text-[#dae3ee]">RAM Verified (32GB)</h4>
-              
-              {/* Dynamically filling live animation bar */}
-              <div className="w-full bg-[#2d363e]/50 h-2 mt-4 rounded-full overflow-hidden relative border border-white/5">
-                <div 
-                  style={{ width: `${ramValue}%` }}
-                  className="bg-gradient-to-r from-cyan-500 to-[#00d1ff] h-full shadow-[0_0_8px_rgba(0,209,255,0.7)] transition-all duration-500 flex items-center justify-end"
-                >
-                  <div className="h-full w-1 bg-white/50 animate-pulse"></div>
-                </div>
-              </div>
-              <div className="flex justify-between items-center text-[8px] font-mono mt-2 text-[#bbc9cf]/80">
-                <span>CAPACITY NOMINAL</span>
-                <span className="text-[#00d1ff] font-bold">{ramValue}% LOAD</span>
-              </div>
-            </div>
-
-            {/* Core Card 2: BIOS Identity Intact (ANIMATED IN-REALTIME) */}
-            <div className="glass-panel p-4 rounded-lg border-[#00d1ff]/20 bg-[#141c24]/75 select-none relative cursor-pointer hover:border-[#00d1ff]/50 transition-all duration-300 animate-float-2">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-mono text-[9px] text-[#00d1ff] tracking-wider font-semibold">SERVER-DELTA</span>
-                <Sliders className="w-4 h-4 text-[#00d1ff] animate-pulse" />
-              </div>
-              <h4 className="text-xs font-semibold text-[#dae3ee]">BIOS Identity Intact</h4>
-              
-              {/* Continuous value slides indicator */}
-              <div className="flex flex-col gap-2 mt-4">
-                <div className="flex gap-1">
-                  <div className="h-1.5 flex-1 bg-[#00d1ff] rounded-full shadow-[0_0_8px_#00d1ff] animate-pulse"></div>
-                  <div className="h-1.5 flex-1 bg-[#00d1ff] rounded-full shadow-[0_0_8px_#00d1ff] animate-pulse" style={{ animationDelay: "0.2s" }}></div>
-                  <div className="h-1.5 flex-1 bg-gradient-to-r from-[#00d1ff] to-[#a4e6ff] rounded-full shadow-[0_0_8px_#00d1ff] animate-pulse" style={{ animationDelay: "0.4s" }}></div>
-                </div>
-                <div className="h-1.5 w-3/4 bg-[#00d1ff] rounded-full animate-pulse" style={{ animationDelay: "0.1s" }}></div>
-              </div>
-              <div className="font-mono text-[8.5px] mt-2 text-[#bbc9cf]/80 flex justify-between items-center">
-                <span>UEFI KEYHASH:</span>
-                <span className="text-cyan-400 font-bold">{biosHash}</span>
-              </div>
-            </div>
-
-            {/* Core Card 3: RAM Change Detected (WARNING ALARM) */}
-            <div className="glass-panel p-4 rounded-lg border-red-500/30 bg-red-950/10 cursor-pointer hover:border-red-500/60 transition-all duration-300 animate-float-1 animate-warning-border select-none">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-mono text-[9px] text-red-400 tracking-wider font-extrabold">NODE-7714</span>
-                <HardDrive className="w-4 h-4 text-red-400 animate-pulse" />
-              </div>
-              <h4 className="text-xs font-semibold text-[#dae3ee]">RAM Change Detected</h4>
-              <div className="mt-3 p-1 rounded bg-red-900/20 border border-red-500/20 text-center font-mono text-[9px] text-red-300 animate-pulse">
-                HW CONFIG MISMATCH
-              </div>
-              <span className="font-mono text-[8.5px] text-red-400/90 mt-2 block font-semibold">EXPECT: 64GB | ACTIVE: 32GB</span>
-            </div>
-
-            {/* Core Card 4: Motherboard ID Certified */}
-            <div className="glass-panel p-4 rounded-lg border-[#00d1ff]/20 bg-[#141c24]/75 select-none cursor-pointer hover:border-[#00d1ff]/50 transition-all duration-300 animate-float-2">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-mono text-[9px] text-[#00d1ff] tracking-wider font-semibold">SRV-GAMMA-02</span>
-                <Layers className="w-4 h-4 text-[#00d1ff] animate-pulse" />
-              </div>
-              <h4 className="text-xs font-semibold text-[#dae3ee]">Motherboard Certified</h4>
-              
-              <div className="mt-4 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-emerald-500/10 border border-emerald-400/20 font-bold">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="font-mono text-[9px] text-emerald-400 uppercase font-extrabold">MB-994 MATCH</span>
-              </div>
-              <span className="font-mono text-[8px] text-[#bbc9cf] mt-2 block text-center uppercase font-light">TPM Security Chip verified</span>
-            </div>
-
-            {/* Core Card 6: Restricted Site Blocked */}
-            <div className="glass-panel p-4 rounded-lg border-red-500/20 bg-red-950/10 animate-float-1 select-none cursor-pointer hover:border-red-500/40 transition-all duration-300">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-mono text-[9px] text-red-400 tracking-wider font-bold">NET-MONITOR</span>
-                <Globe className="w-4 h-4 text-red-500 animate-pulse" />
-              </div>
-              <h4 className="text-xs font-semibold text-[#dae3ee]">Restricted Site Blocked</h4>
-              
-              <div className="mt-3.5 py-1 px-1.5 bg-red-950/30 rounded border border-red-500/10 text-center font-mono text-[8px] text-red-300">
-                EDGE FIREWALL BLOCKED
-              </div>
-              <span className="font-mono text-[8.5px] text-[#bbc9cf] mt-1.5 block text-center truncate">IP: 185.199.110.153</span>
-            </div>
-
-          </div>
-        </section>
+        <HardwareCardsSection />
 
 
         {/* Core Telemetry Protocols Display - Swiss visual, dark neon styling */}
-        <section id="protocols-showcase" className="max-w-7xl mx-auto">
+        <section id="protocols-showcase" className="landing-perf-region max-w-7xl mx-auto">
           <div className="flex items-center justify-center gap-4 mb-12 select-none">
             <div className="h-px bg-gradient-to-r from-transparent to-[#00d1ff]/40 w-28"></div>
             <h2 className="text-2xl md:text-3xl font-bold text-[#dae3ee] text-center tracking-tight uppercase">
@@ -576,44 +873,12 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
           </div>
 
           <div id="protocols-grid" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {CORE_TELEMETRY_PROTOCOLS.map((protocol, i) => {
-              // Map icon string dynamically
-              const renderIcon = () => {
-                switch(protocol.icon) {
-                  case "Cpu": return <Cpu className="w-5 h-5 text-[#00d1ff]" />;
-                  case "HardDrive": return <HardDrive className="w-5 h-5 text-[#00d1ff]" />;
-                  case "Layers": return <Layers className="w-5 h-5 text-[#00d1ff]" />;
-                  case "ShieldAlert": return <ShieldAlert className="w-5 h-5 text-[#00d1ff]" />;
-                  case "Fingerprint": return <Fingerprint className="w-5 h-5 text-[#00d1ff]" />;
-                  case "Globe": return <Globe className="w-5 h-5 text-[#00d1ff]" />;
-                  case "BellRing": return <BellRing className="w-5 h-5 text-[#00d1ff]" />;
-                  case "Sliders": return <Sliders className="w-5 h-5 text-[#00d1ff]" />;
-                  default: return <Shield className="w-5 h-5 text-[#00d1ff]" />;
-                }
-              };
-
-              return (
-                <div 
-                  key={i} 
-                  className="glass-panel p-6 rounded-xl hover:bg-[#1C2128]/75 transition-all duration-300 group border border-[#3c494e]/15 hover:border-[#00d1ff]/40 select-none cursor-pointer hover:shadow-[0_0_15px_rgba(0,209,255,0.06)]"
-                >
-                  <div className="w-10 h-10 rounded-full bg-[#182028] flex items-center justify-center mb-4 border border-[#3c494e]/30 group-hover:border-[#00d1ff]/60 group-hover:shadow-[0_0_12px_rgba(0,209,255,0.25)] transition-all">
-                    {renderIcon()}
-                  </div>
-                  <h3 className="text-base font-bold text-[#dae3ee] mb-2 group-hover:text-[#00d1ff] transition-colors font-mono">
-                    {protocol.title}
-                  </h3>
-                  <p className="text-[#bbc9cf] text-xs leading-relaxed font-light">
-                    {protocol.description}
-                  </p>
-                </div>
-              );
-            })}
+            {protocolCards}
           </div>
         </section>
 
         {/* Contact and Early Access Section near the bottom of the page */}
-        <section id="contact-evaluation-sec" className="mt-20 max-w-7xl mx-auto px-0 select-none">
+        <section id="contact-evaluation-sec" className="landing-perf-region mt-20 max-w-7xl mx-auto px-0 select-none">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             
             {/* Left side: Contact Us */}

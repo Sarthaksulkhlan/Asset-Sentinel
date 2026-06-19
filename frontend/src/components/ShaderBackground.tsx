@@ -1,13 +1,20 @@
 import React, { useEffect, useRef } from "react";
 
-export default function ShaderBackground() {
+const ShaderBackground = React.memo(function ShaderBackground() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const gl = canvas.getContext("webgl");
+    const gl = canvas.getContext("webgl", {
+      alpha: false,
+      antialias: false,
+      depth: false,
+      stencil: false,
+      powerPreference: "low-power",
+      preserveDrawingBuffer: false
+    });
     if (!gl) {
       console.error("WebGL not supported");
       return;
@@ -155,12 +162,17 @@ export default function ShaderBackground() {
     ];
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
 
-    let frameId: number;
-    let startTime = Date.now();
+    let frameId = 0;
+    let isRunning = false;
+    let isScrolling = false;
+    let scrollResumeTimer = 0;
+    let lastFrameAt = 0;
+    const startTime = performance.now();
 
     const resizeCanvas = () => {
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.25);
+      const w = Math.max(1, Math.floor(canvas.clientWidth * pixelRatio));
+      const h = Math.max(1, Math.floor(Math.min(canvas.clientHeight, window.innerHeight * 1.25) * pixelRatio));
       if (canvas.width !== w || canvas.height !== h) {
         canvas.width = w;
         canvas.height = h;
@@ -168,8 +180,16 @@ export default function ShaderBackground() {
       }
     };
 
-    const render = () => {
-      resizeCanvas();
+    const render = (now: number) => {
+      if (!isRunning) return;
+
+      const frameInterval = isScrolling ? 82 : 33;
+      if (now - lastFrameAt < frameInterval) {
+        frameId = requestAnimationFrame(render);
+        return;
+      }
+      lastFrameAt = now;
+
       gl.clearColor(0.01, 0.012, 0.015, 1.0);
       gl.clear(gl.COLOR_BUFFER_BIT);
 
@@ -179,22 +199,53 @@ export default function ShaderBackground() {
       gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
 
       gl.uniform2f(resolutionUniformLocation, canvas.width, canvas.height);
-      gl.uniform1f(timeUniformLocation, (Date.now() - startTime) / 1000.0);
+      gl.uniform1f(timeUniformLocation, (now - startTime) / 1000.0);
 
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       frameId = requestAnimationFrame(render);
     };
 
-    render();
+    const startRenderLoop = () => {
+      if (isRunning || document.hidden) return;
+      isRunning = true;
+      frameId = requestAnimationFrame(render);
+    };
+
+    const stopRenderLoop = () => {
+      isRunning = false;
+      cancelAnimationFrame(frameId);
+    };
 
     const resizeHandler = () => {
       resizeCanvas();
     };
+    const scrollHandler = () => {
+      isScrolling = true;
+      window.clearTimeout(scrollResumeTimer);
+      scrollResumeTimer = window.setTimeout(() => {
+        isScrolling = false;
+      }, 140);
+    };
+    const visibilityHandler = () => {
+      if (document.hidden) {
+        stopRenderLoop();
+      } else {
+        startRenderLoop();
+      }
+    };
+
+    resizeCanvas();
     window.addEventListener("resize", resizeHandler);
+    window.addEventListener("scroll", scrollHandler, { passive: true });
+    document.addEventListener("visibilitychange", visibilityHandler);
+    startRenderLoop();
 
     return () => {
-      cancelAnimationFrame(frameId);
+      stopRenderLoop();
+      window.clearTimeout(scrollResumeTimer);
       window.removeEventListener("resize", resizeHandler);
+      window.removeEventListener("scroll", scrollHandler);
+      document.removeEventListener("visibilitychange", visibilityHandler);
       gl.deleteBuffer(positionBuffer);
       gl.deleteProgram(program);
       gl.deleteShader(vertexShader);
@@ -205,7 +256,9 @@ export default function ShaderBackground() {
   return (
     <canvas
       ref={canvasRef}
-      className="absolute inset-0 w-full h-full pointer-events-none z-0 opacity-60"
+      className="fixed inset-0 w-screen h-screen pointer-events-none z-0 opacity-60"
     />
   );
-}
+});
+
+export default ShaderBackground;
