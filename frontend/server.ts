@@ -145,6 +145,20 @@ async function startServer() {
     }
   ];
 
+  const FALLBACK_SESSIONS = FALLBACK_ASSETS.map((asset) => ({
+    event_type: "LOGIN",
+    username: asset.employee,
+    hostname: asset.hostname,
+    ip_address: asset.ipAddress,
+    session_id: asset.hostname,
+    login_timestamp: asset.lastLogin,
+    logout_timestamp: asset.status === "Offline" ? asset.lastLogin : null,
+    session_duration: asset.status === "Offline" ? "Closed" : "Active",
+    active: asset.status !== "Offline",
+    device_status: asset.status === "Offline" ? "Offline" : "Online",
+    recorded_at: asset.lastLogin
+  }));
+
   const FALLBACK_ALERTS = [
     { timestamp: "08:14:02", node: "SYSTEM", message: "Telemetry link bound successfully with Cupertino root cluster.", type: "info" },
     { timestamp: "08:14:10", node: "NODE-4912", message: "RAM Signature Verified (32GB Apple M3)", type: "info" },
@@ -196,6 +210,15 @@ async function startServer() {
     }
     console.log("[SENTINEL CORE] Alert proxy operating in local secure mode.");
     return res.json(FALLBACK_ALERTS);
+  });
+
+  app.get("/api/sessions", async (req, res) => {
+    const data = await fetchFromBackend("sessions");
+    if (data) {
+      return res.json(data);
+    }
+    console.log("[SENTINEL CORE] Session proxy operating in local secure mode.");
+    return res.json(FALLBACK_SESSIONS);
   });
 
   // Initialize Gemini safely

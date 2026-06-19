@@ -183,6 +183,76 @@ def get_last_recorded_session() -> Optional[Dict[str, Any]]:
     return sessions[-1]
 
 
+def _parse_iso_timestamp(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _format_duration(start_value: Optional[str], end_value: Optional[str]) -> str:
+    start = _parse_iso_timestamp(start_value)
+    end = _parse_iso_timestamp(end_value)
+    if not start or not end:
+        return "Unknown"
+    seconds = max(0, int((end - start).total_seconds()))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, remaining_seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{remaining_seconds:02d}"
+
+
+def close_active_sessions(
+    sessions: List[Dict[str, Any]],
+    current_session: Dict[str, Any],
+    logout_timestamp: str,
+) -> List[Dict[str, Any]]:
+    """
+    Mark previous active sessions as logged out.
+
+    The dashboard reads these fields directly:
+    - logout_timestamp
+    - session_duration
+    - active
+    - device_status
+    """
+    current_user = current_session.get("username")
+    current_session_id = current_session.get("session_id")
+
+    for session in sessions:
+        if session.get("event_type") != "LOGIN" or session.get("active") is False:
+            continue
+
+        same_session = (
+            session.get("username") == current_user and
+            session.get("session_id") == current_session_id
+        )
+        if same_session:
+            continue
+
+        session["logout_timestamp"] = logout_timestamp
+        session["session_duration"] = _format_duration(session.get("login_timestamp"), logout_timestamp)
+        session["active"] = False
+        session["device_status"] = "Offline"
+        session["last_seen"] = logout_timestamp
+
+        save_alert(
+            alert_type="LOGOUT",
+            hostname=session.get("hostname"),
+            severity="LOW",
+            details={
+                "username": session.get("username"),
+                "ip_address": session.get("ip_address"),
+                "session_id": session.get("session_id"),
+                "logout_timestamp": logout_timestamp,
+                "session_duration": session.get("session_duration"),
+            }
+        )
+
+    return sessions
+
+
 def detect_login() -> Optional[Dict[str, Any]]:
     """
     Detect if a new login has occurred.
@@ -199,6 +269,18 @@ def detect_login() -> Optional[Dict[str, Any]]:
     """
     current_session = get_current_session_info()
     last_session = get_last_recorded_session()
+    current_user = current_session.get("username")
+
+    if not current_user:
+        logger.info("No active Windows user detected - closing active sessions")
+        sessions = load_sessions()
+        updated_sessions = close_active_sessions(
+            sessions,
+            current_session,
+            datetime.now(timezone.utc).isoformat()
+        )
+        save_sessions(updated_sessions)
+        return None
     
     # First run - no previous session
     if last_session is None:
@@ -206,7 +288,6 @@ def detect_login() -> Optional[Dict[str, Any]]:
         return record_login(current_session)
     
     # Check if user or session changed (indicates logout/login)
-    current_user = current_session.get("username")
     current_session_id = current_session.get("session_id")
     
     last_user = last_session.get("username")
@@ -237,6 +318,10 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         dict: The login record that was saved
     """
+    sessions = load_sessions()
+    now = datetime.now(timezone.utc).isoformat()
+    sessions = close_active_sessions(sessions, session_info, now)
+
     # Create login record
     login_record = {
         "event_type": "LOGIN",
@@ -245,12 +330,14 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
         "ip_address": session_info.get("ip_address"),
         "session_id": session_info.get("session_id"),
         "login_timestamp": session_info.get("login_timestamp"),
+        "logout_timestamp": None,
+        "session_duration": "Active",
+        "active": True,
         "device_status": "Online",
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "recorded_at": now,
     }
     
     # Append to sessions.json
-    sessions = load_sessions()
     sessions.append(login_record)
     save_sessions(sessions)
     

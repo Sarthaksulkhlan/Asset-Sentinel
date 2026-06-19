@@ -12,6 +12,7 @@ import socket
 import json
 import hashlib
 import logging
+import ctypes
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -288,6 +289,74 @@ def collect_windows_version() -> Optional[str]:
         return None
 
 
+def collect_current_active_path() -> dict:
+    """
+    Collect the current foreground app/window details on Windows.
+    Returns browser/document/window context that the dashboard can show as
+    the current active path without requiring admin privileges.
+    """
+    details = {
+        "current_website": None,
+        "active_window_title": None,
+        "active_process_path": None,
+        "active_process_name": None,
+    }
+
+    try:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return details
+
+        title_length = user32.GetWindowTextLengthW(hwnd)
+        if title_length > 0:
+            title_buffer = ctypes.create_unicode_buffer(title_length + 1)
+            user32.GetWindowTextW(hwnd, title_buffer, title_length + 1)
+            details["active_window_title"] = title_buffer.value or None
+
+        process_id = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        process_handle = kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION,
+            False,
+            process_id.value,
+        )
+
+        if process_handle:
+            try:
+                path_buffer = ctypes.create_unicode_buffer(32768)
+                size = ctypes.c_ulong(len(path_buffer))
+                if kernel32.QueryFullProcessImageNameW(
+                    process_handle,
+                    0,
+                    path_buffer,
+                    ctypes.byref(size),
+                ):
+                    process_path = path_buffer.value
+                    details["active_process_path"] = process_path
+                    details["active_process_name"] = process_path.split("\\")[-1]
+            finally:
+                kernel32.CloseHandle(process_handle)
+
+        title = details.get("active_window_title")
+        process_name = details.get("active_process_name")
+        if title and process_name:
+            details["current_website"] = f"{process_name} | {title}"
+        elif title:
+            details["current_website"] = title
+        elif process_name:
+            details["current_website"] = process_name
+
+    except Exception as exc:
+        logger.warning("Could not collect current active path: %s", exc)
+
+    return details
+
+
 # ---------------------------------------------------------------------------
 # Composite hardware fingerprint (last-resort identifier)
 # ---------------------------------------------------------------------------
@@ -372,6 +441,11 @@ def collect_hardware() -> dict:
         "baseboard_product": None,
         # OS
         "windows_version": None,
+        # Current activity
+        "current_website": None,
+        "active_window_title": None,
+        "active_process_path": None,
+        "active_process_name": None,
         # Meta
         "collection_method": "none",
         "collected_at": datetime.now(timezone.utc).isoformat(),
@@ -384,6 +458,7 @@ def collect_hardware() -> dict:
     result["hostname"] = collect_hostname()
     result["ip_address"] = collect_ip_address(result["hostname"])
     result["windows_version"] = collect_windows_version()
+    result.update(collect_current_active_path())
 
     # -----------------------------------------------------------------------
     # Step 2: Initialise WMI connection
@@ -539,6 +614,7 @@ if __name__ == "__main__":
     print(f"  CPU             : {data['cpu_name']}")
     print(f"  RAM             : {data['ram_total_gb']} GB")
     print(f"  Windows Version : {data['windows_version']}")
+    print(f"  Active Path     : {data.get('current_website') or '[unavailable]'}")
     print(f"  Collection Method: {data['collection_method'].upper()}")
 
     if data["collection_errors"]:

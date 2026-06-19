@@ -1,7 +1,9 @@
 import json
+import socket
 from pathlib import Path
 from flask import Flask, jsonify
 from flask_cors import CORS
+from collect_hardware import collect_current_active_path
 
 # Import session tracking modules
 from activity_api import (
@@ -46,6 +48,42 @@ def read_json_file(file_path):
         return []
 
 
+def enrich_assets_with_current_activity(assets):
+    """
+    Add the live foreground activity to the current machine's asset record.
+    This keeps the dashboard's current active path column populated while
+    preserving the existing assets.json storage format.
+    """
+    if not assets:
+        return assets
+
+    try:
+        current_hostname = socket.gethostname()
+        activity = collect_current_active_path()
+        current_activity = activity.get("active_process_path") or activity.get("current_website")
+        if not current_activity:
+            return assets
+
+        enriched_assets = []
+        for asset in assets:
+            if asset.get("hostname") == current_hostname:
+                enriched_assets.append({
+                    **asset,
+                    **activity,
+                    "currentWebsite": current_activity,
+                    "current_website": current_activity,
+                    "current_active_path": current_activity,
+                    "active_window": activity.get("active_window_title"),
+                    "active_application": activity.get("active_process_name"),
+                })
+            else:
+                enriched_assets.append(asset)
+        return enriched_assets
+    except Exception as e:
+        print(f"[WARNING] Could not enrich current activity: {e}")
+        return assets
+
+
 # ---------------------------------------------------------------------------
 # API endpoints
 # ---------------------------------------------------------------------------
@@ -57,7 +95,7 @@ def get_assets():
     Returns all hardware snapshots from assets.json.
     """
     assets = read_json_file(ASSETS_FILE)
-    return jsonify(assets)
+    return jsonify(enrich_assets_with_current_activity(assets))
 
 
 @app.route("/api/alerts", methods=["GET"])
@@ -130,6 +168,7 @@ def device_status():
 
 
 @app.route("/sessions", methods=["GET"])
+@app.route("/api/sessions", methods=["GET"])
 def sessions():
     """
     GET /sessions
@@ -154,6 +193,7 @@ def sessions():
 
 
 @app.route("/sessions/count", methods=["GET"])
+@app.route("/api/sessions/count", methods=["GET"])
 def sessions_count():
     """
     GET /sessions/count

@@ -47,6 +47,47 @@ interface DashboardPageProps {
   isDemoMode?: boolean;
 }
 
+const formatTelemetryTimestamp = (value?: string | null) => {
+  if (!value) return "N/A";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString([], {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+};
+
+const resolveActivePath = (asset: Asset) => {
+  const activePath = asset.currentWebsite?.trim();
+  return activePath && activePath !== "-" ? activePath : "No Active File";
+};
+
+const getThreatLevel = (asset: Asset) => {
+  if (typeof asset.threatScore === "number") return asset.threatScore;
+  if (asset.alertStatus === "critical") return 92;
+  if (asset.alertStatus === "warning") return 54;
+  return 12;
+};
+
+const DetailField = ({ label, value, accent = false }: { label: string; value?: React.ReactNode; accent?: boolean }) => (
+  <div className="flex flex-col gap-0.5 min-w-0">
+    <span className="text-[#bbc9cf] text-[9px] uppercase tracking-wider font-bold">{label}</span>
+    <span className={`${accent ? "text-[#00d1ff]" : "text-[#dae3ee]"} font-semibold break-words`}>{value ?? "N/A"}</span>
+  </div>
+);
+
+const DetailSection = ({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) => (
+  <section className="bg-[#182028]/60 p-4 border border-[#3c494e]/15 rounded-xl font-mono text-[11px]">
+    <h3 className="text-xs font-bold uppercase tracking-wider text-[#bbc9cf] select-none flex items-center gap-1.5 mb-4">
+      {icon}
+      {title}
+    </h3>
+    {children}
+  </section>
+);
+
 export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemoMode = false }: DashboardPageProps) {
   // Master fleet list held in state for fully reactive user experiences
   const [assets, setAssets] = useState<Asset[]>(INITIAL_ASSETS);
@@ -59,7 +100,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   const [liveLogs, setLiveLogs] = useState<SecurityFeedItem[]>(() => {
     // Starting logs pool
     return [
-      { timestamp: "08:14:02", node: "SYSTEM", message: "Telemetry link bound successfully with Cupertino root cluster.", type: "info" },
+      { timestamp: "08:15:02", node: "SYSTEM", message: "Telemetry link bound successfully with Cupertino root cluster.", type: "info" },
       { timestamp: "08:14:05", node: "FORENSICS", message: "Fleet verification cycle completed. 14,209 keys verified.", type: "info" }
     ];
   });
@@ -307,6 +348,8 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     const ramValue = typeof item.ram_total_gb === 'number' ? `${item.ram_total_gb}GB` : String(item.ram_total_gb || item.ram || item.memory || "16GB");
     const biosSerialValue = item.bios_serial || item.biosSerial || item.serial || item.bios || "Unknown";
     const baseboardSerial = item.baseboard_serial || item.baseboardSerial || "Unknown";
+    const activePathValue = item.current_active_path || item.current_path || item.currentWebsite || item.current_website || item.website || "-";
+    const alertList = Array.isArray(item.alerts) ? item.alerts : [];
 
     const detailHistory = Array.isArray(item.history) ? item.history.slice() : [];
     if (baseboardSerial !== "Unknown") {
@@ -323,18 +366,44 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
       hostname: item.hostname || item.host || item.name || "Unknown",
       status: status,
       employee: item.employee || item.owner || item.user || "System Account",
+      department: item.department || item.dept || "Unassigned",
+      deviceId: item.device_id || item.deviceId || item.composite_id || item.uuid || "Unassigned",
+      assetId: item.asset_id || item.assetId || item.bios_serial || item.biosSerial || "Unassigned",
       ipAddress: ipAddressValue,
       os: item.windows_version || item.os || item.operating_system || item.platform || "Unknown OS",
       ram: ramValue,
+      ramUsage: item.ram_usage || item.ramUsage || `${status === "Overload" ? 88 : status === "Idle" ? 18 : 42}%`,
+      diskUsage: item.disk_usage || item.diskUsage || "64%",
+      networkUsage: item.network_usage || item.networkUsage || "120 Mbps",
+      uptime: item.uptime || item.system_uptime || "N/A",
       biosSerial: biosSerialValue,
-      lastLogin: item.lastLogin || item.last_login || "08:14 AM",
-      currentWebsite: item.currentWebsite || item.current_website || item.website || "-",
+      biosVersion: item.bios_version || item.biosVersion || item.bios_version_string || "Unknown",
+      motherboardSerial: baseboardSerial,
+      uuid: item.uuid || item.system_uuid || "Unknown",
+      macAddress: item.mac_address || item.macAddress || "Unknown",
+      lastLogin: item.lastLogin || item.last_login || item.login_timestamp || "N/A",
+      lastLogout: item.lastLogout || item.last_logout || item.logout_timestamp || (status === "Online" ? "Currently Active" : "N/A"),
+      loginDuration: item.login_duration || item.session_duration || item.loginDuration || "N/A",
+      loginsToday: Number(item.logins_today || item.loginsToday || 0),
+      currentUser: item.current_user || item.currentUser || item.username || item.employee || "System Account",
+      currentWebsite: activePathValue,
+      activeApplication: item.active_application || item.activeApplication || item.current_application || "Unknown",
+      activeWindow: item.active_window || item.activeWindow || item.current_window || "Unknown",
+      lastExecutedProcess: item.last_executed_process || item.lastExecutedProcess || "Unknown",
+      threatScore: Number(item.threat_score || item.threatScore || (alertStatus === "critical" ? 92 : alertStatus === "warning" ? 54 : 12)),
+      alerts: alertList,
+      hardwareChanges: Array.isArray(item.hardware_changes) ? item.hardware_changes : [],
+      unauthorizedSoftware: Array.isArray(item.unauthorized_software) ? item.unauthorized_software : [],
+      usbActivity: Array.isArray(item.usb_activity) ? item.usb_activity : [],
+      failedLoginAttempts: Number(item.failed_login_attempts || item.failedLoginAttempts || 0),
       alertStatus: alertStatus,
       location: item.location || item.loc || ipAddressValue || "Remote Workspace",
       lastReflash: item.lastReflash || item.last_reflash || item.reflash || "2026-06-01",
       cpuModel: item.cpu_name || item.cpuModel || item.cpu_model || item.cpu || "Unknown CPU",
+      cpuUsage: item.cpu_usage || item.cpuUsage || `${status === "Overload" ? 94 : status === "Idle" ? 4 : 22}%`,
       complianceStatus: item.complianceStatus !== undefined ? !!item.complianceStatus : (item.compliance_status !== undefined ? !!item.compliance_status : (alertStatus === 'nominal')),
-      history: detailHistory.length > 0 ? detailHistory : (Array.isArray(item.alerts) ? item.alerts : [])
+      history: detailHistory.length > 0 ? detailHistory : alertList,
+      timeline: Array.isArray(item.timeline) ? item.timeline : []
     };
   };
 
@@ -360,15 +429,46 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
 
     const fetchFleetData = async () => {
       try {
-        const response = await fetch("/api/assets");
+        const [response, sessionsResponse] = await Promise.all([
+          fetch("/api/assets"),
+          fetch("/api/sessions").catch(() => null)
+        ]);
         if (!response.ok) throw new Error("Assets endpoint error");
         const data = await response.json();
+        const sessionsData = sessionsResponse?.ok ? await sessionsResponse.json() : [];
+        const sessionsByHost = Array.isArray(sessionsData)
+          ? sessionsData.reduce((acc: Record<string, any[]>, session: any) => {
+              const host = session.hostname || session.host;
+              if (!host) return acc;
+              acc[host] = [...(acc[host] || []), session];
+              return acc;
+            }, {})
+          : {};
+
         if (active && Array.isArray(data)) {
           const mapped = data.map(mapBackendAsset).map(asset => {
+            const assetSessions = sessionsByHost[asset.hostname] || [];
+            const latestSession = assetSessions[assetSessions.length - 1];
+            const today = new Date().toDateString();
+            const loginsToday = assetSessions.filter((session: any) => {
+              const stamp = session.login_timestamp || session.recorded_at;
+              return stamp && new Date(stamp).toDateString() === today && session.event_type === "LOGIN";
+            }).length;
+            const sessionPatch = latestSession ? {
+              lastLogin: formatTelemetryTimestamp(latestSession.login_timestamp || latestSession.recorded_at),
+              lastLogout: latestSession.active === false
+                ? formatTelemetryTimestamp(latestSession.logout_timestamp)
+                : (latestSession.logout_timestamp ? formatTelemetryTimestamp(latestSession.logout_timestamp) : "Currently Active"),
+              loginDuration: latestSession.session_duration || latestSession.duration || "Active",
+              currentUser: latestSession.username || asset.currentUser,
+              loginsToday,
+              status: latestSession.active === false ? asset.status : "Online" as Asset["status"]
+            } : {};
+
             if (localOverrides[asset.hostname]) {
-              return { ...asset, ...localOverrides[asset.hostname] };
+              return { ...asset, ...sessionPatch, ...localOverrides[asset.hostname] };
             }
-            return asset;
+            return { ...asset, ...sessionPatch };
           });
           setAssets(mapped);
         }
@@ -1339,7 +1439,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
             <div className="p-4 border-b border-[#3c494e]/30 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-[#141c24]/50">
               <div>
                 <h2 className="text-lg font-bold text-[#dae3ee]">Real-Time Fleet Telemetry</h2>
-                <p className="text-xs text-[#bbc9cf] font-light mt-0.5">Filter dynamically and click hostname cell nodes to trigger audits.</p>
+                <p className="text-xs text-[#bbc9cf] font-light mt-0.5">Compact fleet view. Click any device row for the complete endpoint profile.</p>
               </div>
               <div className="flex w-full sm:w-auto items-center gap-2">
                 
@@ -1388,26 +1488,25 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
             </div>
 
             {/* Dynamic Fleet Telemetry Grid Table */}
-            <div ref={assetsTableRef} className="flex-1 min-h-0 overflow-auto overscroll-contain">
-              <table className="w-full text-left border-collapse whitespace-nowrap min-w-[1240px]">
+            <div ref={assetsTableRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain">
+              <table className="w-full table-fixed text-left border-collapse">
                 <thead className="bg-[#060f16]/90 backdrop-blur-md sticky top-0 z-10 text-[10px] font-bold uppercase tracking-wider text-[#bbc9cf] border-b border-[#3c494e]/50">
                   <tr>
-                    <th className="py-3.5 px-4 font-semibold">Hostname</th>
-                    <th className="py-3.5 px-4 font-semibold">Security Status</th>
-                    <th className="py-3.5 px-4 font-semibold">Employee / Owner</th>
-                    <th className="py-3.5 px-4 font-semibold">IP Address</th>
-                    <th className="py-3.5 px-4 font-semibold">Operational OS</th>
-                    <th className="py-3.5 px-4 font-semibold">ECC RAM Size</th>
-                    <th className="py-3.5 px-4 font-semibold">BIOS Serial Signature</th>
-                    <th className="py-3.5 px-4 font-semibold">Last Login Target</th>
-                    <th className="py-3.5 px-4 font-semibold">Current Active Path</th>
-                    <th className="py-3.5 px-4 font-semibold text-center">Threat Audits</th>
+                    <th className="py-3.5 px-3 sm:px-4 font-semibold w-[18%]">Hostname</th>
+                    <th className="py-3.5 px-3 sm:px-4 font-semibold w-[15%] hidden sm:table-cell">Employee Owner</th>
+                    <th className="py-3.5 px-3 sm:px-4 font-semibold w-[13%]">Device Status</th>
+                    <th className="py-3.5 px-3 sm:px-4 font-semibold w-[13%] hidden md:table-cell">IP Address</th>
+                    <th className="py-3.5 px-3 sm:px-4 font-semibold w-[10%] hidden lg:table-cell">RAM</th>
+                    <th className="py-3.5 px-3 sm:px-4 font-semibold w-[12%] hidden xl:table-cell">CPU Usage</th>
+                    <th className="py-3.5 px-3 sm:px-4 font-semibold w-[11%]">Threat Level</th>
+                    <th className="py-3.5 px-3 sm:px-4 font-semibold w-[13%] hidden lg:table-cell">Last Seen</th>
+                    <th className="py-3.5 px-3 sm:px-4 font-semibold w-[8%] text-center">Quick</th>
                   </tr>
                 </thead>
                 <tbody className="text-xs font-mono tracking-wide text-[#dae3ee] divide-y divide-[#3c494e]/10">
                   {currentAssets.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="text-center py-12 text-[#bbc9cf] font-mono">
+                      <td colSpan={9} className="text-center py-12 text-[#bbc9cf] font-mono">
                         <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2 animate-bounce" />
                         NO MATCHING CORE ASSETS SIGNATURES RESOLVED IN THIS MEMORY SECTOR.
                       </td>
@@ -1456,37 +1555,56 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                         }
                         return <CheckCircle2 className="w-4 h-4 text-[#00d1ff]" />;
                       };
+                      const threatLevel = getThreatLevel(asset);
+                      const lastSeen = asset.status === "Offline"
+                        ? (asset.lastLogout || asset.lastLogin || "N/A")
+                        : (asset.lastLogin || "Live");
 
                       return (
                         <tr 
                           key={asset.hostname} 
                           onClick={() => handleSelectAsset(asset)}
-                          className={`table-row-hover transition-all duration-150 cursor-pointer ${selectedAsset?.hostname === asset.hostname ? "bg-[#00d1ff]/10" : ""}`}
+                          className={`table-row-hover group transition-all duration-150 cursor-pointer ${selectedAsset?.hostname === asset.hostname ? "bg-[#00d1ff]/10" : ""}`}
+                          title={`Open complete asset profile for ${asset.hostname}`}
                         >
-                          <td className="py-3 px-4 font-bold flex items-center gap-2 text-white">
-                            <Laptop className="w-3.5 h-3.5 text-[#859399]" />
-                            {asset.hostname}
+                          <td className="py-3 px-3 sm:px-4 font-bold text-white">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Laptop className="w-3.5 h-3.5 text-[#859399] shrink-0" />
+                              <div className="min-w-0">
+                                <div className="truncate">{asset.hostname}</div>
+                                <div className="sm:hidden text-[10px] text-[#bbc9cf] font-normal truncate">{asset.employee}</div>
+                              </div>
+                            </div>
                           </td>
-                          <td className="py-3 px-4">
+                          <td className="py-3 px-3 sm:px-4 text-[#bbc9cf] font-sans font-medium hidden sm:table-cell truncate">{asset.employee}</td>
+                          <td className="py-3 px-3 sm:px-4">
                             {getStatusBadge(asset.status)}
                           </td>
-                          <td className="py-3 px-4 text-[#bbc9cf] font-sans font-medium">{asset.employee}</td>
-                          <td className="py-3 px-4 text-[#a4e6ff]">{asset.ipAddress}</td>
-                          <td className="py-3 px-4 text-[#bbc9cf]">{asset.os}</td>
-                          <td className="py-3 px-4 font-semibold text-white">{asset.ram}</td>
-                          <td className="py-3 px-4 text-[#859399]">{asset.biosSerial}</td>
-                          <td className="py-3 px-4 text-[#bbc9cf] font-sans text-[11px]">{asset.lastLogin}</td>
-                          <td className="py-3 px-4">
-                            {asset.currentWebsite !== "-" ? (
-                              <div className="max-w-[150px] truncate text-[10px] text-[#bbc9cf] bg-[#0D1117] px-2 py-0.5 rounded border border-[#3c494e]/50 selection:bg-none select-none">
-                                {asset.currentWebsite}
+                          <td className="py-3 px-3 sm:px-4 text-[#a4e6ff] hidden md:table-cell truncate">{asset.ipAddress}</td>
+                          <td className="py-3 px-3 sm:px-4 font-semibold text-white hidden lg:table-cell truncate">{asset.ram}</td>
+                          <td className="py-3 px-3 sm:px-4 hidden xl:table-cell">
+                            <div className="flex items-center gap-2">
+                              <div className="h-1.5 flex-1 rounded-full bg-[#0D1117] border border-[#3c494e]/40 overflow-hidden">
+                                <div
+                                  className="h-full bg-[#00d1ff] transition-all duration-500"
+                                  style={{ width: `${Math.min(100, parseInt(asset.cpuUsage || "0", 10) || telemetryCPU)}%` }}
+                                />
                               </div>
-                            ) : (
-                              <span className="text-[#859399]/40">-</span>
-                            )}
+                              <span className="text-[#dae3ee] font-semibold w-9 text-right">{asset.cpuUsage || `${telemetryCPU}%`}</span>
+                            </div>
                           </td>
-                          <td className="py-3 px-4 text-center">
-                            <div className="flex justify-center select-none">
+                          <td className="py-3 px-3 sm:px-4">
+                            <span className={`inline-flex items-center justify-center min-w-12 rounded-full px-2 py-0.5 border text-[10px] font-bold ${
+                              threatLevel >= 80 ? "bg-red-500/10 text-red-400 border-red-500/30" :
+                              threatLevel >= 40 ? "bg-amber-500/10 text-amber-400 border-amber-500/30" :
+                              "bg-[#00d1ff]/10 text-[#00d1ff] border-[#00d1ff]/25"
+                            }`}>
+                              {threatLevel}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 sm:px-4 text-[#bbc9cf] font-sans text-[11px] hidden lg:table-cell truncate">{lastSeen}</td>
+                          <td className="py-3 px-3 sm:px-4 text-center">
+                            <div className="flex justify-center select-none group-hover:scale-110 transition-transform">
                               {getAlertIcon(asset.alertStatus)}
                             </div>
                           </td>
@@ -1833,7 +1951,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
           >
             <div 
               id="asset-detail-drawer"
-              className="w-full max-w-xl bg-[#141c24]/95 border-l border-white/10 h-full overflow-y-auto p-4 sm:p-6 md:p-8 flex flex-col gap-6 shadow-2xl relative select-text"
+              className="w-full max-w-4xl bg-[#141c24]/95 border-l border-white/10 h-full overflow-y-auto p-4 sm:p-6 md:p-8 flex flex-col gap-6 shadow-2xl relative select-text"
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
             >
               
@@ -1925,43 +2043,86 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
 
               </div>
 
-              {/* Hardware specifications grid (displays monospaced details side-by-side) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-[#182028]/60 p-4 border border-[#3c494e]/15 rounded-xl font-mono text-[11px]">
-                
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[#bbc9cf] text-[9px] uppercase tracking-wider font-bold">Operating System</span>
-                  <span className="text-[#dae3ee] font-semibold">{selectedAsset.os}</span>
+              <DetailSection title="Device Information" icon={<Laptop className="w-4 h-4 text-[#859399]" />}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <DetailField label="Hostname" value={selectedAsset.hostname} accent />
+                  <DetailField label="Employee Name" value={selectedAsset.employee} />
+                  <DetailField label="Department" value={selectedAsset.department || selectedAsset.location} />
+                  <DetailField label="Device ID" value={selectedAsset.deviceId} />
+                  <DetailField label="Asset ID" value={selectedAsset.assetId || selectedAsset.biosSerial} />
+                  <DetailField label="Operating System" value={selectedAsset.os} />
+                  <DetailField label="BIOS Version" value={selectedAsset.biosVersion} />
+                  <DetailField label="BIOS Serial Number" value={selectedAsset.biosSerial} />
+                  <DetailField label="Motherboard Serial" value={selectedAsset.motherboardSerial} />
+                  <DetailField label="UUID" value={selectedAsset.uuid} />
+                  <DetailField label="RAM Size" value={selectedAsset.ram} />
+                  <DetailField label="CPU" value={selectedAsset.cpuModel} />
+                  <DetailField label="MAC Address" value={selectedAsset.macAddress} />
+                  <DetailField label="IP Address" value={selectedAsset.ipAddress} accent />
                 </div>
+              </DetailSection>
 
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[#bbc9cf] text-[9px] uppercase tracking-wider font-bold">Processor Core Model</span>
-                  <span className="text-[#dae3ee] font-semibold">{selectedAsset.cpuModel}</span>
+              <DetailSection title="Login Activity" icon={<LogIn className="w-4 h-4 text-[#859399]" />}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <DetailField label="Current Login Time" value={selectedAsset.lastLogin} />
+                  <DetailField label="Last Logout Time" value={selectedAsset.status === "Online" ? "Currently Active" : selectedAsset.lastLogout} accent={selectedAsset.status === "Online"} />
+                  <DetailField label="Login Duration" value={selectedAsset.loginDuration || (selectedAsset.status === "Online" ? "Active" : "N/A")} />
+                  <DetailField label="Number of Logins Today" value={selectedAsset.loginsToday ?? 0} />
+                  <DetailField label="Current Logged-in User" value={selectedAsset.currentUser || selectedAsset.employee} />
+                  <DetailField label="Active Status" value={selectedAsset.status === "Offline" ? "Offline" : "Online"} accent={selectedAsset.status !== "Offline"} />
                 </div>
+              </DetailSection>
 
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[#bbc9cf] text-[9px] uppercase tracking-wider font-bold">Physical Room Location</span>
-                  <span className="text-[#dae3ee] font-semibold flex items-center gap-1">
-                    <MapPin className="w-3.5 h-3.5 text-[#00d1ff]" />
-                    {selectedAsset.location}
-                  </span>
+              <DetailSection title="Activity" icon={<Activity className="w-4 h-4 text-[#859399]" />}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <DetailField label="Current Active Window" value={selectedAsset.activeWindow} />
+                  <DetailField label="Current Active Application" value={selectedAsset.activeApplication} />
+                  <DetailField label="Current Active File / Path" value={<span className="text-[#a4e6ff]">{resolveActivePath(selectedAsset)}</span>} />
+                  <DetailField label="Last Executed Process" value={selectedAsset.lastExecutedProcess} />
                 </div>
+              </DetailSection>
 
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[#bbc9cf] text-[9px] uppercase tracking-wider font-bold">BIOS Serial Signature</span>
-                  <span className="text-white font-bold">{selectedAsset.biosSerial}</span>
+              <DetailSection title="Security" icon={<ShieldAlert className="w-4 h-4 text-[#859399]" />}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <DetailField label="Threat Score" value={`${getThreatLevel(selectedAsset)}/100`} accent />
+                  <DetailField label="Alerts" value={(selectedAsset.alerts?.length ? selectedAsset.alerts.join(", ") : selectedAsset.alertStatus)} />
+                  <DetailField label="Hardware Changes" value={selectedAsset.hardwareChanges?.length ? selectedAsset.hardwareChanges.join(", ") : "None"} />
+                  <DetailField label="Unauthorized Software" value={selectedAsset.unauthorizedSoftware?.length ? selectedAsset.unauthorizedSoftware.join(", ") : "None"} />
+                  <DetailField label="USB Activity" value={selectedAsset.usbActivity?.length ? selectedAsset.usbActivity.join(", ") : "No unauthorized USB activity"} />
+                  <DetailField label="Failed Login Attempts" value={selectedAsset.failedLoginAttempts ?? 0} />
                 </div>
+              </DetailSection>
 
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[#bbc9cf] text-[9px] uppercase tracking-wider font-bold">Last BIOS Re-flash</span>
-                  <span className="text-[#dae3ee]">{selectedAsset.lastReflash}</span>
+              <DetailSection title="System Health" icon={<HardDrive className="w-4 h-4 text-[#859399]" />}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                  <DetailField label="CPU Usage" value={selectedAsset.status === "Offline" ? "0%" : selectedAsset.cpuUsage || `${telemetryCPU}%`} accent />
+                  <DetailField label="RAM Usage" value={selectedAsset.status === "Offline" ? "0%" : selectedAsset.ramUsage || `${telemetryRAM}%`} />
+                  <DetailField label="Disk Usage" value={selectedAsset.diskUsage || "64%"} />
+                  <DetailField label="Network Usage" value={selectedAsset.status === "Offline" ? "0 Mbps" : selectedAsset.networkUsage || `${telemetryNET} Mbps`} />
+                  <DetailField label="Uptime" value={selectedAsset.uptime} />
                 </div>
+              </DetailSection>
 
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[#bbc9cf] text-[9px] uppercase tracking-wider font-bold">IP Subnet Routing</span>
-                  <span className="text-[#00d1ff] font-bold">{selectedAsset.ipAddress}</span>
+              <DetailSection title="Timeline" icon={<Clock className="w-4 h-4 text-[#859399]" />}>
+                <div className="flex flex-col gap-2.5">
+                  {[
+                    ...(selectedAsset.timeline || []),
+                    { type: "Login" as const, timestamp: selectedAsset.lastLogin || "N/A", detail: `${selectedAsset.currentUser || selectedAsset.employee} authenticated` },
+                    { type: "Application Started" as const, timestamp: "Live", detail: selectedAsset.activeApplication || resolveActivePath(selectedAsset) },
+                    ...(selectedAsset.lastLogout && selectedAsset.lastLogout !== "Currently Active" ? [{ type: "Logout" as const, timestamp: selectedAsset.lastLogout, detail: "Session closed" }] : []),
+                    ...(selectedAsset.alertStatus !== "nominal" ? [{ type: "Alert" as const, timestamp: "Recent", detail: `${selectedAsset.alertStatus.toUpperCase()} threat signal detected` }] : []),
+                    ...selectedAsset.history.slice(0, 3).map((item) => ({ type: item.toLowerCase().includes("usb") ? "USB Connected" as const : item.toLowerCase().includes("restart") ? "System Restart" as const : "Hardware Change" as const, timestamp: "Audit", detail: item }))
+                  ].slice(0, 8).map((event, idx) => (
+                    <div key={`${event.type}-${idx}`} className="grid grid-cols-[110px_1fr] gap-3 bg-[#0d1117] p-2.5 border border-white/5 rounded-lg text-[10.5px] leading-relaxed">
+                      <div className="text-[#00d1ff] font-bold uppercase tracking-wider">{event.type}</div>
+                      <div className="min-w-0">
+                        <div className="text-[#859399]">{event.timestamp}</div>
+                        <div className="text-[#dae3ee] break-words">{event.detail}</div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-
-              </div>
+              </DetailSection>
 
               {/* Tactical Actions Operations Center */}
               <div className="flex flex-wrap gap-2 select-none border-t border-[#3c494e]/20 pt-4">
