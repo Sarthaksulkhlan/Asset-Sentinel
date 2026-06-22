@@ -88,10 +88,27 @@ const DetailSection = ({ title, icon, children }: { title: string; icon: React.R
   </section>
 );
 
+type BackendAlertRecord = {
+  id: string;
+  alertType: string;
+  deviceName: string;
+  employee: string;
+  severity: string;
+  time: string;
+  description: string;
+  previousValue: string;
+  currentValue: string;
+  alertStatus: string;
+  raw: any;
+};
+
 export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemoMode = false }: DashboardPageProps) {
   // Master fleet list held in state for fully reactive user experiences
   const [assets, setAssets] = useState<Asset[]>(INITIAL_ASSETS);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
+  const [isCriticalAlertsOpen, setIsCriticalAlertsOpen] = useState(false);
+  const [selectedCriticalAlert, setSelectedCriticalAlert] = useState<BackendAlertRecord | null>(null);
+  const [acknowledgedAlerts, setAcknowledgedAlerts] = useState<Record<string, boolean>>({});
   const [isMonitoringOpen, setIsMonitoringOpen] = useState(false);
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -104,6 +121,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
       { timestamp: "08:14:05", node: "FORENSICS", message: "Fleet verification cycle completed. 14,209 keys verified.", type: "info" }
     ];
   });
+  const [alertRecords, setAlertRecords] = useState<BackendAlertRecord[]>([]);
 
   // Local state to track tactical operation overrides and custom user-generated logs
   const [localLogs, setLocalLogs] = useState<SecurityFeedItem[]>([]);
@@ -165,6 +183,16 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
 
   const handleCloseAnalyticsPanel = () => {
     setIsAnalyticsOpen(false);
+  };
+
+  const handleOpenCriticalAlertsPanel = () => {
+    setSelectedCriticalAlert(null);
+    setIsCriticalAlertsOpen(true);
+  };
+
+  const handleCloseCriticalAlertsPanel = () => {
+    setIsCriticalAlertsOpen(false);
+    setSelectedCriticalAlert(null);
   };
 
   const monitoringTarget = useMemo<Asset | null>(() => {
@@ -250,24 +278,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   };
 
   const handleNavigateCriticalState = () => {
-    const criticalAlerts = liveLogs.filter((log: SecurityFeedItem) => log.type === "critical");
-    if (criticalAlerts.length === 0) {
-      alert("No critical alerts detected.");
-      return;
-    }
-
-    const firstCritical = criticalAlerts[0];
-    const matchedAsset = assets.find((asset: Asset) =>
-      asset.hostname === firstCritical.node ||
-      asset.ipAddress === firstCritical.node ||
-      asset.location === firstCritical.node
-    );
-
-    if (matchedAsset) {
-      handleSelectAsset(matchedAsset);
-    } else {
-      scrollToSection("streaming-events-feed");
-    }
+    handleOpenCriticalAlertsPanel();
   };
   // Initialize grid cells of green/amber states on mount
   useEffect(() => {
@@ -389,6 +400,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
       currentWebsite: activePathValue,
       activeApplication: item.active_application || item.activeApplication || item.current_application || "Unknown",
       activeWindow: item.active_window || item.activeWindow || item.current_window || "Unknown",
+      lastActiveTime: item.last_active_time || item.lastActiveTime || item.active_timestamp || "N/A",
       lastExecutedProcess: item.last_executed_process || item.lastExecutedProcess || "Unknown",
       threatScore: Number(item.threat_score || item.threatScore || (alertStatus === "critical" ? 92 : alertStatus === "warning" ? 54 : 12)),
       alerts: alertList,
@@ -419,6 +431,94 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
       message: item.alert_type || item.details || item.message || item.msg || item.text || "Anomaly signature detected.",
       type: type
     };
+  };
+
+  const formatAlertValue = (value: any) => {
+    if (value === undefined || value === null || value === "") return "N/A";
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  };
+
+  const resolvePreviousValue = (details: Record<string, any>) => {
+    const previousKeys = Object.keys(details).filter((key) =>
+      /^prev/i.test(key) || /^previous/i.test(key)
+    );
+    if (previousKeys.length === 0) return "N/A";
+    return previousKeys
+      .map((key) => `${key.replace(/_/g, " ")}: ${formatAlertValue(details[key])}`)
+      .join(" | ");
+  };
+
+  const resolveCurrentValue = (details: Record<string, any>) => {
+    const currentKeys = Object.keys(details).filter((key) =>
+      /^curr/i.test(key) || /^current/i.test(key)
+    );
+    if (currentKeys.length === 0) return "N/A";
+    return currentKeys
+      .map((key) => `${key.replace(/_/g, " ")}: ${formatAlertValue(details[key])}`)
+      .join(" | ");
+  };
+
+  const mapBackendAlertRecord = (item: any, index: number): BackendAlertRecord => {
+    const details = item && typeof item.details === "object" && item.details !== null ? item.details : {};
+    const hostname = item.hostname || item.host || item.node || "SYSTEM";
+    const timestamp = item.timestamp || item.time || new Date().toLocaleTimeString();
+    const alertType = item.alert_type || item.alertType || item.type || "SECURITY_ALERT";
+    const severity = String(item.severity || "INFO").toUpperCase();
+    const id = `${hostname}-${alertType}-${timestamp}-${index}`;
+
+    return {
+      id,
+      alertType,
+      deviceName: hostname,
+      employee: details.username || item.username || "System Account",
+      severity,
+      time: timestamp,
+      description: formatAlertValue(item.message || item.details_text || item.description || `${alertType} detected on ${hostname}`),
+      previousValue: resolvePreviousValue(details),
+      currentValue: resolveCurrentValue(details),
+      alertStatus: "Active",
+      raw: item,
+    };
+  };
+
+  const criticalAlertRecords = useMemo(() => {
+    return alertRecords.filter((alertRecord) => alertRecord.severity === "CRITICAL");
+  }, [alertRecords]);
+
+  const handleViewCriticalAlertDevice = (alertRecord: BackendAlertRecord) => {
+    const details = alertRecord.raw?.details && typeof alertRecord.raw.details === "object" ? alertRecord.raw.details : {};
+    const matchedAsset = assets.find((asset: Asset) =>
+      asset.hostname === alertRecord.deviceName ||
+      asset.ipAddress === details.ip_address ||
+      asset.employee === alertRecord.employee
+    );
+
+    if (matchedAsset) {
+      handleCloseCriticalAlertsPanel();
+      handleSelectAsset(matchedAsset);
+    }
+  };
+
+  const handleAcknowledgeCriticalAlert = (alertRecord: BackendAlertRecord) => {
+    setAcknowledgedAlerts((prev) => ({
+      ...prev,
+      [alertRecord.id]: true,
+    }));
+    setSelectedCriticalAlert((prev) => prev && prev.id === alertRecord.id ? { ...prev, alertStatus: "Acknowledged" } : prev);
+  };
+
+  const resolveAlertEmployee = (alertRecord: BackendAlertRecord) => {
+    const details = alertRecord.raw?.details && typeof alertRecord.raw.details === "object" ? alertRecord.raw.details : {};
+    const matchedAsset = assets.find((asset: Asset) =>
+      asset.hostname === alertRecord.deviceName ||
+      asset.ipAddress === details.ip_address
+    );
+    return matchedAsset?.employee || alertRecord.employee;
+  };
+
+  const resolveAlertStatus = (alertRecord: BackendAlertRecord) => {
+    return acknowledgedAlerts[alertRecord.id] ? "Acknowledged" : alertRecord.alertStatus;
   };
 
   // Connected real-time polling effect to coordinate with the Python monitoring service
@@ -484,7 +584,9 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
         const data = await response.json();
         if (active && Array.isArray(data)) {
           const mapped = data.map(mapBackendAlert);
+          const records = data.map(mapBackendAlertRecord);
           setLiveLogs(mapped);
+          setAlertRecords(records);
         }
       } catch (err) {
         console.warn("[SENTINEL COMPLIANCE] Alerts background integration offline. Using secure in-memory cache.");
@@ -1943,6 +2045,142 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
           </div>
         )}
 
+        {isCriticalAlertsOpen && (
+          <div
+            id="critical-alerts-modal-scaffolding"
+            className="fixed inset-0 bg-[#05070b]/85 backdrop-blur-md z-50 flex justify-center items-start p-3 sm:p-6 md:pt-12 transition-opacity duration-300 overflow-y-auto"
+            onClick={handleCloseCriticalAlertsPanel}
+          >
+            <div
+              id="critical-alerts-modal"
+              className="w-full max-w-6xl max-h-[calc(100vh-1.5rem)] md:max-h-[calc(100vh-6rem)] overflow-y-auto bg-[#080d12]/98 border border-red-500/25 rounded-xl shadow-2xl shadow-red-950/30"
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+            >
+              <div className="sticky top-0 z-10 border-b border-red-500/20 bg-[#0a1016]/95 px-4 sm:px-6 py-5 flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-11 h-11 rounded-lg bg-red-950/30 border border-red-500/35 flex items-center justify-center shrink-0">
+                    <ShieldAlert className="w-6 h-6 text-red-400" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.35em] text-red-300 font-bold">Critical Alerts Center</p>
+                    <h2 className="mt-2 text-2xl font-black text-white tracking-tight">
+                      {selectedCriticalAlert ? selectedCriticalAlert.alertType : "Active Critical Incidents"}
+                    </h2>
+                    <p className="mt-1 text-sm text-[#94a3b8]">
+                      Dedicated incident triage view for critical security alerts only.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  id="critical-alerts-close-btn"
+                  onClick={handleCloseCriticalAlertsPanel}
+                  className="text-[#cbd5e1] hover:text-white p-2 rounded-lg bg-[#111827]/80 border border-white/10 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {!selectedCriticalAlert ? (
+                <div className="p-4 sm:p-6">
+                  {criticalAlertRecords.length === 0 ? (
+                    <div className="min-h-[260px] flex flex-col items-center justify-center text-center border border-emerald-500/20 bg-emerald-950/10 rounded-xl p-8">
+                      <CheckCircle2 className="w-10 h-10 text-emerald-400 mb-4" />
+                      <p className="text-lg font-semibold text-white">No critical alerts are currently active.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      {criticalAlertRecords.map((alertRecord) => (
+                        <button
+                          key={alertRecord.id}
+                          onClick={() => setSelectedCriticalAlert(alertRecord)}
+                          className="text-left rounded-xl bg-[#0d1117] border border-red-500/20 hover:border-red-400/60 hover:bg-red-950/10 transition-all p-4 sm:p-5 cursor-pointer"
+                        >
+                          <div className="flex items-start justify-between gap-3 mb-4">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                                <span className="text-sm font-black text-white uppercase tracking-wider truncate">{alertRecord.alertType}</span>
+                              </div>
+                              <p className="mt-1 text-xs text-[#94a3b8] truncate">{alertRecord.description}</p>
+                            </div>
+                            <span className="shrink-0 rounded-full border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-300">
+                              {resolveAlertStatus(alertRecord)}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-[11px]">
+                            <DetailField label="Device Name" value={alertRecord.deviceName} accent />
+                            <DetailField label="Employee" value={resolveAlertEmployee(alertRecord)} />
+                            <DetailField label="Severity" value={alertRecord.severity} />
+                            <DetailField label="Time" value={formatTelemetryTimestamp(alertRecord.time)} />
+                            <DetailField label="Previous Value" value={alertRecord.previousValue} />
+                            <DetailField label="Current Value" value={alertRecord.currentValue} />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-4 sm:p-6 grid gap-5">
+                  <section className="rounded-xl bg-[#0d1117] border border-red-500/25 p-4 sm:p-5">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-5">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.35em] text-red-300 font-bold">Incident Detail</p>
+                        <h3 className="mt-2 text-xl font-black text-white">{selectedCriticalAlert.alertType}</h3>
+                      </div>
+                      <span className="self-start rounded-full border border-red-500/40 bg-red-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-red-300">
+                        {resolveAlertStatus(selectedCriticalAlert)}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 font-mono text-[11px]">
+                      <DetailField label="Alert Type" value={selectedCriticalAlert.alertType} accent />
+                      <DetailField label="Device Name" value={selectedCriticalAlert.deviceName} />
+                      <DetailField label="Employee" value={resolveAlertEmployee(selectedCriticalAlert)} />
+                      <DetailField label="Severity" value={selectedCriticalAlert.severity} />
+                      <DetailField label="Time" value={formatTelemetryTimestamp(selectedCriticalAlert.time)} />
+                      <DetailField label="Alert Status" value={resolveAlertStatus(selectedCriticalAlert)} />
+                    </div>
+                  </section>
+
+                  <section className="rounded-xl bg-[#0d1117] border border-white/10 p-4 sm:p-5 font-mono text-[11px]">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <DetailField label="Description" value={selectedCriticalAlert.description} />
+                      <DetailField label="Previous Value" value={selectedCriticalAlert.previousValue} />
+                      <DetailField label="Current Value" value={selectedCriticalAlert.currentValue} accent />
+                    </div>
+                  </section>
+
+                  <div className="flex flex-col sm:flex-row gap-2 sm:justify-end border-t border-red-500/15 pt-4">
+                    <button
+                      onClick={() => handleViewCriticalAlertDevice(selectedCriticalAlert)}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#00d1ff]/10 hover:bg-[#00d1ff]/20 border border-[#00d1ff]/30 px-4 py-2 text-xs font-bold uppercase tracking-wider text-[#00d1ff] transition-colors"
+                    >
+                      <Laptop className="w-4 h-4" />
+                      View Device
+                    </button>
+                    <button
+                      onClick={() => handleAcknowledgeCriticalAlert(selectedCriticalAlert)}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-4 py-2 text-xs font-bold uppercase tracking-wider text-emerald-300 transition-colors"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      Acknowledge
+                    </button>
+                    <button
+                      onClick={handleCloseCriticalAlertsPanel}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1f2937]/80 hover:bg-[#334155]/80 border border-white/10 px-4 py-2 text-xs font-bold uppercase tracking-wider text-white transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                      Close
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {selectedAsset && (
           <div 
             id="asset-detail-scaffolding"
@@ -2077,6 +2315,8 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <DetailField label="Current Active Window" value={selectedAsset.activeWindow} />
                   <DetailField label="Current Active Application" value={selectedAsset.activeApplication} />
+                  <DetailField label="Current Application" value={selectedAsset.activeApplication} accent />
+                  <DetailField label="Last Active Time" value={formatTelemetryTimestamp(selectedAsset.lastActiveTime)} />
                   <DetailField label="Current Active File / Path" value={<span className="text-[#a4e6ff]">{resolveActivePath(selectedAsset)}</span>} />
                   <DetailField label="Last Executed Process" value={selectedAsset.lastExecutedProcess} />
                 </div>

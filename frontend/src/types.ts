@@ -25,6 +25,7 @@ export interface Asset {
   currentWebsite: string;
   activeApplication?: string;
   activeWindow?: string;
+  lastActiveTime?: string;
   lastExecutedProcess?: string;
   threatScore?: number;
   alerts?: string[];
