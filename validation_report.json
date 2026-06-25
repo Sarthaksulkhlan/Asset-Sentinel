@@ -1,0 +1,145 @@
+{
+  "generated_at": "2026-06-25T12:02:13.364165+00:00",
+  "status": "completed",
+  "checks": {
+    "database_connection": {
+      "status": "ok",
+      "details": {
+        "select_1": 1
+      }
+    },
+    "table_counts": {
+      "status": "ok",
+      "details": {
+        "assets": 2,
+        "alerts": 8,
+        "sessions": 2,
+        "active_applications": 34,
+        "hardware_changes": 0,
+        "users": 0
+      }
+    },
+    "crud_rollback": {
+      "status": "ok",
+      "details": {
+        "inserted_inside_transaction": 1,
+        "rolled_back": true
+      }
+    },
+    "api_contracts": {
+      "status": "ok",
+      "details": {
+        "/api/assets": {
+          "status_code": 200,
+          "json_type": "list",
+          "top_level_count": 2,
+          "keys": null
+        },
+        "/api/alerts": {
+          "status_code": 200,
+          "json_type": "list",
+          "top_level_count": 8,
+          "keys": null
+        },
+        "/api/sessions": {
+          "status_code": 200,
+          "json_type": "list",
+          "top_level_count": 2,
+          "keys": null
+        },
+        "/api/active-applications": {
+          "status_code": 200,
+          "json_type": "list",
+          "top_level_count": 1,
+          "keys": null
+        },
+        "/sessions/count": {
+          "status_code": 200,
+          "json_type": "dict",
+          "top_level_count": null,
+          "keys": [
+            "total_logins",
+            "total_logouts",
+            "total_sessions"
+          ]
+        },
+        "/current-user": {
+          "status_code": 200,
+          "json_type": "dict",
+          "top_level_count": null,
+          "keys": [
+            "device_status",
+            "hostname",
+            "username"
+          ]
+        },
+        "/current-session": {
+          "status_code": 200,
+          "json_type": "dict",
+          "top_level_count": null,
+          "keys": [
+            "collection_timestamp",
+            "device_status",
+            "hostname",
+            "ip_address",
+            "login_timestamp",
+            "session_id",
+            "username"
+          ]
+        },
+        "/device-status": {
+          "status_code": 200,
+          "json_type": "dict",
+          "top_level_count": null,
+          "keys": [
+            "device_status",
+            "hostname",
+            "last_activity"
+          ]
+        }
+      }
+    },
+    "hardware_collection": {
+      "status": "ok",
+      "details": {
+        "keys_present": {
+          "hostname": true,
+          "ip_address": true,
+          "bios_serial": true,
+          "ram_total_gb": true,
+          "collected_at": true,
+          "collection_method": true
+        },
+        "collection_method": "composite"
+      }
+    },
+    "login_tracking_read": {
+      "status": "ok",
+      "details": {
+        "current_session_keys": [
+          "collection_timestamp",
+          "device_status",
+          "hostname",
+          "ip_address",
+          "login_timestamp",
+          "session_id",
+          "username"
+        ],
+        "stored_sessions": 2
+      }
+    },
+    "active_application_collection": {
+      "status": "ok",
+      "details": {
+        "record_available": false,
+        "keys": []
+      }
+    },
+    "json_runtime_dependencies": {
+      "status": "ok",
+      "details": {
+        "runtime_json_references": {}
+      }
+    }
+  }
+}

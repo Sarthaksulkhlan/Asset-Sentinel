@@ -1,20 +1,12 @@
-import json
-from pathlib import Path
-
 from collect_hardware import collect_hardware
-
-ASSETS_FILE = Path("assets.json")
+from storage import list_assets, resolve_device_uid, upsert_asset
 
 
 def load_existing_assets():
-    if not ASSETS_FILE.exists():
-        return []
-
     try:
-        return json.loads(
-            ASSETS_FILE.read_text(encoding="utf-8")
-        )
-    except:
+        return list_assets()
+    except Exception as exc:
+        print(f"[ERROR] Could not load assets from PostgreSQL: {exc}")
         return []
 
 
@@ -22,23 +14,16 @@ def save_hardware():
     hardware = collect_hardware()
     assets = load_existing_assets()
 
+    current_uid = resolve_device_uid(hardware)
     exists = False
 
     for asset in assets:
-        if asset.get("bios_serial") == hardware.get("bios_serial"):
+        if asset.get("device_uid") == current_uid:
             exists = True
             break
 
-    if not exists:
-        assets.append(hardware)
-        print("New asset added")
-    else:
-        print("Asset already exists")
-
-    ASSETS_FILE.write_text(
-        json.dumps(assets, indent=2),
-        encoding="utf-8"
-    )
+    upsert_asset(hardware)
+    print("Asset updated" if exists else "New asset added")
 
     print("Asset saved successfully")
 

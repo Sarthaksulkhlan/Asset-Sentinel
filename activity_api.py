@@ -30,19 +30,11 @@ Usage in app.py:
         return get_current_user()
 """
 
-import json
 import logging
-from pathlib import Path
 from typing import Dict, Any, List, Tuple
 
-from session_manager import get_current_session_info, get_device_status
+from session_manager import get_current_session_info
 from login_tracker import load_sessions
-
-# ============================================================================
-# Configuration
-# ============================================================================
-
-SESSIONS_FILE = Path("sessions.json")
 
 # ============================================================================
 # Logging Setup
@@ -219,6 +211,8 @@ def get_sessions_count() -> Tuple[Dict[str, Any], int]:
 # ============================================================================
 
 if __name__ == "__main__":
+    import json
+
     print("\n" + "=" * 70)
     print("  Asset Sentinel Activity API - Test Output")
     print("=" * 70 + "\n")

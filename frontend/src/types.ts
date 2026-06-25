@@ -38,6 +38,14 @@ export interface Asset {
   lastReflash: string;
   cpuModel: string;
   cpuUsage?: string;
+  lastSeen?: string;
+  lastSeenHuman?: string;
+  applicationHistory?: Array<{
+    application?: string;
+    window_title?: string;
+    process_path?: string;
+    timestamp?: string;
+  }>;
   complianceStatus: boolean;
   history: string[];
   timeline?: Array<{

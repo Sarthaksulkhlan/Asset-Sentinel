@@ -1,2 +1,138 @@
 # Asset-Sentinel
-Centralized IT Asset Monitoring Tool for Windows PCs
+
+Centralized IT Asset Monitoring Tool for Windows PCs.
+
+## PostgreSQL Setup
+
+This repository is being migrated from local JSON file storage to PostgreSQL while preserving the current Flask API contracts and React dashboard behavior.
+
+The backend integration uses SQLAlchemy ORM for Flask APIs and Python monitoring scripts. The React frontend and Express proxy API contracts remain unchanged.
+
+## Database Schema
+
+The production schema is defined in:
+
+```powershell
+schema.sql
+```
+
+It creates these tables:
+
+- `assets`
+- `sessions`
+- `alerts`
+- `active_applications`
+- `hardware_changes`
+- `users`
+
+The schema keeps the current append-only behavior of JSON files. In particular, `assets` stores hardware snapshots, not only one mutable row per machine, because existing RAM and motherboard detectors compare historical snapshots.
+
+## Create Database
+
+Install PostgreSQL, then create a database and user for Asset Sentinel.
+
+Example using `psql` as a PostgreSQL admin:
+
+```sql
+CREATE DATABASE asset_sentinel;
+CREATE USER asset_sentinel_app WITH PASSWORD 'change_this_password';
+GRANT CONNECT ON DATABASE asset_sentinel TO asset_sentinel_app;
+```
+
+Connect to the database and apply the schema:
+
+```powershell
+psql -d asset_sentinel -f schema.sql
+```
+
+Grant table and sequence permissions if you use a separate application user:
+
+```sql
+GRANT USAGE ON SCHEMA public TO asset_sentinel_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO asset_sentinel_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO asset_sentinel_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO asset_sentinel_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+GRANT USAGE, SELECT ON SEQUENCES TO asset_sentinel_app;
+```
+
+## Planned Environment Variables
+
+The Flask integration uses this environment variable:
+
+```powershell
+ASSET_SENTINEL_DATABASE_URL=postgresql+psycopg2://asset_sentinel_app:postgres@localhost:5432/asset_sentinel
+```
+
+Optional SQL logging:
+
+```powershell
+ASSET_SENTINEL_SQL_ECHO=true
+```
+
+Do not commit real production passwords or service credentials.
+
+## Python Dependencies
+
+Install backend dependencies with:
+
+```powershell
+pip install -r requirements.txt
+```
+
+The PostgreSQL integration uses SQLAlchemy ORM and `psycopg2-binary`.
+
+## Current JSON Files
+
+The current JSON files remain as optional historical backup/import files:
+
+- `assets.json`
+- `alerts.json`
+- `sessions.json`
+- `active_applications.json`
+
+They will be imported during the later migration phase. Flask and the Python monitoring scripts now use PostgreSQL for runtime storage.
+
+## Data Migration
+
+Import existing JSON backup files into PostgreSQL with:
+
+```powershell
+python migrate_json_to_postgres.py
+```
+
+The migration is idempotent. Running it multiple times skips records that are already present. A report is written to:
+
+```powershell
+migration_report.json
+```
+
+## Validation
+
+Run the PostgreSQL migration validation suite with:
+
+```powershell
+python validate_postgres_migration.py
+```
+
+The validation checks database connectivity, rollback-safe CRUD, Flask API response shapes, hardware/session/activity hooks, and remaining runtime JSON dependencies. A report is written to:
+
+```powershell
+validation_report.json
+```
+
+## Compatibility Target
+
+The database design is intended to preserve these existing response shapes:
+
+- `GET /api/assets`
+- `GET /api/alerts`
+- `GET /api/sessions`
+- `GET /api/active-applications`
+- `GET /current-user`
+- `GET /current-session`
+- `GET /device-status`
+- `GET /sessions/count`
+
+The frontend should continue to work without modification once the Flask storage layer is moved to PostgreSQL.

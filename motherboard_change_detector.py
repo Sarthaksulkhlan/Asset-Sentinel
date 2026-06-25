@@ -3,8 +3,9 @@ import smtplib
 import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from pathlib import Path
 from datetime import datetime
+
+from storage import append_alert, list_alerts, list_assets, record_hardware_change
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -15,8 +16,6 @@ SENDER_EMAIL    = "assetsentinel.alerts@gmail.com"
 SENDER_PASSWORD = "wgvpxmwdyfjrspqw"
 SMTP_HOST       = "smtp.gmail.com"
 SMTP_PORT       = 587
-ASSETS_FILE     = Path("assets.json")
-ALERTS_FILE     = Path("alerts.json")
 
 
 # ---------------------------------------------------------------------------
@@ -24,24 +23,17 @@ ALERTS_FILE     = Path("alerts.json")
 # ---------------------------------------------------------------------------
 
 def load_alerts():
-    """Load existing alerts from alerts.json. Returns empty list if file does not exist."""
-    if not ALERTS_FILE.exists():
-        return []
+    """Load existing alerts from PostgreSQL. Returns empty list if unavailable."""
     try:
-        content = ALERTS_FILE.read_text(encoding="utf-8").strip()
-        if not content:
-            return []
-        data = json.loads(content)
-        return data if isinstance(data, list) else []
+        return list_alerts()
     except Exception as e:
-        print(f"[WARNING] Could not read alerts.json: {e}")
+        print(f"[WARNING] Could not read alerts from PostgreSQL: {e}")
         return []
 
 
 def save_alert(alert_type, hostname, severity, details):
     """
-    Append a new alert record to alerts.json.
-    Creates the file if it does not exist.
+    Append a new alert record to PostgreSQL.
 
     Parameters:
         alert_type : str  - e.g. "MOTHERBOARD_CHANGE"
@@ -49,26 +41,11 @@ def save_alert(alert_type, hostname, severity, details):
         severity   : str  - "LOW", "MEDIUM", "HIGH", "CRITICAL"
         details    : dict - alert-specific data
     """
-    alerts = load_alerts()
-
-    record = {
-        "alert_type": alert_type,
-        "hostname":   hostname,
-        "severity":   severity,
-        "timestamp":  datetime.now().isoformat(),
-        "details":    details,
-    }
-
-    alerts.append(record)
-
     try:
-        ALERTS_FILE.write_text(
-            json.dumps(alerts, indent=2, default=str),
-            encoding="utf-8",
-        )
-        print(f"[ALERT LOG] Incident saved to alerts.json")
+        append_alert(alert_type, hostname, severity, details, datetime.now().isoformat())
+        print(f"[ALERT LOG] Incident saved to PostgreSQL")
     except Exception as e:
-        print(f"[WARNING] Could not write to alerts.json: {e}")
+        print(f"[WARNING] Could not write alert to PostgreSQL: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -76,18 +53,14 @@ def save_alert(alert_type, hostname, severity, details):
 # ---------------------------------------------------------------------------
 
 def load_assets():
-    if not ASSETS_FILE.exists():
-        print("[ERROR] assets.json not found. Run save_hardware.py first.")
-        return []
     try:
-        content = ASSETS_FILE.read_text(encoding="utf-8").strip()
-        if not content:
-            print("[ERROR] assets.json is empty.")
+        data = list_assets()
+        if not data:
+            print("[ERROR] No assets found in PostgreSQL. Run save_hardware.py first.")
             return []
-        data = json.loads(content)
         return data if isinstance(data, list) else []
     except Exception as e:
-        print(f"[ERROR] Could not read assets.json: {e}")
+        print(f"[ERROR] Could not read assets from PostgreSQL: {e}")
         return []
 
 
@@ -224,7 +197,7 @@ def run_detector():
 
     if len(assets) < 2:
         print(f"[INFO] Need at least 2 snapshots to compare.")
-        print(f"       Currently have {len(assets)} snapshot(s) in assets.json.")
+        print(f"       Currently have {len(assets)} snapshot(s) in PostgreSQL.")
         print("       Run save_hardware.py again to add another snapshot.")
         return
 
@@ -243,7 +216,7 @@ def run_detector():
         print("\n[OK] No motherboard change detected. All good.")
         return
 
-    # Motherboard changed - print alert, log to alerts.json, send email
+    # Motherboard changed - print alert, log to PostgreSQL, send email
     print_alert(change)
 
     save_alert(
@@ -262,6 +235,28 @@ def run_detector():
             "current_snapshot_time":  change["current_snapshot_time"],
         }
     )
+
+    try:
+        record_hardware_change(
+            hostname=change["hostname"],
+            change_type="MOTHERBOARD_CHANGE",
+            severity="CRITICAL",
+            previous_value={
+                "bios_serial": change["prev_bios_serial"],
+                "baseboard_serial": change["prev_baseboard_serial"],
+            },
+            current_value={
+                "bios_serial": change["curr_bios_serial"],
+                "baseboard_serial": change["curr_baseboard_serial"],
+            },
+            difference={
+                "bios_changed": change["bios_changed"],
+                "baseboard_changed": change["baseboard_changed"],
+            },
+            detected_at=change["detected_at"],
+        )
+    except Exception as e:
+        print(f"[WARNING] Could not save hardware change to PostgreSQL: {e}")
 
     send_email_alert(change)
 

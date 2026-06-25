@@ -36,7 +36,7 @@ import {
   LogIn
 } from "lucide-react";
 import { Asset, SecurityFeedItem, KPIStats } from "../types";
-import { INITIAL_ASSETS, STREAMING_FEED_PRESETS } from "../data";
+import { INITIAL_ASSETS } from "../data";
 import { SentinelLogo } from "./SentinelLogo";
 import AssetHistory from "./AssetHistory";
 
@@ -48,7 +48,7 @@ interface DashboardPageProps {
 }
 
 const formatTelemetryTimestamp = (value?: string | null) => {
-  if (!value) return "N/A";
+  if (!value) return "No data";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleString([], {
@@ -74,7 +74,7 @@ const getThreatLevel = (asset: Asset) => {
 const DetailField = ({ label, value, accent = false }: { label: string; value?: React.ReactNode; accent?: boolean }) => (
   <div className="flex flex-col gap-0.5 min-w-0">
     <span className="text-[#bbc9cf] text-[9px] uppercase tracking-wider font-bold">{label}</span>
-    <span className={`${accent ? "text-[#00d1ff]" : "text-[#dae3ee]"} font-semibold break-words`}>{value ?? "N/A"}</span>
+    <span className={`${accent ? "text-[#00d1ff]" : "text-[#dae3ee]"} font-semibold break-words`}>{value ?? "No data"}</span>
   </div>
 );
 
@@ -104,7 +104,7 @@ type BackendAlertRecord = {
 
 export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemoMode = false }: DashboardPageProps) {
   // Master fleet list held in state for fully reactive user experiences
-  const [assets, setAssets] = useState<Asset[]>(INITIAL_ASSETS);
+  const [assets, setAssets] = useState<Asset[]>(() => isDemoMode ? INITIAL_ASSETS : []);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [isCriticalAlertsOpen, setIsCriticalAlertsOpen] = useState(false);
   const [selectedCriticalAlert, setSelectedCriticalAlert] = useState<BackendAlertRecord | null>(null);
@@ -117,8 +117,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   const [liveLogs, setLiveLogs] = useState<SecurityFeedItem[]>(() => {
     // Starting logs pool
     return [
-      { timestamp: "08:15:02", node: "SYSTEM", message: "Telemetry link bound successfully with Cupertino root cluster.", type: "info" },
-      { timestamp: "08:14:05", node: "FORENSICS", message: "Fleet verification cycle completed. 14,209 keys verified.", type: "info" }
+      ...(isDemoMode ? [{ timestamp: "08:15:02", node: "SYSTEM", message: "Demo telemetry stream ready.", type: "info" as const }] : [])
     ];
   });
   const [alertRecords, setAlertRecords] = useState<BackendAlertRecord[]>([]);
@@ -343,8 +342,8 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
 
   // Adapter mapping functions for robust integration with external Python backend schemas
   const mapBackendAsset = (item: any): Asset => {
-    const statusRaw = String(item.status || 'Online').toLowerCase();
-    let status: 'Online' | 'Idle' | 'Overload' | 'Offline' = 'Online';
+    const statusRaw = String(item.status || item.device_status || 'Offline').toLowerCase();
+    let status: 'Online' | 'Idle' | 'Overload' | 'Offline' = 'Offline';
     if (statusRaw.includes('idle')) status = 'Idle';
     else if (statusRaw.includes('overload') || statusRaw.includes('critical')) status = 'Overload';
     else if (statusRaw.includes('offline')) status = 'Offline';
@@ -355,15 +354,15 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     if (alertRaw.includes('critical') || alertRaw.includes('error') || alertRaw.includes('danger') || alertRaw.includes('high')) alertStatus = 'critical';
     else if (alertRaw.includes('warning') || alertRaw.includes('warn') || alertRaw.includes('medium')) alertStatus = 'warning';
 
-    const ipAddressValue = item.ip_address || item.ipAddress || item.ip || "Unassigned";
-    const ramValue = typeof item.ram_total_gb === 'number' ? `${item.ram_total_gb}GB` : String(item.ram_total_gb || item.ram || item.memory || "16GB");
-    const biosSerialValue = item.bios_serial || item.biosSerial || item.serial || item.bios || "Unknown";
-    const baseboardSerial = item.baseboard_serial || item.baseboardSerial || "Unknown";
-    const activePathValue = item.current_active_path || item.current_path || item.currentWebsite || item.current_website || item.website || "-";
+    const ipAddressValue = item.ip_address || item.ipAddress || item.ip || "No IP";
+    const ramValue = item.ram_total_gb !== undefined && item.ram_total_gb !== null ? `${item.ram_total_gb}GB` : "No RAM data";
+    const biosSerialValue = item.bios_serial || item.biosSerial || item.serial || item.bios || "No BIOS serial";
+    const baseboardSerial = item.baseboard_serial || item.baseboardSerial || "No baseboard serial";
+    const activePathValue = item.current_active_path || item.current_path || item.currentWebsite || item.current_website || item.website || "No active application";
     const alertList = Array.isArray(item.alerts) ? item.alerts : [];
 
     const detailHistory = Array.isArray(item.history) ? item.history.slice() : [];
-    if (baseboardSerial !== "Unknown") {
+    if (baseboardSerial !== "No baseboard serial") {
       detailHistory.push(`Baseboard Serial: ${baseboardSerial}`);
     }
     if (item.baseboard_manufacturer) {
@@ -374,34 +373,34 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     }
 
     return {
-      hostname: item.hostname || item.host || item.name || "Unknown",
+      hostname: item.hostname || item.host || item.name || "Unknown Host",
       status: status,
-      employee: item.employee || item.owner || item.user || "System Account",
-      department: item.department || item.dept || "Unassigned",
-      deviceId: item.device_id || item.deviceId || item.composite_id || item.uuid || "Unassigned",
-      assetId: item.asset_id || item.assetId || item.bios_serial || item.biosSerial || "Unassigned",
+      employee: item.current_user || item.username || item.employee || item.owner || item.user || "No user",
+      department: item.department || item.dept || "No department",
+      deviceId: item.device_uid || item.device_id || item.deviceId || item.uuid || item.bios_serial || item.baseboard_serial || item.composite_id || "No device id",
+      assetId: item.asset_id || item.assetId || item.uuid || item.bios_serial || item.biosSerial || "No asset id",
       ipAddress: ipAddressValue,
-      os: item.windows_version || item.os || item.operating_system || item.platform || "Unknown OS",
+      os: item.windows_version || item.os || item.operating_system || item.platform || "No OS data",
       ram: ramValue,
-      ramUsage: item.ram_usage || item.ramUsage || `${status === "Overload" ? 88 : status === "Idle" ? 18 : 42}%`,
-      diskUsage: item.disk_usage || item.diskUsage || "64%",
-      networkUsage: item.network_usage || item.networkUsage || "120 Mbps",
-      uptime: item.uptime || item.system_uptime || "N/A",
+      ramUsage: item.ram_usage_label || item.ram_usage || item.ramUsage || "No RAM usage",
+      diskUsage: item.disk_usage || item.diskUsage || "No disk data",
+      networkUsage: item.network_usage || item.networkUsage || "No network data",
+      uptime: item.uptime || item.system_uptime || "No uptime data",
       biosSerial: biosSerialValue,
-      biosVersion: item.bios_version || item.biosVersion || item.bios_version_string || "Unknown",
+      biosVersion: item.bios_version || item.biosVersion || item.bios_version_string || "No BIOS version",
       motherboardSerial: baseboardSerial,
-      uuid: item.uuid || item.system_uuid || "Unknown",
-      macAddress: item.mac_address || item.macAddress || "Unknown",
-      lastLogin: item.lastLogin || item.last_login || item.login_timestamp || "N/A",
-      lastLogout: item.lastLogout || item.last_logout || item.logout_timestamp || (status === "Online" ? "Currently Active" : "N/A"),
-      loginDuration: item.login_duration || item.session_duration || item.loginDuration || "N/A",
+      uuid: item.uuid || item.system_uuid || "No UUID",
+      macAddress: item.mac_address || item.macAddress || "No MAC",
+      lastLogin: item.lastLogin || item.last_login || item.login_timestamp || "No login data",
+      lastLogout: item.lastLogout || item.last_logout || item.logout_timestamp || (status === "Online" ? "Currently Active" : "No logout data"),
+      loginDuration: item.login_duration || item.session_duration || item.loginDuration || "No duration",
       loginsToday: Number(item.logins_today || item.loginsToday || 0),
-      currentUser: item.current_user || item.currentUser || item.username || item.employee || "System Account",
+      currentUser: item.current_user || item.currentUser || item.username || item.employee || "No user",
       currentWebsite: activePathValue,
-      activeApplication: item.active_application || item.activeApplication || item.current_application || "Unknown",
-      activeWindow: item.active_window || item.activeWindow || item.current_window || "Unknown",
-      lastActiveTime: item.last_active_time || item.lastActiveTime || item.active_timestamp || "N/A",
-      lastExecutedProcess: item.last_executed_process || item.lastExecutedProcess || "Unknown",
+      activeApplication: item.active_application || item.activeApplication || item.current_application || "No active application",
+      activeWindow: item.active_window || item.activeWindow || item.current_window || "No active window",
+      lastActiveTime: item.last_active_time || item.lastActiveTime || item.active_timestamp || "No activity",
+      lastExecutedProcess: item.last_executed_process || item.lastExecutedProcess || "No process data",
       threatScore: Number(item.threat_score || item.threatScore || (alertStatus === "critical" ? 92 : alertStatus === "warning" ? 54 : 12)),
       alerts: alertList,
       hardwareChanges: Array.isArray(item.hardware_changes) ? item.hardware_changes : [],
@@ -409,10 +408,13 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
       usbActivity: Array.isArray(item.usb_activity) ? item.usb_activity : [],
       failedLoginAttempts: Number(item.failed_login_attempts || item.failedLoginAttempts || 0),
       alertStatus: alertStatus,
-      location: item.location || item.loc || ipAddressValue || "Remote Workspace",
-      lastReflash: item.lastReflash || item.last_reflash || item.reflash || "2026-06-01",
-      cpuModel: item.cpu_name || item.cpuModel || item.cpu_model || item.cpu || "Unknown CPU",
-      cpuUsage: item.cpu_usage || item.cpuUsage || `${status === "Overload" ? 94 : status === "Idle" ? 4 : 22}%`,
+      location: item.location || item.loc || ipAddressValue || "No location",
+      lastReflash: item.lastReflash || item.last_reflash || item.reflash || "No reflash data",
+      cpuModel: item.cpu_name || item.cpuModel || item.cpu_model || item.cpu || "No CPU data",
+      cpuUsage: item.cpu_usage_label || item.cpu_usage || item.cpuUsage || "No CPU data",
+      lastSeen: item.last_seen || item.lastSeen,
+      lastSeenHuman: item.last_seen_human || item.lastSeenHuman || item.last_seen || "No heartbeat",
+      applicationHistory: Array.isArray(item.application_history) ? item.application_history : [],
       complianceStatus: item.complianceStatus !== undefined ? !!item.complianceStatus : (item.compliance_status !== undefined ? !!item.compliance_status : (alertStatus === 'nominal')),
       history: detailHistory.length > 0 ? detailHistory : alertList,
       timeline: Array.isArray(item.timeline) ? item.timeline : []
@@ -561,8 +563,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                 : (latestSession.logout_timestamp ? formatTelemetryTimestamp(latestSession.logout_timestamp) : "Currently Active"),
               loginDuration: latestSession.session_duration || latestSession.duration || "Active",
               currentUser: latestSession.username || asset.currentUser,
-              loginsToday,
-              status: latestSession.active === false ? asset.status : "Online" as Asset["status"]
+              loginsToday
             } : {};
 
             if (localOverrides[asset.hostname]) {
@@ -1658,9 +1659,8 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                         return <CheckCircle2 className="w-4 h-4 text-[#00d1ff]" />;
                       };
                       const threatLevel = getThreatLevel(asset);
-                      const lastSeen = asset.status === "Offline"
-                        ? (asset.lastLogout || asset.lastLogin || "N/A")
-                        : (asset.lastLogin || "Live");
+                      const lastSeen = asset.lastSeenHuman || asset.lastSeen || asset.lastActiveTime || "No heartbeat";
+                      const cpuPercent = parseInt(asset.cpuUsage || "0", 10) || 0;
 
                       return (
                         <tr 
@@ -1689,10 +1689,10 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                               <div className="h-1.5 flex-1 rounded-full bg-[#0D1117] border border-[#3c494e]/40 overflow-hidden">
                                 <div
                                   className="h-full bg-[#00d1ff] transition-all duration-500"
-                                  style={{ width: `${Math.min(100, parseInt(asset.cpuUsage || "0", 10) || telemetryCPU)}%` }}
+                                  style={{ width: `${Math.min(100, cpuPercent)}%` }}
                                 />
                               </div>
-                              <span className="text-[#dae3ee] font-semibold w-9 text-right">{asset.cpuUsage || `${telemetryCPU}%`}</span>
+                              <span className="text-[#dae3ee] font-semibold w-16 text-right">{asset.cpuUsage}</span>
                             </div>
                           </td>
                           <td className="py-3 px-3 sm:px-4">
@@ -2304,7 +2304,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   <DetailField label="Current Login Time" value={selectedAsset.lastLogin} />
                   <DetailField label="Last Logout Time" value={selectedAsset.status === "Online" ? "Currently Active" : selectedAsset.lastLogout} accent={selectedAsset.status === "Online"} />
-                  <DetailField label="Login Duration" value={selectedAsset.loginDuration || (selectedAsset.status === "Online" ? "Active" : "N/A")} />
+                  <DetailField label="Login Duration" value={selectedAsset.loginDuration} />
                   <DetailField label="Number of Logins Today" value={selectedAsset.loginsToday ?? 0} />
                   <DetailField label="Current Logged-in User" value={selectedAsset.currentUser || selectedAsset.employee} />
                   <DetailField label="Active Status" value={selectedAsset.status === "Offline" ? "Offline" : "Online"} accent={selectedAsset.status !== "Offline"} />
@@ -2317,8 +2317,21 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                   <DetailField label="Current Active Application" value={selectedAsset.activeApplication} />
                   <DetailField label="Current Application" value={selectedAsset.activeApplication} accent />
                   <DetailField label="Last Active Time" value={formatTelemetryTimestamp(selectedAsset.lastActiveTime)} />
+                  <DetailField label="Last Seen" value={selectedAsset.lastSeenHuman || formatTelemetryTimestamp(selectedAsset.lastSeen)} accent />
                   <DetailField label="Current Active File / Path" value={<span className="text-[#a4e6ff]">{resolveActivePath(selectedAsset)}</span>} />
                   <DetailField label="Last Executed Process" value={selectedAsset.lastExecutedProcess} />
+                  <DetailField
+                    label="Previous Applications"
+                    value={
+                      selectedAsset.applicationHistory?.length
+                        ? selectedAsset.applicationHistory
+                            .slice(0, 5)
+                            .map((entry) => entry.application || entry.window_title || entry.process_path)
+                            .filter(Boolean)
+                            .join(" | ")
+                        : "No history"
+                    }
+                  />
                 </div>
               </DetailSection>
 
@@ -2335,9 +2348,9 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
 
               <DetailSection title="System Health" icon={<HardDrive className="w-4 h-4 text-[#859399]" />}>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-                  <DetailField label="CPU Usage" value={selectedAsset.status === "Offline" ? "0%" : selectedAsset.cpuUsage || `${telemetryCPU}%`} accent />
-                  <DetailField label="RAM Usage" value={selectedAsset.status === "Offline" ? "0%" : selectedAsset.ramUsage || `${telemetryRAM}%`} />
-                  <DetailField label="Disk Usage" value={selectedAsset.diskUsage || "64%"} />
+                  <DetailField label="CPU Usage" value={selectedAsset.status === "Offline" ? "0%" : selectedAsset.cpuUsage} accent />
+                  <DetailField label="RAM Usage" value={selectedAsset.status === "Offline" ? "0%" : selectedAsset.ramUsage} />
+                  <DetailField label="Disk Usage" value={selectedAsset.diskUsage} />
                   <DetailField label="Network Usage" value={selectedAsset.status === "Offline" ? "0 Mbps" : selectedAsset.networkUsage || `${telemetryNET} Mbps`} />
                   <DetailField label="Uptime" value={selectedAsset.uptime} />
                 </div>

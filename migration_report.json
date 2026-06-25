@@ -1,0 +1,43 @@
+{
+  "generated_at": "2026-06-25T10:21:00.733470+00:00",
+  "database": "asset_sentinel",
+  "status": "completed",
+  "datasets": {
+    "assets": {
+      "source": "assets.json",
+      "read": 2,
+      "inserted": 0,
+      "skipped_duplicates": 2,
+      "failed": 0,
+      "errors": [],
+      "status": "ok"
+    },
+    "alerts": {
+      "source": "alerts.json",
+      "read": 6,
+      "inserted": 0,
+      "skipped_duplicates": 6,
+      "failed": 0,
+      "errors": [],
+      "status": "ok"
+    },
+    "sessions": {
+      "source": "sessions.json",
+      "read": 1,
+      "inserted": 0,
+      "skipped_duplicates": 1,
+      "failed": 0,
+      "errors": [],
+      "status": "ok"
+    },
+    "active_applications": {
+      "source": "active_applications.json",
+      "read": 0,
+      "inserted": 0,
+      "skipped_duplicates": 0,
+      "failed": 0,
+      "status": "missing",
+      "errors": []
+    }
+  }
+}

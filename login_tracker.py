@@ -1,17 +1,17 @@
 """
 Asset Sentinel Login Tracker
 ==============================
-Detects Windows login events and records them to sessions.json.
+Detects Windows login events and records them to PostgreSQL.
 
 This module:
 1. Tracks current user sessions
 2. Detects new logins by comparing with previous state
-3. Records login details to sessions.json
-4. Triggers login alerts to alerts.json
+3. Records login details to PostgreSQL
+4. Triggers login alerts to PostgreSQL
 5. Maintains session state for logout detection
 
 Design:
-- Reads sessions.json to find previous login records
+- Reads PostgreSQL sessions to find previous login records
 - Compares with current session (via session_manager)
 - Records new login if username/session_id changed
 - Logs events for audit trail
@@ -26,18 +26,11 @@ Requires: session_manager, pywin32 (for Session ID)
 
 import json
 import logging
-from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 from session_manager import get_current_session_info
-
-# ============================================================================
-# Configuration
-# ============================================================================
-
-SESSIONS_FILE = Path("sessions.json")
-ALERTS_FILE = Path("alerts.json")
+from storage import append_alert, list_alerts, list_sessions, replace_sessions, touch_active_session, update_asset_heartbeat
 
 # ============================================================================
 # Logging Setup
@@ -56,32 +49,21 @@ logger = logging.getLogger("login_tracker")
 
 def load_sessions() -> List[Dict[str, Any]]:
     """
-    Load all login/logout records from sessions.json.
+    Load all login/logout records from PostgreSQL.
     
     Returns:
-        list: Array of session records, empty list if file doesn't exist
+        list: Array of session records, empty list if none exist
     """
-    if not SESSIONS_FILE.exists():
-        logger.info("sessions.json does not exist yet - starting fresh")
-        return []
-    
     try:
-        content = SESSIONS_FILE.read_text(encoding="utf-8").strip()
-        if not content:
-            return []
-        data = json.loads(content)
-        return data if isinstance(data, list) else []
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse sessions.json: {e}")
-        return []
+        return list_sessions()
     except Exception as e:
-        logger.error(f"Error reading sessions.json: {e}")
+        logger.error(f"Error reading sessions from PostgreSQL: {e}")
         return []
 
 
 def save_sessions(sessions: List[Dict[str, Any]]) -> bool:
     """
-    Save session records to sessions.json.
+    Save session records to PostgreSQL.
     
     Args:
         sessions: List of session records
@@ -90,14 +72,11 @@ def save_sessions(sessions: List[Dict[str, Any]]) -> bool:
         bool: True if successful, False otherwise
     """
     try:
-        SESSIONS_FILE.write_text(
-            json.dumps(sessions, indent=2, default=str),
-            encoding="utf-8"
-        )
-        logger.info(f"Saved {len(sessions)} session records to sessions.json")
+        replace_sessions(sessions)
+        logger.info(f"Saved {len(sessions)} session records to PostgreSQL")
         return True
     except Exception as e:
-        logger.error(f"Failed to write sessions.json: {e}")
+        logger.error(f"Failed to write sessions to PostgreSQL: {e}")
         return False
 
 
@@ -107,29 +86,22 @@ def save_sessions(sessions: List[Dict[str, Any]]) -> bool:
 
 def load_alerts() -> List[Dict[str, Any]]:
     """
-    Load existing alerts from alerts.json.
+    Load existing alerts from PostgreSQL.
     Reuses the alert system from motherboard_change_detector.py pattern.
     
     Returns:
         list: Array of alert records
     """
-    if not ALERTS_FILE.exists():
-        return []
-    
     try:
-        content = ALERTS_FILE.read_text(encoding="utf-8").strip()
-        if not content:
-            return []
-        data = json.loads(content)
-        return data if isinstance(data, list) else []
+        return list_alerts()
     except Exception as e:
-        logger.warning(f"Could not read alerts.json: {e}")
+        logger.warning(f"Could not read alerts from PostgreSQL: {e}")
         return []
 
 
 def save_alert(alert_type: str, hostname: str, severity: str, details: Dict[str, Any]) -> bool:
     """
-    Record an alert to alerts.json.
+    Record an alert to PostgreSQL.
     
     Follows the same pattern as existing detectors (motherboard_change_detector, etc.)
     
@@ -142,27 +114,18 @@ def save_alert(alert_type: str, hostname: str, severity: str, details: Dict[str,
     Returns:
         bool: True if alert saved successfully
     """
-    alerts = load_alerts()
-    
-    record = {
-        "alert_type": alert_type,
-        "hostname": hostname,
-        "severity": severity,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "details": details,
-    }
-    
-    alerts.append(record)
-    
     try:
-        ALERTS_FILE.write_text(
-            json.dumps(alerts, indent=2, default=str),
-            encoding="utf-8"
+        append_alert(
+            alert_type=alert_type,
+            hostname=hostname,
+            severity=severity,
+            details=details,
+            timestamp=datetime.now(timezone.utc).isoformat(),
         )
         logger.info(f"Alert saved: {alert_type} for {hostname}")
         return True
     except Exception as e:
-        logger.error(f"Failed to write alerts.json: {e}")
+        logger.error(f"Failed to write alert to PostgreSQL: {e}")
         return False
 
 
@@ -304,13 +267,19 @@ def detect_login() -> Optional[Dict[str, Any]]:
         return record_login(current_session)
     
     # No login detected
+    touch_active_session(
+        current_session.get("hostname"),
+        current_session.get("username"),
+        current_session.get("session_id"),
+    )
+    update_asset_heartbeat(current_session.get("hostname"))
     logger.debug(f"No login detected - user {current_user} still in session {current_session_id}")
     return None
 
 
 def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Record a login event to sessions.json and create an alert.
+    Record a login event to PostgreSQL and create an alert.
     
     Args:
         session_info: Dictionary from get_current_session_info()
@@ -334,10 +303,11 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
         "session_duration": "Active",
         "active": True,
         "device_status": "Online",
+        "last_seen": now,
         "recorded_at": now,
     }
     
-    # Append to sessions.json
+    # Append to PostgreSQL
     sessions.append(login_record)
     save_sessions(sessions)
     
@@ -357,6 +327,7 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
     )
     
     logger.info(f"Login recorded: {login_record.get('username')} on {login_record.get('hostname')}")
+    update_asset_heartbeat(login_record.get("hostname"))
     
     return login_record
 

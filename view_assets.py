@@ -1,14 +1,10 @@
-import json
-from pathlib import Path
+from storage import list_assets
 
-ASSETS_FILE = Path("assets.json")
-
-if not ASSETS_FILE.exists():
-    print("No assets found")
+try:
+    assets = list_assets()
+except Exception as exc:
+    print(f"Could not load assets from PostgreSQL: {exc}")
     exit()
-
-with open(ASSETS_FILE, "r", encoding="utf-8") as f:
-    assets = json.load(f)
 
 print(f"\nTotal Assets: {len(assets)}\n")
 

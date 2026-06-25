@@ -289,6 +289,24 @@ def collect_windows_version() -> Optional[str]:
         return None
 
 
+def collect_cpu_usage_percent() -> Optional[float]:
+    try:
+        import psutil
+        return round(float(psutil.cpu_percent(interval=0.2)), 2)
+    except Exception as exc:
+        logger.warning("Could not collect CPU usage: %s", exc)
+        return None
+
+
+def collect_ram_usage_percent() -> Optional[float]:
+    try:
+        import psutil
+        return round(float(psutil.virtual_memory().percent), 2)
+    except Exception as exc:
+        logger.warning("Could not collect RAM usage: %s", exc)
+        return None
+
+
 def collect_current_active_path() -> dict:
     """
     Collect the current foreground app/window details on Windows.
@@ -436,6 +454,8 @@ def collect_hardware() -> dict:
         # Hardware fields
         "cpu_name": None,
         "ram_total_gb": None,
+        "cpu_usage_percent": None,
+        "ram_usage_percent": None,
         # Motherboard metadata
         "baseboard_manufacturer": None,
         "baseboard_product": None,
@@ -449,6 +469,7 @@ def collect_hardware() -> dict:
         # Meta
         "collection_method": "none",
         "collected_at": datetime.now(timezone.utc).isoformat(),
+        "last_seen": datetime.now(timezone.utc).isoformat(),
         "collection_errors": [],
     }
 
@@ -458,6 +479,8 @@ def collect_hardware() -> dict:
     result["hostname"] = collect_hostname()
     result["ip_address"] = collect_ip_address(result["hostname"])
     result["windows_version"] = collect_windows_version()
+    result["cpu_usage_percent"] = collect_cpu_usage_percent()
+    result["ram_usage_percent"] = collect_ram_usage_percent()
     result.update(collect_current_active_path())
 
     # -----------------------------------------------------------------------
@@ -612,7 +635,9 @@ if __name__ == "__main__":
     print(f"  UUID            : {data['uuid'] or '[null/unavailable]'}")
     print(f"  Composite ID    : {data['composite_id'] or '[not needed]'}")
     print(f"  CPU             : {data['cpu_name']}")
+    print(f"  CPU Usage       : {data.get('cpu_usage_percent')}%")
     print(f"  RAM             : {data['ram_total_gb']} GB")
+    print(f"  RAM Usage       : {data.get('ram_usage_percent')}%")
     print(f"  Windows Version : {data['windows_version']}")
     print(f"  Active Path     : {data.get('current_website') or '[unavailable]'}")
     print(f"  Collection Method: {data['collection_method'].upper()}")

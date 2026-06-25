@@ -1,9 +1,13 @@
-import json
+import os
 import socket
-from pathlib import Path
 from flask import Flask, jsonify
 from flask_cors import CORS
 from collect_hardware import collect_current_active_path
+from active_application_monitor import (
+    get_latest_active_applications,
+    get_latest_active_application_for_host,
+    start_active_application_monitor,
+)
 
 # Import session tracking modules
 from activity_api import (
@@ -13,6 +17,8 @@ from activity_api import (
     get_sessions_history,
     get_sessions_count,
 )
+from database import init_db
+from storage import list_alerts, list_assets
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -21,38 +27,16 @@ from activity_api import (
 app = Flask(__name__)
 CORS(app)  # Allow requests from React / Lovable frontend on any origin
 
-# File paths - both files must be in the same folder as app.py
-ASSETS_FILE = Path("assets.json")
-ALERTS_FILE = Path("alerts.json")
-
 
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
 
-def read_json_file(file_path):
-    """
-    Read a JSON file and return its contents as a Python list.
-    Returns an empty list if the file does not exist or is unreadable.
-    """
-    if not file_path.exists():
-        return []
-    try:
-        content = file_path.read_text(encoding="utf-8").strip()
-        if not content:
-            return []
-        data = json.loads(content)
-        return data if isinstance(data, list) else []
-    except (json.JSONDecodeError, OSError) as e:
-        print(f"[WARNING] Could not read {file_path.name}: {e}")
-        return []
-
-
 def enrich_assets_with_current_activity(assets):
     """
     Add the live foreground activity to the current machine's asset record.
     This keeps the dashboard's current active path column populated while
-    preserving the existing assets.json storage format.
+    preserving the existing API response format.
     """
     if not assets:
         return assets
@@ -61,12 +45,19 @@ def enrich_assets_with_current_activity(assets):
         current_hostname = socket.gethostname()
         activity = collect_current_active_path()
         current_activity = activity.get("active_process_path") or activity.get("current_website")
+        current_monitor_record = get_latest_active_application_for_host(current_hostname)
         if not current_activity:
-            return assets
+            current_activity = current_monitor_record.get("executable_name") if current_monitor_record else None
 
         enriched_assets = []
         for asset in assets:
             if asset.get("hostname") == current_hostname:
+                last_active_time = current_monitor_record.get("timestamp") if current_monitor_record else None
+                active_application = (
+                    current_monitor_record.get("application_name")
+                    if current_monitor_record
+                    else activity.get("active_process_name")
+                )
                 enriched_assets.append({
                     **asset,
                     **activity,
@@ -74,10 +65,22 @@ def enrich_assets_with_current_activity(assets):
                     "current_website": current_activity,
                     "current_active_path": current_activity,
                     "active_window": activity.get("active_window_title"),
-                    "active_application": activity.get("active_process_name"),
+                    "active_application": active_application,
+                    "current_application": active_application,
+                    "last_active_time": last_active_time,
                 })
             else:
-                enriched_assets.append(asset)
+                monitor_record = get_latest_active_application_for_host(asset.get("hostname"))
+                if monitor_record:
+                    enriched_assets.append({
+                        **asset,
+                        "active_application": monitor_record.get("application_name"),
+                        "current_application": monitor_record.get("application_name"),
+                        "active_window": monitor_record.get("window_title"),
+                        "last_active_time": monitor_record.get("timestamp"),
+                    })
+                else:
+                    enriched_assets.append(asset)
         return enriched_assets
     except Exception as e:
         print(f"[WARNING] Could not enrich current activity: {e}")
@@ -92,9 +95,9 @@ def enrich_assets_with_current_activity(assets):
 def get_assets():
     """
     GET /api/assets
-    Returns all hardware snapshots from assets.json.
+    Returns all hardware snapshots from PostgreSQL.
     """
-    assets = read_json_file(ASSETS_FILE)
+    assets = list_assets()
     return jsonify(enrich_assets_with_current_activity(assets))
 
 
@@ -102,10 +105,18 @@ def get_assets():
 def get_alerts():
     """
     GET /api/alerts
-    Returns all alert records from alerts.json.
+    Returns all alert records from PostgreSQL.
     """
-    alerts = read_json_file(ALERTS_FILE)
-    return jsonify(alerts)
+    return jsonify(list_alerts())
+
+
+@app.route("/api/active-applications", methods=["GET"])
+def get_active_applications():
+    """
+    GET /api/active-applications
+    Returns the latest active Windows application seen for each monitored host.
+    """
+    return jsonify(get_latest_active_applications())
 
 
 # ============================================================================
@@ -215,6 +226,9 @@ def sessions_count():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    init_db()
+    if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+        start_active_application_monitor()
     print("=" * 70)
     print("  Asset Sentinel Backend")
     print("  Running on http://localhost:5000")
@@ -222,6 +236,7 @@ if __name__ == "__main__":
     print("  Hardware Monitoring APIs:")
     print("    GET /api/assets")
     print("    GET /api/alerts")
+    print("    GET /api/active-applications")
     print("=" * 70)
     print("  Session & Activity Tracking APIs (Feature 1):")
     print("    GET /current-user")
