@@ -82,6 +82,9 @@ class SessionRecord(Base):
     active = Column(Boolean, nullable=False, default=False)
     device_status = Column(String(20))
     last_seen = Column(DateTime(timezone=True))
+    login_source = Column(String(50))
+    windows_event_id = Column(String(20))
+    windows_event_record_id = Column(String(255))
     recorded_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
@@ -104,6 +107,7 @@ class SessionRecord(Base):
         Index("idx_sessions_active", "active"),
         Index("idx_sessions_event_type", "event_type"),
         Index("idx_sessions_login_timestamp", login_timestamp.desc()),
+        Index("idx_sessions_windows_event_record_id", "windows_event_record_id"),
     )
 
 
@@ -223,7 +227,7 @@ class User(Base):
     username = Column(String(255), nullable=False)
     password_hash = Column(Text)
     display_name = Column(String(255))
-    role = Column(String(50), nullable=False, default="admin")
+    role = Column(String(50), nullable=False, default="Admin")
     is_active = Column(Boolean, nullable=False, default=True)
     external_provider = Column(String(100))
     external_subject = Column(String(255))
@@ -235,8 +239,29 @@ class User(Base):
         UniqueConstraint("email", name="uq_users_email"),
         UniqueConstraint("username", name="uq_users_username"),
         UniqueConstraint("external_provider", "external_subject", name="uq_users_external_identity"),
-        CheckConstraint("role IN ('super_admin', 'admin', 'analyst', 'viewer')", name="chk_users_role"),
+        CheckConstraint("role IN ('Admin', 'IT Admin', 'Viewer')", name="chk_users_role"),
         Index("idx_users_role", "role"),
         Index("idx_users_is_active", "is_active"),
         Index("idx_users_external_identity", "external_provider", "external_subject"),
+    )
+
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+
+    id = Column(BigInteger, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token_hash = Column(String(128), nullable=False)
+    jwt_id = Column(String(255), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_refresh_tokens_token_hash"),
+        UniqueConstraint("jwt_id", name="uq_refresh_tokens_jwt_id"),
+        Index("idx_refresh_tokens_user_id", "user_id"),
+        Index("idx_refresh_tokens_expires_at", expires_at),
     )

@@ -11,6 +11,7 @@ import {
   AlertTriangle 
 } from "lucide-react";
 import { SentinelLogo } from "./SentinelLogo";
+import { useAuth } from "../auth/AuthContext";
 
 interface LoginPageProps {
   onNavigate: (view: "landing" | "login" | "dashboard" | "demo") => void;
@@ -18,6 +19,7 @@ interface LoginPageProps {
 }
 
 export default function LoginPage({ onNavigate, onLoginSuccess }: LoginPageProps) {
+  const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -25,28 +27,22 @@ export default function LoginPage({ onNavigate, onLoginSuccess }: LoginPageProps
   const [isSuccess, setIsSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setErrorMsg("");
 
-    // Simulate cyber sign-in loading key check
-    setTimeout(() => {
-      const normalizedUser = email.trim().replace(/\s+/g, "").toLowerCase();
-      // Validate credentials against requested values
-      if (normalizedUser === "sentinelcommand" && password === "assetsentinel.alert") {
-        setIsLoading(false);
-        setIsSuccess(true);
-        
-        // Let user see "AUTHENTICATION VERIFIED" for 1.5 seconds then proceed
-        setTimeout(() => {
-          onLoginSuccess("Sentinelcommand");
-        }, 1500);
-      } else {
-        setErrorMsg("ACCESS DENIED: Invalid command identity or security key token.");
-        setIsLoading(false);
-      }
-    }, 1200);
+    try {
+      const user = await login(email.trim(), password);
+      setIsSuccess(true);
+      setTimeout(() => {
+        onLoginSuccess(user.email || user.username);
+      }, 900);
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : "ACCESS DENIED: Invalid command identity or security key token.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   if (isSuccess) {

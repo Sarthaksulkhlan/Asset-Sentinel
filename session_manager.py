@@ -19,7 +19,7 @@ Requires: pywin32, psutil (Windows only)
 
 import socket
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 import os
 
@@ -32,6 +32,11 @@ try:
     import psutil
 except ImportError:
     psutil = None
+
+try:
+    import win32evtlog
+except ImportError:
+    win32evtlog = None
 
 # ============================================================================
 # Logging Setup
@@ -174,6 +179,98 @@ def get_login_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _normalize_windows_username(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return value.split("\\")[-1].split("@")[0].strip().lower()
+
+
+def _event_time_to_utc(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc)
+
+
+def get_latest_windows_login_event(username: Optional[str]) -> Optional[Dict[str, Any]]:
+    """
+    Read the Windows Security log and return the newest interactive login or
+    unlock event for the active user.
+
+    Asset Sentinel treats Security event 4624 with LogonType 2, 7, or 10 and
+    event 4801 as a login boundary. Event 4801 is emitted when a locked
+    workstation is unlocked, which is the important case where username and
+    terminal session id usually do not change.
+    """
+    if win32evtlog is None or os.name != "nt":
+        return None
+
+    normalized_user = _normalize_windows_username(username)
+    if not normalized_user:
+        return None
+
+    server = "localhost"
+    log_name = "Security"
+    flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+
+    try:
+        handle = win32evtlog.OpenEventLog(server, log_name)
+    except Exception as exc:
+        logger.warning(f"Could not open Windows Security event log: {exc}")
+        return None
+
+    try:
+        scanned = 0
+        while scanned < 2500:
+            events = win32evtlog.ReadEventLog(handle, flags, 0)
+            if not events:
+                break
+            for event in events:
+                scanned += 1
+                event_id = int(event.EventID) & 0xFFFF
+                if event_id not in {4624, 4801, 4778}:
+                    continue
+
+                generated_at = _event_time_to_utc(event.TimeGenerated)
+                if generated_at < cutoff:
+                    return None
+
+                inserts = [str(value) for value in (event.StringInserts or [])]
+                lowered = [_normalize_windows_username(value) for value in inserts]
+                if normalized_user not in lowered:
+                    continue
+
+                login_source = "windows_unlock" if event_id == 4801 else "windows_logon"
+                logon_type = None
+                if event_id == 4624 and len(inserts) > 8:
+                    logon_type = inserts[8]
+                    if logon_type not in {"2", "7", "10"}:
+                        continue
+                    if logon_type == "7":
+                        login_source = "windows_unlock"
+                    elif logon_type == "10":
+                        login_source = "windows_remote_logon"
+                elif event_id == 4778:
+                    login_source = "windows_session_reconnect"
+
+                return {
+                    "event_id": str(event_id),
+                    "event_record_id": str(event.RecordNumber),
+                    "event_timestamp": generated_at.isoformat(),
+                    "login_source": login_source,
+                    "logon_type": logon_type,
+                }
+    except Exception as exc:
+        logger.warning(f"Could not read Windows login events: {exc}")
+    finally:
+        try:
+            win32evtlog.CloseEventLog(handle)
+        except Exception:
+            pass
+
+    return None
+
+
 def get_device_status() -> str:
     """
     Get the current device status.
@@ -217,12 +314,19 @@ def get_current_session_info() -> Dict[str, Any]:
             "collection_timestamp": "2026-06-17T10:30:45.123456+00:00"
         }
     """
+    username = get_current_username()
+    login_event = get_latest_windows_login_event(username)
+    login_timestamp = login_event.get("event_timestamp") if login_event else get_login_timestamp()
     session_info = {
-        "username": get_current_username(),
+        "username": username,
         "hostname": get_current_hostname(),
         "ip_address": get_current_ip_address(),
         "session_id": get_session_id_via_wmi(),
-        "login_timestamp": get_login_timestamp(),
+        "login_timestamp": login_timestamp,
+        "login_source": login_event.get("login_source") if login_event else "session_poll",
+        "windows_event_id": login_event.get("event_id") if login_event else None,
+        "windows_event_record_id": login_event.get("event_record_id") if login_event else None,
+        "windows_logon_type": login_event.get("logon_type") if login_event else None,
         "device_status": get_device_status(),
         "collection_timestamp": get_login_timestamp(),
     }

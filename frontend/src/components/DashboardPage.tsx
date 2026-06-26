@@ -48,6 +48,7 @@ import { Asset, AssetDetailPayload, SecurityFeedItem, KPIStats } from "../types"
 import { INITIAL_ASSETS } from "../data";
 import { SentinelLogo } from "./SentinelLogo";
 import AssetHistory from "./AssetHistory";
+import { apiFetch } from "../lib/api";
 
 interface DashboardPageProps {
   userEmail: string;
@@ -66,6 +67,17 @@ const formatTelemetryTimestamp = (value?: string | null) => {
     hour: "2-digit",
     minute: "2-digit"
   });
+};
+
+const formatSessionDurationSince = (value?: string | null) => {
+  if (!value) return "No duration";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "No duration";
+  const seconds = Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
 };
 
 const resolveActivePath = (asset: Asset) => {
@@ -757,8 +769,8 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     const fetchFleetData = async () => {
       try {
         const [response, sessionsResponse] = await Promise.all([
-          fetch("/api/assets"),
-          fetch("/api/sessions").catch(() => null)
+          apiFetch("/api/assets"),
+          apiFetch("/api/sessions").catch(() => null)
         ]);
         if (!response.ok) throw new Error("Assets endpoint error");
         const data = await response.json();
@@ -777,18 +789,34 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
             const assetSessions = sessionsByHost[asset.hostname] || [];
             const latestSession = assetSessions[assetSessions.length - 1];
             const today = new Date().toDateString();
-            const loginsToday = assetSessions.filter((session: any) => {
+            const now = new Date();
+            const weekStart = new Date(now);
+            weekStart.setHours(0, 0, 0, 0);
+            weekStart.setDate(now.getDate() - now.getDay() + 1);
+            const loginSessions = assetSessions.filter((session: any) => session.event_type === "LOGIN");
+            const loginsToday = loginSessions.filter((session: any) => {
               const stamp = session.login_timestamp || session.recorded_at;
-              return stamp && new Date(stamp).toDateString() === today && session.event_type === "LOGIN";
+              return stamp && new Date(stamp).toDateString() === today;
             }).length;
+            const loginsThisWeek = loginSessions.filter((session: any) => {
+              const stamp = session.login_timestamp || session.recorded_at;
+              return stamp && new Date(stamp) >= weekStart;
+            }).length;
+            const latestLogin = [...loginSessions].reverse()[0];
+            const latestLoginStamp = latestLogin?.login_timestamp || latestLogin?.recorded_at;
+            const sessionDuration = latestSession?.active
+              ? formatSessionDurationSince(latestLoginStamp)
+              : latestSession?.session_duration || latestSession?.duration || asset.loginDuration;
             const sessionPatch = latestSession ? {
-              lastLogin: formatTelemetryTimestamp(latestSession.login_timestamp || latestSession.recorded_at),
+              lastLogin: formatTelemetryTimestamp(latestLoginStamp || latestSession.login_timestamp || latestSession.recorded_at),
               lastLogout: latestSession.active === false
                 ? formatTelemetryTimestamp(latestSession.logout_timestamp)
                 : (latestSession.logout_timestamp ? formatTelemetryTimestamp(latestSession.logout_timestamp) : "Currently Active"),
-              loginDuration: latestSession.session_duration || latestSession.duration || "Active",
-              currentUser: latestSession.username || asset.currentUser,
-              loginsToday
+              loginDuration: sessionDuration,
+              currentUser: latestLogin?.username || latestSession.username || asset.currentUser,
+              loginsToday,
+              loginsThisWeek,
+              lastSuccessfulLogin: latestLoginStamp || asset.lastSuccessfulLogin
             } : {};
 
             if (localOverrides[asset.hostname]) {
@@ -812,7 +840,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
 
     const fetchAlertData = async () => {
       try {
-        const response = await fetch("/api/alerts");
+        const response = await apiFetch("/api/alerts");
         if (!response.ok) throw new Error("Alerts endpoint error");
         const data = await response.json();
         if (active && Array.isArray(data)) {
@@ -871,7 +899,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     const fetchAssetDetail = async () => {
       setAssetDetailLoading(true);
       try {
-        const response = await fetch(`/api/assets/${encodeURIComponent(selectedAsset.hostname)}/details`);
+        const response = await apiFetch(`/api/assets/${encodeURIComponent(selectedAsset.hostname)}/details`);
         if (!response.ok) throw new Error("Asset detail endpoint error");
         const payload = await response.json();
         const mappedAsset = mapBackendAsset(payload.asset || {});
@@ -996,7 +1024,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     ]);
 
     try {
-      const response = await fetch("/api/audit-asset", {
+      const response = await apiFetch("/api/audit-asset", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(asset)
@@ -2509,7 +2537,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
               onScroll={(event) => {
                 if (!isDemoMode) writeDashboardState({ detailScrollTop: event.currentTarget.scrollTop });
               }}
-              className="w-full max-w-7xl bg-[#0B1220] border-l border-[#2B3752] h-full overflow-y-auto p-4 sm:p-6 md:p-8 flex flex-col gap-6 shadow-2xl relative select-text font-sans"
+              className="w-full max-w-7xl bg-[#0B1220] border-l border-[#2B3752] h-full overflow-y-auto p-4 sm:p-6 md:p-8 flex flex-col gap-7 shadow-2xl relative select-text font-sans"
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
             >
               
@@ -2517,21 +2545,21 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
               <button 
                 id="drawer-close-btn"
                 onClick={handleCloseAssetDetail}
-                className="absolute top-5 right-5 text-[#bbc9cf] hover:text-white p-1 hover:bg-[#2d363e]/60 rounded-lg transition-colors cursor-pointer"
+                className="absolute top-5 right-5 z-20 text-[#bbc9cf] hover:text-white p-1 hover:bg-[#2d363e]/60 rounded-lg transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
 
               {/* Executive Header */}
-              <div className="select-none overflow-hidden rounded-3xl border border-[#2B3752] bg-[linear-gradient(135deg,#141B2D_0%,#0B1220_62%,#10233A_100%)] p-5 pr-12 shadow-[0_24px_70px_rgba(0,0,0,0.36)]">
+              <div className="relative z-10 select-none overflow-visible rounded-3xl border border-[#2B3752] bg-[linear-gradient(135deg,#141B2D_0%,#0B1220_62%,#10233A_100%)] p-5 pr-14 sm:pr-16 shadow-[0_24px_70px_rgba(0,0,0,0.36)]">
                 <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-                  <div className="flex items-start gap-3.5">
+                  <div className="flex min-w-0 items-start gap-3.5">
                     <div className="w-14 h-14 rounded-2xl bg-sky-500/10 border border-sky-500/30 flex items-center justify-center shrink-0 shadow-[0_0_24px_rgba(56,189,248,0.16)]">
                       <Monitor className="w-7 h-7 text-sky-300" />
                     </div>
-                    <div>
-                      <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white leading-tight flex flex-wrap items-center gap-2">
-                        {selectedAsset.hostname}
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight text-white leading-tight flex flex-wrap items-center gap-2 break-words">
+                        <span className="min-w-0 max-w-full break-all">{selectedAsset.hostname}</span>
                         <StatusChip status={selectedAsset.status} />
                         {selectedAsset.complianceStatus ? (
                           <span className="text-[11px] font-semibold text-emerald-300 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/30 shadow-[0_0_18px_rgba(34,197,94,0.16)]">Risk Low</span>
@@ -2572,7 +2600,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+              <div className="relative z-0 grid grid-cols-1 gap-6 pt-1 xl:grid-cols-2">
               <DetailSection title="Device Overview" icon={<Laptop className="w-5 h-5 text-sky-300" />}>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <DetailField label="Hostname" value={selectedAsset.hostname} accent />

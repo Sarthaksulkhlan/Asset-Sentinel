@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     active BOOLEAN NOT NULL DEFAULT false,
     device_status VARCHAR(20),
     last_seen TIMESTAMPTZ,
+    login_source VARCHAR(50),
+    windows_event_id VARCHAR(20),
+    windows_event_record_id VARCHAR(255),
     recorded_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT chk_sessions_event_type
@@ -130,7 +133,7 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(255) NOT NULL,
     password_hash TEXT,
     display_name VARCHAR(255),
-    role VARCHAR(50) NOT NULL DEFAULT 'admin',
+    role VARCHAR(50) NOT NULL DEFAULT 'Admin',
     is_active BOOLEAN NOT NULL DEFAULT true,
     external_provider VARCHAR(100),
     external_subject VARCHAR(255),
@@ -141,7 +144,19 @@ CREATE TABLE IF NOT EXISTS users (
     CONSTRAINT uq_users_username UNIQUE (username),
     CONSTRAINT uq_users_external_identity UNIQUE (external_provider, external_subject),
     CONSTRAINT chk_users_role
-        CHECK (role IN ('super_admin', 'admin', 'analyst', 'viewer'))
+        CHECK (role IN ('Admin', 'IT Admin', 'Viewer'))
+);
+
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash VARCHAR(128) NOT NULL,
+    jwt_id VARCHAR(255) NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_refresh_tokens_token_hash UNIQUE (token_hash),
+    CONSTRAINT uq_refresh_tokens_jwt_id UNIQUE (jwt_id)
 );
 
 CREATE OR REPLACE FUNCTION set_updated_at()
@@ -185,6 +200,8 @@ CREATE INDEX IF NOT EXISTS idx_sessions_event_type
     ON sessions (event_type);
 CREATE INDEX IF NOT EXISTS idx_sessions_login_timestamp
     ON sessions (login_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_windows_event_record_id
+    ON sessions (windows_event_record_id);
 
 CREATE INDEX IF NOT EXISTS idx_alerts_hostname_timestamp
     ON alerts (hostname, timestamp DESC);
@@ -223,5 +240,10 @@ CREATE INDEX IF NOT EXISTS idx_users_is_active
     ON users (is_active);
 CREATE INDEX IF NOT EXISTS idx_users_external_identity
     ON users (external_provider, external_subject);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id
+    ON refresh_tokens (user_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at
+    ON refresh_tokens (expires_at);
 
 COMMIT;

@@ -186,6 +186,9 @@ def serialize_session(row: SessionRecord) -> Dict[str, Any]:
         "active": row.active,
         "device_status": row.device_status,
         "last_seen": _iso(row.last_seen),
+        "login_source": row.login_source,
+        "windows_event_id": row.windows_event_id,
+        "windows_event_record_id": row.windows_event_record_id,
         "recorded_at": _iso(row.recorded_at),
     }
 
@@ -333,6 +336,8 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
         return {"logins_today": 0}
 
     latest = rows[-1]
+    latest_login = next((row for row in reversed(rows) if row.event_type == "LOGIN"), latest)
+    active_login = next((row for row in reversed(rows) if row.event_type == "LOGIN" and row.active), latest_login)
     today = datetime.now(timezone.utc).date()
     week_start = today - timedelta(days=today.weekday())
     logins_today = 0
@@ -356,19 +361,19 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
             last_failed_login = _parse_datetime(details.get("failed_login_timestamp"))
 
     return {
-        "current_user": latest.username,
-        "username": latest.username,
-        "session_id": latest.session_id,
-        "login_timestamp": _iso(latest.login_timestamp or latest.recorded_at),
-        "last_login": _iso(latest.login_timestamp or latest.recorded_at),
+        "current_user": active_login.username or latest_login.username,
+        "username": active_login.username or latest_login.username,
+        "session_id": active_login.session_id or latest_login.session_id,
+        "login_timestamp": _iso(active_login.login_timestamp or active_login.recorded_at),
+        "last_login": _iso(active_login.login_timestamp or active_login.recorded_at),
         "logout_timestamp": _iso(last_logout or latest.logout_timestamp),
         "last_logout": _iso(last_logout or latest.logout_timestamp),
-        "session_duration": latest.session_duration if latest.session_duration and latest.session_duration != "Active" else _duration(latest.login_timestamp or latest.recorded_at),
+        "session_duration": active_login.session_duration if active_login.session_duration and active_login.session_duration != "Active" else _duration(active_login.login_timestamp or active_login.recorded_at),
         "logins_today": logins_today,
         "logins_this_week": logins_this_week,
         "last_successful_login": _iso(last_successful_login),
         "last_failed_login": _iso(last_failed_login),
-        "active_session": latest.active,
+        "active_session": active_login.active,
     }
 
 
@@ -427,6 +432,19 @@ def append_session(record: Dict[str, Any]) -> None:
         session.add(_build_session_record(record))
 
 
+def has_session_event_signature(hostname: str, windows_event_record_id: Optional[str]) -> bool:
+    if not hostname or not windows_event_record_id:
+        return False
+    with get_db_session() as session:
+        row = session.execute(
+            select(SessionRecord.id)
+            .where(SessionRecord.hostname == hostname)
+            .where(SessionRecord.windows_event_record_id == str(windows_event_record_id))
+            .limit(1)
+        ).scalar_one_or_none()
+        return row is not None
+
+
 def touch_active_session(hostname: str, username: Optional[str], session_id: Optional[str]) -> None:
     now = datetime.now(timezone.utc)
     with get_db_session() as session:
@@ -461,6 +479,9 @@ def _build_session_record(record: Dict[str, Any]) -> SessionRecord:
         active=bool(record.get("active", False)),
         device_status=record.get("device_status"),
         last_seen=_parse_datetime(record.get("last_seen")),
+        login_source=record.get("login_source"),
+        windows_event_id=str(record.get("windows_event_id")) if record.get("windows_event_id") else None,
+        windows_event_record_id=str(record.get("windows_event_record_id")) if record.get("windows_event_record_id") else None,
         recorded_at=_parse_required_datetime(record.get("recorded_at")),
     )
 

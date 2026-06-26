@@ -30,7 +30,15 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 from session_manager import get_current_session_info
-from storage import append_alert, list_alerts, list_sessions, replace_sessions, touch_active_session, update_asset_heartbeat
+from storage import (
+    append_alert,
+    has_session_event_signature,
+    list_alerts,
+    list_sessions,
+    replace_sessions,
+    touch_active_session,
+    update_asset_heartbeat,
+)
 
 # ============================================================================
 # Logging Setup
@@ -252,9 +260,20 @@ def detect_login() -> Optional[Dict[str, Any]]:
     
     # Check if user or session changed (indicates logout/login)
     current_session_id = current_session.get("session_id")
+    current_event_record_id = current_session.get("windows_event_record_id")
     
     last_user = last_session.get("username")
     last_session_id = last_session.get("session_id")
+    last_event_record_id = last_session.get("windows_event_record_id")
+
+    if current_event_record_id and current_event_record_id != last_event_record_id:
+        if not has_session_event_signature(current_session.get("hostname"), current_event_record_id):
+            logger.info(
+                "Login detected from Windows event %s record %s",
+                current_session.get("windows_event_id"),
+                current_event_record_id,
+            )
+            return record_login(current_session)
     
     # Different username = new login
     if current_user != last_user:
@@ -304,6 +323,9 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
         "active": True,
         "device_status": "Online",
         "last_seen": now,
+        "login_source": session_info.get("login_source"),
+        "windows_event_id": session_info.get("windows_event_id"),
+        "windows_event_record_id": session_info.get("windows_event_record_id"),
         "recorded_at": now,
     }
     
@@ -317,6 +339,9 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
         "ip_address": login_record.get("ip_address"),
         "session_id": login_record.get("session_id"),
         "login_timestamp": login_record.get("login_timestamp"),
+        "login_source": login_record.get("login_source"),
+        "windows_event_id": login_record.get("windows_event_id"),
+        "windows_event_record_id": login_record.get("windows_event_record_id"),
     }
     
     save_alert(

@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const DEFAULT_PORT = Number(process.env.PORT || 3000);
 
   app.use(express.json());
 
@@ -168,23 +168,35 @@ async function startServer() {
     { timestamp: "08:15:55", node: "GATEWAY", message: "NEW SESSION INITIATED - ADMIN-DASHBOARD (Cupertino, CA)", type: "info" }
   ];
 
+  type BackendProxyResult = {
+    ok: boolean;
+    status: number;
+    data: unknown;
+  };
+
   // Helper to fetch from backend trying IPv4 loopback first (robust for Node 18+ environments), then localhost
-  async function fetchFromBackend(endpoint: string) {
+  async function fetchFromBackend(endpoint: string, init: RequestInit = {}): Promise<BackendProxyResult | null> {
+    const requestInit: RequestInit = {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init.headers || {}),
+      },
+    };
+
     try {
       // Try 127.0.0.1 explicitly to bypass IPv6 DNS resolution issues
-      const response = await fetch(`http://127.0.0.1:5000/api/${endpoint}`);
-      if (response.ok) {
-        return await response.json();
-      }
+      const response = await fetch(`http://127.0.0.1:5000/api/${endpoint}`, requestInit);
+      const data = await response.json().catch(() => ({}));
+      return { ok: response.ok, status: response.status, data };
     } catch {
       // silent fallback to localhost
     }
 
     try {
-      const response = await fetch(`http://localhost:5000/api/${endpoint}`);
-      if (response.ok) {
-        return await response.json();
-      }
+      const response = await fetch(`http://localhost:5000/api/${endpoint}`, requestInit);
+      const data = await response.json().catch(() => ({}));
+      return { ok: response.ok, status: response.status, data };
     } catch {
       // silent
     }
@@ -192,20 +204,78 @@ async function startServer() {
     return null;
   }
 
+  const authHeaders = (req: express.Request) => {
+    const headers: Record<string, string> = {};
+    if (req.headers.authorization) {
+      headers.Authorization = req.headers.authorization;
+    }
+    return headers;
+  };
+
+  const sendBackendOrFallback = (
+    res: express.Response,
+    result: BackendProxyResult | null,
+    fallback: unknown,
+    fallbackMessage: string,
+  ) => {
+    if (result?.ok) {
+      return res.status(result.status).json(result.data);
+    }
+    if (result && [401, 403].includes(result.status)) {
+      return res.status(result.status).json(result.data);
+    }
+    console.log(fallbackMessage);
+    return res.json(fallback);
+  };
+
+  app.post("/api/auth/login", async (req, res) => {
+    const result = await fetchFromBackend("auth/login", {
+      method: "POST",
+      body: JSON.stringify(req.body || {}),
+    });
+    if (!result) return res.status(503).json({ error: "Authentication backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
+  app.post("/api/auth/refresh", async (req, res) => {
+    const result = await fetchFromBackend("auth/refresh", {
+      method: "POST",
+      body: JSON.stringify(req.body || {}),
+    });
+    if (!result) return res.status(503).json({ error: "Authentication backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
+  app.post("/api/auth/logout", async (req, res) => {
+    const result = await fetchFromBackend("auth/logout", {
+      method: "POST",
+      body: JSON.stringify(req.body || {}),
+    });
+    if (!result) return res.json({ ok: true });
+    return res.status(result.status).json(result.data);
+  });
+
+  app.get("/api/auth/me", async (req, res) => {
+    const result = await fetchFromBackend("auth/me", {
+      headers: authHeaders(req),
+    });
+    if (!result) return res.status(503).json({ error: "Authentication backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
   // Proxy route for live assets matching Python monitoring backend
   app.get("/api/assets", async (req, res) => {
-    const data = await fetchFromBackend("assets");
-    if (data) {
-      return res.json(data);
-    }
-    console.log("[SENTINEL CORE] Asset proxy operating in local secure mode.");
-    return res.json(FALLBACK_ASSETS);
+    const result = await fetchFromBackend("assets", { headers: authHeaders(req) });
+    return sendBackendOrFallback(res, result, FALLBACK_ASSETS, "[SENTINEL CORE] Asset proxy operating in local secure mode.");
   });
 
   app.get("/api/assets/:hostname/details", async (req, res) => {
-    const data = await fetchFromBackend(`assets/${encodeURIComponent(req.params.hostname)}/details`);
-    if (data) {
-      return res.json(data);
+    const result = await fetchFromBackend(`assets/${encodeURIComponent(req.params.hostname)}/details`, { headers: authHeaders(req) });
+    if (result?.ok) {
+      return res.status(result.status).json(result.data);
+    }
+    if (result && [401, 403, 404].includes(result.status)) {
+      return res.status(result.status).json(result.data);
     }
     console.log("[SENTINEL CORE] Asset detail proxy operating in local secure mode.");
     return res.status(503).json({ error: "Live asset detail backend unavailable" });
@@ -213,21 +283,13 @@ async function startServer() {
 
   // Proxy route for live alerts matching Python monitoring backend
   app.get("/api/alerts", async (req, res) => {
-    const data = await fetchFromBackend("alerts");
-    if (data) {
-      return res.json(data);
-    }
-    console.log("[SENTINEL CORE] Alert proxy operating in local secure mode.");
-    return res.json(FALLBACK_ALERTS);
+    const result = await fetchFromBackend("alerts", { headers: authHeaders(req) });
+    return sendBackendOrFallback(res, result, FALLBACK_ALERTS, "[SENTINEL CORE] Alert proxy operating in local secure mode.");
   });
 
   app.get("/api/sessions", async (req, res) => {
-    const data = await fetchFromBackend("sessions");
-    if (data) {
-      return res.json(data);
-    }
-    console.log("[SENTINEL CORE] Session proxy operating in local secure mode.");
-    return res.json(FALLBACK_SESSIONS);
+    const result = await fetchFromBackend("sessions", { headers: authHeaders(req) });
+    return sendBackendOrFallback(res, result, FALLBACK_SESSIONS, "[SENTINEL CORE] Session proxy operating in local secure mode.");
   });
 
   // Initialize Gemini safely
@@ -360,7 +422,10 @@ Analyze for potential physical tampering (e.g., memory module swaps, active MAC 
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR === "true" ? false : undefined,
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -372,9 +437,22 @@ Analyze for potential physical tampering (e.g., memory module swaps, active MAC 
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[SENTINEL CORE] Server online on http://localhost:${PORT}`);
-  });
+  const listen = (port: number) => {
+    const server = app.listen(port, "0.0.0.0", () => {
+      console.log(`[SENTINEL CORE] Server online on http://localhost:${port}`);
+    });
+
+    server.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE" && port < DEFAULT_PORT + 10) {
+        console.warn(`[SENTINEL CORE] Port ${port} is busy; trying ${port + 1}...`);
+        listen(port + 1);
+        return;
+      }
+      throw error;
+    });
+  };
+
+  listen(DEFAULT_PORT);
 }
 
 startServer();

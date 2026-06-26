@@ -1,6 +1,6 @@
 import os
 import socket
-from flask import Flask, jsonify
+from flask import Flask, g, jsonify, request
 from flask_cors import CORS
 from collect_hardware import collect_current_active_path
 from active_application_monitor import (
@@ -19,13 +19,22 @@ from activity_api import (
 )
 from database import init_db
 from storage import get_asset_details, list_alerts, list_assets
+from auth import (
+    authenticate_local,
+    bootstrap_admin_user,
+    ensure_auth_schema,
+    refresh_access_token,
+    require_auth,
+    revoke_refresh_token,
+    serialize_user,
+)
 
 # ---------------------------------------------------------------------------
 # App setup
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__)
-CORS(app)  # Allow requests from React / Lovable frontend on any origin
+CORS(app, supports_credentials=True, allow_headers=["Content-Type", "Authorization"])  # Allow React frontend auth headers
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +101,7 @@ def enrich_assets_with_current_activity(assets):
 # ---------------------------------------------------------------------------
 
 @app.route("/api/assets", methods=["GET"])
+@require_auth()
 def get_assets():
     """
     GET /api/assets
@@ -102,6 +112,7 @@ def get_assets():
 
 
 @app.route("/api/assets/<path:hostname>/details", methods=["GET"])
+@require_auth()
 def get_asset_detail(hostname):
     """
     GET /api/assets/<hostname>/details
@@ -115,6 +126,7 @@ def get_asset_detail(hostname):
 
 
 @app.route("/api/alerts", methods=["GET"])
+@require_auth()
 def get_alerts():
     """
     GET /api/alerts
@@ -124,6 +136,7 @@ def get_alerts():
 
 
 @app.route("/api/active-applications", methods=["GET"])
+@require_auth()
 def get_active_applications():
     """
     GET /api/active-applications
@@ -132,11 +145,53 @@ def get_active_applications():
     return jsonify(get_latest_active_applications())
 
 
+@app.route("/api/auth/login", methods=["POST"])
+def auth_login():
+    payload = request.get_json(silent=True) or {}
+    identifier = payload.get("username") or payload.get("email") or ""
+    password = payload.get("password") or ""
+    token_payload = authenticate_local(identifier, password)
+    if not token_payload:
+        return jsonify({"error": "Invalid credentials"}), 401
+    return jsonify(token_payload)
+
+
+@app.route("/api/auth/refresh", methods=["POST"])
+def auth_refresh():
+    payload = request.get_json(silent=True) or {}
+    refresh_token = payload.get("refreshToken") or ""
+    if not refresh_token:
+        return jsonify({"error": "Refresh token is required"}), 400
+    try:
+        refreshed = refresh_access_token(refresh_token)
+    except Exception:
+        refreshed = None
+    if not refreshed:
+        return jsonify({"error": "Invalid or expired refresh token"}), 401
+    return jsonify(refreshed)
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def auth_logout():
+    payload = request.get_json(silent=True) or {}
+    refresh_token = payload.get("refreshToken") or ""
+    if refresh_token:
+        revoke_refresh_token(refresh_token)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/me", methods=["GET"])
+@require_auth()
+def auth_me():
+    return jsonify({"user": serialize_user(g.current_user)})
+
+
 # ============================================================================
 # Session Tracking APIs (Feature 1: Login Tracking)
 # ============================================================================
 
 @app.route("/current-user", methods=["GET"])
+@require_auth()
 def current_user():
     """
     GET /current-user
@@ -154,6 +209,7 @@ def current_user():
 
 
 @app.route("/current-session", methods=["GET"])
+@require_auth()
 def current_session():
     """
     GET /current-session
@@ -175,6 +231,7 @@ def current_session():
 
 
 @app.route("/device-status", methods=["GET"])
+@require_auth()
 def device_status():
     """
     GET /device-status
@@ -193,6 +250,7 @@ def device_status():
 
 @app.route("/sessions", methods=["GET"])
 @app.route("/api/sessions", methods=["GET"])
+@require_auth()
 def sessions():
     """
     GET /sessions
@@ -218,6 +276,7 @@ def sessions():
 
 @app.route("/sessions/count", methods=["GET"])
 @app.route("/api/sessions/count", methods=["GET"])
+@require_auth()
 def sessions_count():
     """
     GET /sessions/count
@@ -240,6 +299,8 @@ def sessions_count():
 
 if __name__ == "__main__":
     init_db()
+    ensure_auth_schema()
+    bootstrap_admin_user()
     if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
         start_active_application_monitor()
     print("=" * 70)

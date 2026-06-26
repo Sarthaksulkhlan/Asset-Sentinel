@@ -1,92 +1,93 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import LandingPage from "./components/LandingPage";
 import LoginPage from "./components/LoginPage";
 import DashboardPage from "./components/DashboardPage";
+import { AuthProvider, useAuth } from "./auth/AuthContext";
 
 type ViewState = "landing" | "login" | "dashboard" | "demo";
 
-export default function App() {
-  const [view, setView] = useState<ViewState>(() => {
-    const cachedEmail = localStorage.getItem("sentinel_active_session");
-    const cachedView = localStorage.getItem("sentinel_active_view") as ViewState | null;
-    if (cachedEmail) return cachedView === "demo" ? "demo" : "dashboard";
-    return cachedView === "login" ? "login" : "landing";
-  });
-  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(() => localStorage.getItem("sentinel_active_session"));
-  const [redirectTarget, setRedirectTarget] = useState<ViewState>("dashboard");
+const routeForView = (view: ViewState) => {
+  if (view === "login") return "/login";
+  if (view === "dashboard") return "/dashboard";
+  if (view === "demo") return "/demo";
+  return "/";
+};
 
-  // Read session variables if they exist in localStorage for persistency
-  useEffect(() => {
-    const cachedEmail = localStorage.getItem("sentinel_active_session");
-    if (cachedEmail) {
-      setCurrentUserEmail(cachedEmail);
-      setView((current) => current === "demo" ? "demo" : "dashboard");
+const viewForPath = (path: string): ViewState => {
+  if (path === "/login") return "login";
+  if (path === "/dashboard") return "dashboard";
+  if (path === "/demo") return "demo";
+  return "landing";
+};
+
+function AppShell() {
+  const { user, isAuthenticated, isAuthLoading, logout } = useAuth();
+  const [view, setView] = useState<ViewState>(() => viewForPath(window.location.pathname));
+
+  const navigate = useCallback((targetView: ViewState, replace = false) => {
+    const nextPath = routeForView(targetView);
+    if (window.location.pathname !== nextPath) {
+      const method = replace ? "replaceState" : "pushState";
+      window.history[method]({}, "", nextPath);
     }
+    setView(targetView);
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("sentinel_active_view", view);
-  }, [view]);
+    const handlePopState = () => setView(viewForPath(window.location.pathname));
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
-  const handleLoginSuccess = (email: string) => {
-    localStorage.setItem("sentinel_active_session", email);
-    localStorage.setItem("sentinel_active_view", redirectTarget);
-    setCurrentUserEmail(email);
-    setView(redirectTarget);
-    setRedirectTarget("dashboard"); // reset to default
+  useEffect(() => {
+    if (isAuthLoading) return;
+    if (view === "dashboard" && !isAuthenticated) {
+      navigate("login", true);
+    }
+  }, [isAuthenticated, isAuthLoading, navigate, view]);
+
+  const handleLoginSuccess = () => {
+    navigate("dashboard", true);
   };
 
-  const handleSignOut = () => {
-    localStorage.removeItem("sentinel_active_session");
-    localStorage.removeItem("sentinel_active_view");
+  const handleSignOut = async () => {
+    await logout();
     localStorage.removeItem("sentinel_dashboard_state");
-    setCurrentUserEmail(null);
-    setView("landing");
+    navigate("landing", true);
   };
 
   // Safe router mapper
   const renderActiveScreen = () => {
     switch (view) {
       case "landing":
-        // Reset auth on landing page to ensure they must enter credentials if they came from landing
         return (
           <LandingPage 
             onNavigate={(targetView) => {
-              if (targetView === "dashboard") {
-                // Clicking "Launch Dashboard Gateway" redirects to the same Admin Sign In page
-                setRedirectTarget("dashboard");
-                setView("login");
-              } else if (targetView === "login") {
-                setRedirectTarget("dashboard");
-                setView("login");
-              } else {
-                setView(targetView);
-              }
+              navigate(targetView === "dashboard" && !isAuthenticated ? "login" : targetView);
             }} 
           />
         );
       case "login":
         return (
           <LoginPage 
-            onNavigate={(targetView) => setView(targetView)} 
+            onNavigate={(targetView) => navigate(targetView)} 
             onLoginSuccess={handleLoginSuccess}
           />
         );
       case "dashboard":
-        if (!currentUserEmail) {
-          // Double guard direct dashboard URL/state access
+        if (!isAuthenticated) {
           return (
             <LoginPage 
-              onNavigate={(targetView) => setView(targetView)} 
+              onNavigate={(targetView) => navigate(targetView)} 
               onLoginSuccess={handleLoginSuccess}
             />
           );
         }
         return (
           <DashboardPage 
-            userEmail={currentUserEmail} 
+            userEmail={user?.email || user?.username || "Authenticated User"} 
             onSignOut={handleSignOut}
-            onNavigate={(targetView) => setView(targetView)}
+            onNavigate={(targetView) => navigate(targetView)}
           />
         );
       case "demo":
@@ -94,18 +95,30 @@ export default function App() {
           <DashboardPage 
             userEmail="Demo Admin" 
             onSignOut={handleSignOut}
-            onNavigate={(targetView) => setView(targetView)}
+            onNavigate={(targetView) => navigate(targetView)}
             isDemoMode={true}
           />
         );
       default:
-        return <LandingPage onNavigate={setView} />;
+        return <LandingPage onNavigate={(targetView) => navigate(targetView)} />;
     }
   };
 
   return (
     <div className="w-screen min-h-screen bg-[#0A0C10] selection:bg-[#00d1ff]/20 animate-fade-in relative">
-      {renderActiveScreen()}
+      {isAuthLoading ? (
+        <div className="flex min-h-screen items-center justify-center text-sm font-semibold text-[#00d1ff]">
+          Restoring secure session...
+        </div>
+      ) : renderActiveScreen()}
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppShell />
+    </AuthProvider>
   );
 }
