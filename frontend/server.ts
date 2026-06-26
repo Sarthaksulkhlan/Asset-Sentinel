@@ -202,6 +202,15 @@ async function startServer() {
     return res.json(FALLBACK_ASSETS);
   });
 
+  app.get("/api/assets/:hostname/details", async (req, res) => {
+    const data = await fetchFromBackend(`assets/${encodeURIComponent(req.params.hostname)}/details`);
+    if (data) {
+      return res.json(data);
+    }
+    console.log("[SENTINEL CORE] Asset detail proxy operating in local secure mode.");
+    return res.status(503).json({ error: "Live asset detail backend unavailable" });
+  });
+
   // Proxy route for live alerts matching Python monitoring backend
   app.get("/api/alerts", async (req, res) => {
     const data = await fetchFromBackend("alerts");

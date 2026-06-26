@@ -40,8 +40,14 @@ export interface Asset {
   cpuUsage?: string;
   lastSeen?: string;
   lastSeenHuman?: string;
+  memoryUsedGb?: number;
+  memoryAvailableGb?: number;
+  loginsThisWeek?: number;
+  lastSuccessfulLogin?: string;
+  lastFailedLogin?: string;
   applicationHistory?: Array<{
     application?: string;
+    application_name?: string;
     window_title?: string;
     process_path?: string;
     timestamp?: string;
@@ -49,10 +55,41 @@ export interface Asset {
   complianceStatus: boolean;
   history: string[];
   timeline?: Array<{
-    type: 'Login' | 'Logout' | 'Hardware Change' | 'Alert' | 'Application Started' | 'USB Connected' | 'System Restart';
+    type: 'Login' | 'Logout' | 'Hardware Change' | 'RAM Change' | 'Motherboard Change' | 'Alert' | 'Application Started' | 'Application Closed' | 'Device Online' | 'Device Offline' | 'USB Connected' | 'System Restart';
     timestamp: string;
     detail: string;
+    description?: string;
+    severity?: string;
   }>;
+}
+
+export interface AssetDetailPayload {
+  asset: Asset;
+  sessions: Array<Record<string, any>>;
+  alerts: Array<Record<string, any>>;
+  application_timeline: Array<{
+    application?: string;
+    application_name?: string;
+    window_title?: string;
+    process_path?: string;
+    timestamp?: string;
+  }>;
+  hardware_changes: Array<Record<string, any>>;
+  timeline: Array<{
+    type?: Asset["timeline"] extends Array<infer T> ? T extends { type: infer U } ? U : string : string;
+    event_type?: string;
+    timestamp?: string;
+    detail?: string;
+    description?: string;
+    severity?: string;
+  }>;
+  charts: {
+    cpu_usage_history: Array<{ timestamp?: string; value?: number | string }>;
+    ram_usage_history: Array<{ timestamp?: string; value?: number | string }>;
+    login_frequency: Array<{ label: string; value: number }>;
+    application_usage: Array<{ label: string; value: number }>;
+    alert_trend: Array<{ label: string; value: number }>;
+  };
 }
 
 export interface SecurityFeedItem {

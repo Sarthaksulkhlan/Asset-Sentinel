@@ -1,5 +1,5 @@
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional
 from uuid import UUID
@@ -88,11 +88,26 @@ def _status_from_last_seen(value: Optional[datetime]) -> str:
         return "Offline"
     now = datetime.now(value.tzinfo or timezone.utc)
     seconds = (now - value).total_seconds()
-    if seconds < 30:
+    if seconds <= 60:
         return "Online"
-    if seconds <= 120:
-        return "Idle"
     return "Offline"
+
+
+def _human_duration(seconds_value: Any) -> Optional[str]:
+    if seconds_value in (None, ""):
+        return None
+    try:
+        seconds = int(float(seconds_value))
+    except (TypeError, ValueError):
+        return None
+    days, remainder = divmod(max(0, seconds), 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, _ = divmod(remainder, 60)
+    if days:
+        return f"{days}d {hours}h {minutes}m"
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
 
 
 def _duration(start_value: Any, end_value: Any = None) -> Optional[str]:
@@ -108,6 +123,10 @@ def _duration(start_value: Any, end_value: Any = None) -> Optional[str]:
 
 def serialize_asset(row: Asset) -> Dict[str, Any]:
     live_status = _status_from_last_seen(row.last_seen)
+    ram_total = float(row.ram_total_gb) if row.ram_total_gb is not None else None
+    ram_usage = float(row.ram_usage_percent) if row.ram_usage_percent is not None else None
+    memory_used = round(ram_total * (ram_usage / 100), 2) if ram_total is not None and ram_usage is not None else None
+    memory_available = round(ram_total - memory_used, 2) if ram_total is not None and memory_used is not None else None
     return {
         "device_uid": row.device_uid,
         "hostname": row.hostname,
@@ -132,6 +151,8 @@ def serialize_asset(row: Asset) -> Dict[str, Any]:
         "ram_usage": _iso(row.ram_usage_percent),
         "ram_usage_percent": _iso(row.ram_usage_percent),
         "ram_usage_label": f"{_iso(row.ram_usage_percent)}%" if row.ram_usage_percent is not None else None,
+        "memory_used_gb": memory_used,
+        "memory_available_gb": memory_available,
         "status": live_status,
         "device_status": live_status,
         "last_seen": _iso(row.last_seen),
@@ -313,11 +334,26 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
 
     latest = rows[-1]
     today = datetime.now(timezone.utc).date()
+    week_start = today - timedelta(days=today.weekday())
     logins_today = 0
+    logins_this_week = 0
+    last_successful_login = None
+    last_failed_login = None
+    last_logout = None
     for row in rows:
         stamp = row.login_timestamp or row.recorded_at
-        if row.event_type == "LOGIN" and stamp and stamp.astimezone(timezone.utc).date() == today:
-            logins_today += 1
+        stamp_date = stamp.astimezone(timezone.utc).date() if stamp else None
+        if row.event_type == "LOGIN":
+            if stamp_date == today:
+                logins_today += 1
+            if stamp_date and stamp_date >= week_start:
+                logins_this_week += 1
+            last_successful_login = stamp
+        if row.event_type == "LOGOUT":
+            last_logout = row.logout_timestamp or row.recorded_at
+        details = getattr(row, "details", None) or {}
+        if isinstance(details, dict) and details.get("failed_login_timestamp"):
+            last_failed_login = _parse_datetime(details.get("failed_login_timestamp"))
 
     return {
         "current_user": latest.username,
@@ -325,10 +361,13 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
         "session_id": latest.session_id,
         "login_timestamp": _iso(latest.login_timestamp or latest.recorded_at),
         "last_login": _iso(latest.login_timestamp or latest.recorded_at),
-        "logout_timestamp": _iso(latest.logout_timestamp),
-        "last_logout": _iso(latest.logout_timestamp),
+        "logout_timestamp": _iso(last_logout or latest.logout_timestamp),
+        "last_logout": _iso(last_logout or latest.logout_timestamp),
         "session_duration": latest.session_duration if latest.session_duration and latest.session_duration != "Active" else _duration(latest.login_timestamp or latest.recorded_at),
         "logins_today": logins_today,
+        "logins_this_week": logins_this_week,
+        "last_successful_login": _iso(last_successful_login),
+        "last_failed_login": _iso(last_failed_login),
         "active_session": latest.active,
     }
 
@@ -453,6 +492,15 @@ def append_active_application(record: Dict[str, Any]) -> None:
             process_path=record.get("process_path") or record.get("active_process_path") or record.get("executable_name"),
             timestamp=_parse_required_datetime(record.get("timestamp")),
         ))
+        session.flush()
+        old_rows = session.execute(
+            select(ActiveApplicationHistory.id)
+            .where(ActiveApplicationHistory.hostname == (record.get("hostname") or "Unknown"))
+            .order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc())
+            .offset(100)
+        ).scalars().all()
+        if old_rows:
+            session.execute(delete(ActiveApplicationHistory).where(ActiveApplicationHistory.id.in_(old_rows)))
 
 
 def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any = None, activity: Optional[Dict[str, Any]] = None) -> None:
@@ -517,3 +565,158 @@ def record_hardware_change(
     )
     with get_db_session() as session:
         session.add(row)
+
+
+def _severity_label(value: Optional[str]) -> Optional[str]:
+    return value.upper() if value else None
+
+
+def _event_severity(event_type: str, severity: Optional[str] = None) -> Optional[str]:
+    if severity:
+        return _severity_label(severity)
+    if event_type in {"Device Offline", "Motherboard Change"}:
+        return "HIGH"
+    if event_type in {"RAM Change", "Alert", "Application Closed"}:
+        return "MEDIUM"
+    return "LOW"
+
+
+def _timeline_event(timestamp: Any, event_type: str, description: str, severity: Optional[str] = None) -> Dict[str, Any]:
+    return {
+        "timestamp": _iso(timestamp),
+        "type": event_type,
+        "event_type": event_type,
+        "description": description,
+        "detail": description,
+        "severity": _event_severity(event_type, severity),
+    }
+
+
+def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
+    if not hostname:
+        return None
+
+    with get_db_session() as session:
+        asset_row = session.execute(select(Asset).where(Asset.hostname == hostname).limit(1)).scalar_one_or_none()
+        if asset_row is None:
+            return None
+
+        asset = serialize_asset(asset_row)
+        sessions = session.execute(
+            select(SessionRecord)
+            .where(SessionRecord.hostname == hostname)
+            .order_by(SessionRecord.recorded_at.desc(), SessionRecord.id.desc())
+            .limit(100)
+        ).scalars().all()
+        alerts = session.execute(
+            select(Alert)
+            .where(Alert.hostname == hostname)
+            .order_by(Alert.timestamp.desc(), Alert.id.desc())
+            .limit(100)
+        ).scalars().all()
+        app_history = session.execute(
+            select(ActiveApplicationHistory)
+            .where(ActiveApplicationHistory.hostname == hostname)
+            .order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc())
+            .limit(100)
+        ).scalars().all()
+        hardware_changes = session.execute(
+            select(HardwareChange)
+            .where(HardwareChange.hostname == hostname)
+            .order_by(HardwareChange.detected_at.desc(), HardwareChange.id.desc())
+            .limit(100)
+        ).scalars().all()
+        asset_samples = session.execute(
+            select(Asset)
+            .where(Asset.hostname == hostname)
+            .order_by(Asset.collected_at.desc(), Asset.id.desc())
+            .limit(100)
+        ).scalars().all()
+
+        summary = _session_summary(session, hostname)
+        asset.update(summary)
+        asset.update(_alert_summary(session, hostname))
+        asset.update(_activity_summary(session, hostname))
+
+        timeline: List[Dict[str, Any]] = []
+        ordered_sessions = sorted(sessions, key=lambda row: (row.recorded_at, row.id), reverse=True)
+        for row in ordered_sessions:
+            if row.event_type == "LOGIN":
+                timeline.append(_timeline_event(row.login_timestamp or row.recorded_at, "Login", f"{row.username or 'Unknown user'} logged in", "LOW"))
+            elif row.event_type == "LOGOUT":
+                timeline.append(_timeline_event(row.logout_timestamp or row.recorded_at, "Logout", f"{row.username or 'Unknown user'} logged out", "LOW"))
+
+        for row in alerts:
+            details = row.details or {}
+            description = details.get("description") or details.get("message") or f"{row.alert_type} detected"
+            timeline.append(_timeline_event(row.timestamp, "Alert", description, row.severity))
+
+        for row in hardware_changes:
+            event_name = "RAM Change" if row.change_type == "RAM_CHANGE" else "Motherboard Change"
+            timeline.append(_timeline_event(row.detected_at, event_name, f"{event_name} detected", row.severity))
+
+        for row in app_history:
+            app_name = row.application or row.window_title or row.process_path or "Application"
+            timeline.append(_timeline_event(row.timestamp, "Application Started", f"{app_name} opened", "LOW"))
+
+        if asset_row.last_seen:
+            status_type = "Device Online" if asset["status"] == "Online" else "Device Offline"
+            timeline.append(_timeline_event(asset_row.last_seen, status_type, f"{asset['status']} • Last seen {asset.get('last_seen_human') or asset.get('last_seen')}", None))
+
+        timeline.sort(key=lambda item: _parse_datetime(item.get("timestamp")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+
+        application_usage: Dict[str, int] = {}
+        for row in app_history:
+            name = row.application or "Unknown"
+            application_usage[name] = application_usage.get(name, 0) + 1
+
+        alert_trend: Dict[str, int] = {}
+        for row in alerts:
+            day = row.timestamp.astimezone(timezone.utc).date().isoformat()
+            alert_trend[day] = alert_trend.get(day, 0) + 1
+
+        login_frequency: Dict[str, int] = {}
+        for row in sessions:
+            if row.event_type != "LOGIN":
+                continue
+            stamp = row.login_timestamp or row.recorded_at
+            day = stamp.astimezone(timezone.utc).date().isoformat()
+            login_frequency[day] = login_frequency.get(day, 0) + 1
+
+        cpu_history = [
+            {"timestamp": _iso(row.collected_at), "value": _iso(row.cpu_usage_percent)}
+            for row in reversed(asset_samples)
+            if row.cpu_usage_percent is not None
+        ]
+        ram_history = [
+            {"timestamp": _iso(row.collected_at), "value": _iso(row.ram_usage_percent)}
+            for row in reversed(asset_samples)
+            if row.ram_usage_percent is not None
+        ]
+
+        return {
+            "asset": asset,
+            "sessions": [serialize_session(row) for row in sessions],
+            "alerts": [serialize_alert(row) for row in alerts],
+            "application_timeline": [serialize_active_application_history(row) for row in app_history],
+            "hardware_changes": [
+                {
+                    "hostname": row.hostname,
+                    "change_type": row.change_type,
+                    "severity": row.severity,
+                    "previous_value": row.previous_value or {},
+                    "current_value": row.current_value or {},
+                    "difference": row.difference or {},
+                    "detected_at": _iso(row.detected_at),
+                }
+                for row in hardware_changes
+            ],
+            "timeline": timeline[:200],
+            "charts": {
+                "cpu_usage_history": cpu_history,
+                "ram_usage_history": ram_history,
+                "login_frequency": [{"label": key, "value": value} for key, value in sorted(login_frequency.items())],
+                "application_usage": [{"label": key, "value": value} for key, value in sorted(application_usage.items(), key=lambda item: item[1], reverse=True)[:10]],
+                "alert_trend": [{"label": key, "value": value} for key, value in sorted(alert_trend.items())],
+            },
+        }

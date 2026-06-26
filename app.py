@@ -18,7 +18,7 @@ from activity_api import (
     get_sessions_count,
 )
 from database import init_db
-from storage import list_alerts, list_assets
+from storage import get_asset_details, list_alerts, list_assets
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -99,6 +99,19 @@ def get_assets():
     """
     assets = list_assets()
     return jsonify(enrich_assets_with_current_activity(assets))
+
+
+@app.route("/api/assets/<path:hostname>/details", methods=["GET"])
+def get_asset_detail(hostname):
+    """
+    GET /api/assets/<hostname>/details
+    Returns a single asset with PostgreSQL-backed sessions, alerts,
+    application timeline, hardware changes, device timeline, and chart data.
+    """
+    detail = get_asset_details(hostname)
+    if detail is None:
+        return jsonify({"error": "Asset not found"}), 404
+    return jsonify(detail)
 
 
 @app.route("/api/alerts", methods=["GET"])

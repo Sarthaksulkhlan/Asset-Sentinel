@@ -6,22 +6,31 @@ import DashboardPage from "./components/DashboardPage";
 type ViewState = "landing" | "login" | "dashboard" | "demo";
 
 export default function App() {
-  const [view, setView] = useState<ViewState>("landing");
-  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [view, setView] = useState<ViewState>(() => {
+    const cachedEmail = localStorage.getItem("sentinel_active_session");
+    const cachedView = localStorage.getItem("sentinel_active_view") as ViewState | null;
+    if (cachedEmail) return cachedView === "demo" ? "demo" : "dashboard";
+    return cachedView === "login" ? "login" : "landing";
+  });
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(() => localStorage.getItem("sentinel_active_session"));
   const [redirectTarget, setRedirectTarget] = useState<ViewState>("dashboard");
 
   // Read session variables if they exist in localStorage for persistency
   useEffect(() => {
-    // If we want key-auth to load fresh, we can retrieve, but to enforce the strict security rule
-    // let's clear session on initial load or require login to keep it super secure.
     const cachedEmail = localStorage.getItem("sentinel_active_session");
     if (cachedEmail) {
       setCurrentUserEmail(cachedEmail);
+      setView((current) => current === "demo" ? "demo" : "dashboard");
     }
   }, []);
 
+  useEffect(() => {
+    localStorage.setItem("sentinel_active_view", view);
+  }, [view]);
+
   const handleLoginSuccess = (email: string) => {
     localStorage.setItem("sentinel_active_session", email);
+    localStorage.setItem("sentinel_active_view", redirectTarget);
     setCurrentUserEmail(email);
     setView(redirectTarget);
     setRedirectTarget("dashboard"); // reset to default
@@ -29,6 +38,8 @@ export default function App() {
 
   const handleSignOut = () => {
     localStorage.removeItem("sentinel_active_session");
+    localStorage.removeItem("sentinel_active_view");
+    localStorage.removeItem("sentinel_dashboard_state");
     setCurrentUserEmail(null);
     setView("landing");
   };
