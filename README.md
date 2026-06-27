@@ -31,6 +31,8 @@ The schema keeps the current append-only behavior of JSON files. In particular, 
 
 Install PostgreSQL, then create a database and user for Asset Sentinel.
 
+If `python app.py` fails with `connection refused` on `localhost:5432`, PostgreSQL is not running or the app is pointed at the wrong database host/port. Start PostgreSQL first, then confirm the configured database exists.
+
 Example using `psql` as a PostgreSQL admin:
 
 ```sql
@@ -43,6 +45,9 @@ Connect to the database and apply the schema:
 
 ```powershell
 psql -d asset_sentinel -f schema.sql
+psql -d asset_sentinel -f enterprise_migration.sql
+psql -d asset_sentinel -f auth_login_activity_migration.sql
+psql -d asset_sentinel -f enterprise_registration_migration.sql
 ```
 
 Grant table and sequence permissions if you use a separate application user:
@@ -69,6 +74,23 @@ Optional SQL logging:
 
 ```powershell
 ASSET_SENTINEL_SQL_ECHO=true
+```
+
+Default local Super Admin bootstrap credentials:
+
+```powershell
+username: centralcommand
+password: admin!123
+```
+
+Email notifications use SMTP settings from environment variables only:
+
+```powershell
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=alerts@example.com
+SMTP_PASSWORD=change_this_password
+ALERT_EMAIL=assetsentinel.alerts@gmail.com
 ```
 
 Do not commit real production passwords or service credentials.
