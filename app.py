@@ -1,7 +1,9 @@
 import os
 import socket
+import sys
 from flask import Flask, g, jsonify, request
 from flask_cors import CORS
+from config import print_startup_environment_diagnostics
 from collect_hardware import collect_current_active_path
 from active_application_monitor import (
     get_latest_active_applications,
@@ -19,6 +21,8 @@ from activity_api import (
 )
 from database import init_db
 from storage import get_asset_details, list_alerts, list_assets
+from registration import register_admin, submit_early_access
+from telemetry_bootstrap import bootstrap_local_telemetry
 from auth import (
     authenticate_local,
     bootstrap_admin_user,
@@ -152,8 +156,22 @@ def auth_login():
     password = payload.get("password") or ""
     token_payload = authenticate_local(identifier, password)
     if not token_payload:
-        return jsonify({"error": "Invalid credentials"}), 401
+        return jsonify({"error": "Invalid username or password."}), 401
     return jsonify(token_payload)
+
+
+@app.route("/api/early-access", methods=["POST"])
+def early_access_request():
+    payload = request.get_json(silent=True) or {}
+    data, status_code = submit_early_access(payload, request)
+    return jsonify(data), status_code
+
+
+@app.route("/api/admin-signup", methods=["POST"])
+def admin_signup():
+    payload = request.get_json(silent=True) or {}
+    data, status_code = register_admin(payload, request)
+    return jsonify(data), status_code
 
 
 @app.route("/api/auth/refresh", methods=["POST"])
@@ -298,10 +316,16 @@ def sessions_count():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    init_db()
-    ensure_auth_schema()
-    bootstrap_admin_user()
-    if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+    print_startup_environment_diagnostics()
+    try:
+        init_db()
+        ensure_auth_schema()
+        bootstrap_admin_user()
+        bootstrap_local_telemetry()
+    except RuntimeError as exc:
+        print(exc)
+        sys.exit(1)
+    if os.environ.get("WERKZEUG_RUN_MAIN") in {None, "true"}:
         start_active_application_monitor()
     print("=" * 70)
     print("  Asset Sentinel Backend")

@@ -18,11 +18,12 @@ import {
   X
 } from "lucide-react";
 import { CORE_TELEMETRY_PROTOCOLS } from "../data";
+import { apiFetch, authFetch } from "../lib/api";
 import ShaderBackground from "./ShaderBackground";
 import { SentinelLogo } from "./SentinelLogo";
 
 interface LandingPageProps {
-  onNavigate: (view: "landing" | "login" | "dashboard" | "demo") => void;
+  onNavigate: (view: "landing" | "login" | "admin-signup" | "dashboard" | "demo") => void;
 }
 
 interface RollingKpiValueProps {
@@ -34,6 +35,13 @@ interface RollingKpiValueProps {
 const KPI_STRIP_DIGITS = Array.from({ length: 160 }, (_, index) => index % 10);
 const GRID_CELL_BASE_CLASS = "w-full aspect-square rounded-sm border transition-all duration-300";
 const HEX_CHARS = "0123456789ABCDEF";
+const HERO_TYPEWRITER_LINES = [
+  "Monitor Every Asset.",
+  "Detect Every Change.",
+  "Secure Every Endpoint.",
+  "Monitor. Detect. Protect.",
+  "Enterprise IT Asset Monitoring Reimagined."
+];
 
 const getGridCellColorClass = (state: string) => {
   if (state === "nominal") return "bg-emerald-500/10 border-emerald-400/20 shadow-[0_0_2px_rgba(16,185,129,0.1)]";
@@ -50,6 +58,19 @@ const LandingScrollPerformanceController = React.memo(function LandingScrollPerf
     if (!landingScreen) return;
 
     let scrollEndTimer = 0;
+    const perfRegions = Array.from(document.querySelectorAll<HTMLElement>(".landing-perf-region"));
+    const visibilityObserver = "IntersectionObserver" in window
+      ? new IntersectionObserver((entries) => {
+          entries.forEach((entry) => {
+            (entry.target as HTMLElement).dataset.visible = entry.isIntersecting ? "true" : "false";
+          });
+        }, { rootMargin: "360px 0px" })
+      : null;
+
+    perfRegions.forEach((region) => {
+      region.dataset.visible = "true";
+      visibilityObserver?.observe(region);
+    });
 
     const handleScroll = () => {
       landingScreen.dataset.scrolling = "true";
@@ -64,6 +85,10 @@ const LandingScrollPerformanceController = React.memo(function LandingScrollPerf
     return () => {
       window.clearTimeout(scrollEndTimer);
       window.removeEventListener("scroll", handleScroll);
+      visibilityObserver?.disconnect();
+      perfRegions.forEach((region) => {
+        delete region.dataset.visible;
+      });
       delete landingScreen.dataset.scrolling;
     };
   }, []);
@@ -230,6 +255,268 @@ const RollingKpiValue = React.memo(function RollingKpiValue({ value, className, 
   );
 });
 
+const TypewriterHeroText = React.memo(function TypewriterHeroText() {
+  const [lineIndex, setLineIndex] = useState(0);
+  const [visibleText, setVisibleText] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  useEffect(() => {
+    const currentLine = HERO_TYPEWRITER_LINES[lineIndex];
+    const isComplete = visibleText === currentLine;
+    const isEmpty = visibleText.length === 0;
+    const delay = isComplete && !isDeleting ? 1500 : isDeleting ? 34 : 56;
+
+    const timer = window.setTimeout(() => {
+      if (!isDeleting && isComplete) {
+        setIsDeleting(true);
+        return;
+      }
+
+      if (isDeleting && isEmpty) {
+        setIsDeleting(false);
+        setLineIndex((current) => (current + 1) % HERO_TYPEWRITER_LINES.length);
+        return;
+      }
+
+      setVisibleText((current) => {
+        if (isDeleting) return current.slice(0, -1);
+        return currentLine.slice(0, current.length + 1);
+      });
+    }, delay);
+
+    return () => window.clearTimeout(timer);
+  }, [isDeleting, lineIndex, visibleText]);
+
+  return (
+    <h1 className="hero-typewriter min-h-[7.2rem] md:min-h-[8.4rem] lg:min-h-[10rem] text-3xl md:text-4xl lg:text-5xl font-black tracking-tight leading-[1.08] text-[#dae3ee]">
+      <span className="block text-[#dae3ee]">Asset Sentinel Enterprise</span>
+      <span className="mt-2 block text-[#00d1ff] text-transparent bg-clip-text bg-gradient-to-r from-[#00d1ff] via-[#a4e6ff] to-emerald-300 drop-shadow-[0_0_12px_rgba(0,209,255,0.28)]">
+        {visibleText}
+        <span className="typewriter-cursor" aria-hidden="true">|</span>
+      </span>
+    </h1>
+  );
+});
+
+const HeroTelemetryBackdrop = React.memo(function HeroTelemetryBackdrop() {
+  return (
+    <div className="hero-telemetry-layer" aria-hidden="true">
+      <div className="hero-gradient-field"></div>
+      <div className="hero-glowing-grid"></div>
+      <div className="hero-radar-sweep"></div>
+      <svg className="hero-network-lines" viewBox="0 0 900 520" preserveAspectRatio="none">
+        <path className="network-path network-path-a" d="M40 390 C180 270 245 330 365 206 S612 110 845 220" />
+        <path className="network-path network-path-b" d="M78 148 C220 90 322 178 448 160 S652 245 832 118" />
+        <path className="network-path network-path-c" d="M112 462 C260 394 346 456 496 342 S706 296 850 386" />
+      </svg>
+      {[...Array(12)].map((_, index) => (
+        <span key={index} className={`hero-particle hero-particle-${index + 1}`}></span>
+      ))}
+      <span className="hero-node hero-node-a"><Shield className="w-3 h-3" /></span>
+      <span className="hero-node hero-node-b"><Server className="w-3 h-3" /></span>
+      <span className="hero-node hero-node-c"><Activity className="w-3 h-3" /></span>
+    </div>
+  );
+});
+
+const LiveDashboardPreview = React.memo(function LiveDashboardPreview() {
+  const [tick, setTick] = useState(0);
+  const [activeApps, setActiveApps] = useState<string[]>([]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick((current) => current + 1), 1800);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const loadActiveApps = async () => {
+      try {
+        const response = await apiFetch("/api/active-applications");
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (!active || !Array.isArray(payload)) return;
+        const names = payload
+          .map((item) => item.application_name || item.executable_name)
+          .filter(Boolean)
+          .slice(0, 4);
+        setActiveApps(names);
+      } catch {
+        // Public landing page can render the integration-ready placeholder.
+      }
+    };
+    loadActiveApps();
+    const timer = window.setInterval(loadActiveApps, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const onlineDevices = 1240 + (tick % 9);
+  const cpu = 42 + ((tick * 7) % 31);
+  const ram = 56 + ((tick * 5) % 25);
+  const alertLabels = ["RAM delta verified", "Motherboard hash mismatch", "Login anomaly cleared", "App timeline updated"];
+  const timeline = ["Chrome.exe", "Teams.exe", "PowerShell.exe", "pgAdmin.exe"];
+  const displayedApps = activeApps.length ? activeApps : ["Google Chrome", "VS Code", "Microsoft Outlook", "Explorer"];
+
+  return (
+    <div className="hero-dashboard-preview glass-panel rounded-xl border border-[#00d1ff]/30 bg-[#0d131b]/92 p-3 md:p-4 shadow-[0_0_45px_rgba(0,209,255,0.16)] overflow-hidden">
+      <div className="absolute inset-0 bg-grid opacity-20 pointer-events-none"></div>
+      <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-[#00d1ff] to-transparent"></div>
+      <div className="relative flex items-center justify-between gap-3 mb-3">
+        <div>
+          <span className="font-mono text-[9px] uppercase tracking-[0.22em] text-[#00d1ff]">Live Command Preview</span>
+          <h3 className="text-sm font-black text-[#dae3ee] uppercase mt-1">Enterprise Fleet Telemetry</h3>
+        </div>
+        <div className="flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1">
+          <span className="w-2 h-2 rounded-full bg-emerald-300 heartbeat-dot"></span>
+          <span className="font-mono text-[9px] text-emerald-300 uppercase font-bold">Live</span>
+        </div>
+      </div>
+
+      <div className="relative grid grid-cols-3 gap-3 mb-3">
+        <MetricTile label="Online" value={onlineDevices.toLocaleString()} tone="cyan" />
+        <MetricTile label="Alerts" value={String(7 + (tick % 3))} tone="amber" />
+        <MetricTile label="Logins" value={String(318 + (tick % 13))} tone="emerald" />
+      </div>
+
+      <div className="relative grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="rounded-lg border border-white/10 bg-[#070b10]/85 p-3">
+          <div className="flex items-center justify-between mb-3">
+            <span className="font-mono text-[9px] text-[#bbc9cf] uppercase tracking-widest">Current Active Application</span>
+            <span className="text-[9px] text-emerald-300 font-mono">{activeApps.length ? "LIVE" : "READY"}</span>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {displayedApps.map((appName, index) => (
+              <div
+                key={`${appName}-${index}`}
+                className={`flex items-center justify-between rounded-md border px-2.5 py-1.5 text-[10px] font-mono transition-all duration-500 ${index === tick % displayedApps.length ? "border-[#00d1ff]/35 bg-[#00d1ff]/10 text-[#dae3ee]" : "border-white/10 bg-white/[0.03] text-[#bbc9cf]"}`}
+              >
+                <span className="truncate">{appName}</span>
+                <span className={index === tick % displayedApps.length ? "text-emerald-300" : "text-[#65737c]"}>
+                  {index === tick % displayedApps.length ? "active" : "seen"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-[#070b10]/85 p-3">
+          <div className="flex items-center justify-between mb-3">
+            <span className="font-mono text-[9px] text-[#bbc9cf] uppercase tracking-widest">CPU / RAM</span>
+            <Activity className="w-3.5 h-3.5 text-[#00d1ff]" />
+          </div>
+          <AnimatedBar label="CPU" value={cpu} />
+          <AnimatedBar label="RAM" value={ram} />
+        </div>
+      </div>
+
+      <div className="relative mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="rounded-lg border border-red-400/20 bg-red-950/10 p-3 overflow-hidden">
+          <span className="font-mono text-[9px] text-red-300 uppercase tracking-widest">Hardware Alert Queue</span>
+          <div key={`alert-${tick}`} className="mt-2 rounded-md border border-red-400/25 bg-red-400/10 px-3 py-2 text-[10px] font-mono text-red-200 hero-slide-in">
+            {alertLabels[tick % alertLabels.length]}
+          </div>
+        </div>
+        <div className="rounded-lg border border-[#00d1ff]/20 bg-[#00d1ff]/5 p-3 overflow-hidden">
+          <span className="font-mono text-[9px] text-[#00d1ff] uppercase tracking-widest">Active Application Timeline</span>
+          <div key={`timeline-${tick}`} className="mt-2 flex items-center justify-between rounded-md border border-white/10 bg-[#070b10]/80 px-3 py-2 text-[10px] font-mono text-[#dae3ee] hero-slide-in">
+            <span>{timeline[tick % timeline.length]}</span>
+            <span className="text-emerald-300">recorded</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const HeroEarlyAccessCard = React.memo(function HeroEarlyAccessCard({ onOpen }: { onOpen: () => void }) {
+  return (
+    <div className="hero-early-access-card rounded-xl border border-amber-300/45 bg-[#16120a]/88 p-4 relative overflow-hidden">
+      <div className="absolute inset-0 bg-gradient-to-r from-amber-300/12 via-transparent to-[#00d1ff]/8"></div>
+      <div className="relative flex items-start justify-between gap-4">
+        <div>
+          <span className="inline-flex items-center rounded-full border border-amber-400/35 bg-amber-400/10 px-2.5 py-1 text-[8px] font-black uppercase tracking-widest text-amber-200 font-mono">
+            Limited Early Access
+          </span>
+          <h3 className="mt-2 text-sm font-black uppercase tracking-wide text-amber-100">Early Access Program</h3>
+          <p className="mt-1 text-[11px] leading-relaxed text-[#bbc9cf]">
+            Priority onboarding for teams evaluating endpoint integrity, login telemetry, and hardware tamper detection.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="enterprise-hero-button early-access-yellow-button shrink-0 rounded-lg px-4 py-2 text-[10px] font-black uppercase tracking-wider"
+        >
+          Join
+        </button>
+      </div>
+      <div className="relative mt-3 grid grid-cols-3 gap-2 text-[9px] font-mono text-[#bbc9cf]">
+        <span className="rounded border border-amber-300/20 bg-amber-300/8 px-2 py-1">Priority access</span>
+        <span className="rounded border border-amber-300/20 bg-amber-300/8 px-2 py-1">Security review</span>
+        <span className="rounded border border-amber-300/20 bg-amber-300/8 px-2 py-1">Product previews</span>
+      </div>
+    </div>
+  );
+});
+
+const HeroStatsStrip = React.memo(function HeroStatsStrip() {
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick((current) => current + 1), 4200);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const stats = [
+    { label: "Protected Devices", value: (12486 + (tick % 8)).toLocaleString(), className: "text-[#00d1ff]", duration: 2100 },
+    { label: "Active Sessions", value: (1284 + (tick % 6)).toLocaleString(), className: "text-emerald-300", duration: 2300 },
+    { label: "Hardware Alerts", value: String(27 + (tick % 3)), className: "text-amber-300", duration: 1800 },
+    { label: "System Uptime", value: "99.98%", className: "text-[#a4e6ff]", duration: 2500 },
+  ];
+
+  return (
+    <div className="hero-stats-strip lg:col-span-12 grid grid-cols-2 lg:grid-cols-4 gap-3">
+      {stats.map((stat) => (
+        <div key={stat.label} className="rounded-xl border border-[#00d1ff]/18 bg-[#0d131b]/82 px-4 py-3 backdrop-blur-md">
+          <span className="block text-[9px] font-mono uppercase tracking-widest text-[#bbc9cf]">{stat.label}</span>
+          <RollingKpiValue
+            value={stat.value}
+            className={`mt-1 block text-xl md:text-2xl font-black tabular-nums ${stat.className}`}
+            duration={stat.duration}
+          />
+        </div>
+      ))}
+    </div>
+  );
+});
+
+function MetricTile({ label, value, tone }: { label: string; value: string; tone: "cyan" | "amber" | "emerald" }) {
+  const toneClass = tone === "cyan" ? "text-[#00d1ff]" : tone === "amber" ? "text-amber-300" : "text-emerald-300";
+  return (
+    <div className="rounded-lg border border-white/10 bg-[#070b10]/85 p-3">
+      <span className="block font-mono text-[8px] text-[#bbc9cf] uppercase tracking-widest">{label}</span>
+      <span className={`mt-1 block text-lg font-black ${toneClass}`}>{value}</span>
+    </div>
+  );
+}
+
+function AnimatedBar({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="mb-3 last:mb-0">
+      <div className="flex justify-between text-[9px] font-mono text-[#bbc9cf] mb-1">
+        <span>{label}</span>
+        <span>{value}%</span>
+      </div>
+      <div className="h-2 rounded-full bg-[#1b2530] overflow-hidden">
+        <div className="h-full rounded-full bg-gradient-to-r from-[#00d1ff] to-emerald-300 transition-all duration-700" style={{ width: `${value}%` }}></div>
+      </div>
+    </div>
+  );
+}
+
 const KpiAndMonitoringSections = React.memo(function KpiAndMonitoringSections({
   onNavigate
 }: {
@@ -347,22 +634,22 @@ const KpiAndMonitoringSections = React.memo(function KpiAndMonitoringSections({
 
   return (
     <>
-      <section id="kpi-banner" className="landing-perf-region grid grid-cols-2 md:grid-cols-4 gap-4 mb-16 select-none">
-        <div className="glass-panel p-6 rounded-xl text-center flex flex-col justify-center border border-[#00d1ff]/10 hover:border-[#00d1ff]/30 transition-all duration-300 bg-[#121c24]/40">
+      <section id="kpi-banner" className="landing-perf-region grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-8 select-none">
+        <div className="glass-panel p-4 md:p-5 rounded-xl text-center flex flex-col justify-center border border-[#00d1ff]/10 hover:border-[#00d1ff]/30 transition-all duration-300 bg-[#121c24]/40">
           <span className="font-mono text-[10px] text-[#bbc9cf] uppercase tracking-widest mb-1.5 block">Protected Devices</span>
           <RollingKpiValue value="14,209" duration={1980} className="text-3xl md:text-4xl font-black text-[#00d1ff] tracking-tight glow-active" />
         </div>
-        <div className="glass-panel p-6 rounded-xl text-center flex flex-col justify-center border border-[#00d1ff]/10 hover:border-[#00d1ff]/30 transition-all duration-300 bg-[#121c24]/40">
+        <div className="glass-panel p-4 md:p-5 rounded-xl text-center flex flex-col justify-center border border-[#00d1ff]/10 hover:border-[#00d1ff]/30 transition-all duration-300 bg-[#121c24]/40">
           <span className="font-mono text-[10px] text-[#bbc9cf] uppercase tracking-widest mb-1.5 block">Active Sessions</span>
           <RollingKpiValue value="842" duration={2160} className="text-3xl md:text-4xl font-black text-[#dae3ee] tracking-tight" />
         </div>
-        <div className={`glass-panel p-6 rounded-xl text-center flex flex-col justify-center transition-all duration-500 bg-[#1a0f12]/30 ${deviceAlertCell ? "border-red-500/40 bg-red-950/15" : "border-[#00d1ff]/10"}`}>
+        <div className={`glass-panel p-4 md:p-5 rounded-xl text-center flex flex-col justify-center transition-all duration-500 bg-[#1a0f12]/30 ${deviceAlertCell ? "border-red-500/40 bg-red-950/15" : "border-[#00d1ff]/10"}`}>
           <span className={`font-mono text-[10px] uppercase tracking-widest mb-1.5 block ${deviceAlertCell ? "text-red-400" : "text-[#bbc9cf]"}`}>Hardware Alerts</span>
           <span className={`text-3xl md:text-4xl font-black tracking-tight transition-all ${deviceAlertCell ? "text-red-400 drop-shadow-[0_0_8px_rgba(239,68,68,0.5)]" : "text-emerald-400"}`}>
             <RollingKpiValue value={deviceAlertCell ? `${threatLevel}` : "0"} duration={1840} className="" />
           </span>
         </div>
-        <div className="glass-panel p-6 rounded-xl text-center flex flex-col justify-center border border-[#00d1ff]/10 hover:border-[#00d1ff]/30 transition-all duration-300 bg-[#121c24]/40">
+        <div className="glass-panel p-4 md:p-5 rounded-xl text-center flex flex-col justify-center border border-[#00d1ff]/10 hover:border-[#00d1ff]/30 transition-all duration-300 bg-[#121c24]/40">
           <span className="font-mono text-[10px] text-[#bbc9cf] uppercase tracking-widest mb-1.5 block">System Uptime</span>
           <RollingKpiValue value="99.98%" duration={2380} className="text-3xl md:text-4xl font-black text-[#00d1ff] tracking-tight" />
         </div>
@@ -674,11 +961,82 @@ const HardwareCardsSection = React.memo(function HardwareCardsSection() {
 export default function LandingPage({ onNavigate }: LandingPageProps) {
   // Early access form states
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [fullName, setFullName] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [businessEmail, setBusinessEmail] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formSubmitted, setFormSubmitted] = useState(false);
   const [formError, setFormError] = useState("");
+  const [emailSent, setEmailSent] = useState(false);
+
+  const emailValidationError = (value: string) => {
+    const email = value.trim().toLowerCase();
+    const match = email.match(/^([A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+)@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)$/);
+    if (!match) return "Enter a valid email address, for example employee@company.com.";
+    const local = match[1];
+    const domain = match[2].replace(/\.$/, "");
+    const labels = domain.split(".");
+    const blocked = new Set(["example.com", "test.com", "invalid", "localhost"]);
+    const personal = new Set(["gmail.com", "outlook.com", "yahoo.com", "icloud.com"]);
+    const secondLevel = labels.length >= 2 ? labels[labels.length - 2] : "";
+    if (blocked.has(domain) || ["invalid", "localhost"].includes(labels[labels.length - 1])) return "Use a real personal or business email domain.";
+    if (local.startsWith(".") || local.endsWith(".") || local.includes("..")) return "Enter a valid email address.";
+    if (labels.some((label) => !label || label.startsWith("-") || label.endsWith("-"))) return "Enter a valid email domain.";
+    if (labels.some((label) => /^\d+$/.test(label))) return "Email domain cannot contain numeric-only labels.";
+    if (!personal.has(domain) && (secondLevel.length < 4 || /^\d/.test(secondLevel))) return "Use a legitimate personal or business email domain.";
+    return "";
+  };
+
+  const resetEarlyAccessForm = () => {
+    setFormSubmitted(false);
+    setFullName("");
+    setCompanyName("");
+    setBusinessEmail("");
+    setFormError("");
+    setEmailSent(false);
+  };
+
+  const submitEarlyAccess = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const email = businessEmail.trim();
+    if (!email) {
+      setFormError("Business Email is required.");
+      return;
+    }
+    const emailError = emailValidationError(email);
+    if (emailError) {
+      setFormError(emailError);
+      return;
+    }
+    setFormError("");
+    setIsSubmitting(true);
+    try {
+      const response = await authFetch("/api/early-access", {
+        method: "POST",
+        body: JSON.stringify({
+          fullName: fullName.trim(),
+          company: companyName.trim(),
+          email,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setFormError(payload.error || "Unable to submit early access request.");
+        return;
+      }
+      if (payload.emailNotificationSent === false) {
+        setFormError(payload.message || "Request saved, but email notification could not be sent.");
+        setEmailSent(false);
+      } else {
+        setEmailSent(true);
+      }
+      setFormSubmitted(true);
+    } catch {
+      setFormError("Unable to reach the registration service. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
 
 
@@ -720,6 +1078,7 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
   return (
     <div id="landing-screen" className="relative min-h-screen bg-[#0A0C10] text-[#dae3ee] font-sans overflow-x-hidden selection:bg-[#00d1ff]/20">
       <LandingScrollPerformanceController />
+      <HeroTelemetryBackdrop />
       
       {/* Interactive WebGL Matrix/Network Background Overlay shader */}
       <ShaderBackground />
@@ -743,16 +1102,23 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
         </div>
         <div className="flex items-center gap-4">
           <button 
+            id="nav-admin-signup-btn"
+            onClick={() => onNavigate("admin-signup")}
+            className="enterprise-hero-button hidden md:flex items-center gap-2 px-4 py-2 border border-emerald-400/30 rounded-lg text-emerald-300 bg-emerald-400/5 text-sm font-medium tracking-wide"
+          >
+            Admin Sign Up
+          </button>
+          <button 
             id="nav-dashboard-btn"
             onClick={() => onNavigate("dashboard")}
-            className="hidden md:flex items-center gap-2 px-4 py-2 border border-[#3c494e]/40 rounded-lg text-[#bbc9cf] hover:text-white hover:bg-white/5 transition-all text-sm font-medium tracking-wide"
+            className="enterprise-hero-button hidden md:flex items-center gap-2 px-4 py-2 border border-[#3c494e]/40 rounded-lg text-[#bbc9cf] text-sm font-medium tracking-wide"
           >
             Launch Command
           </button>
           <button 
             id="nav-login-btn"
             onClick={() => onNavigate("login")}
-            className="flex items-center gap-2 px-5 py-2 border border-[#00d1ff]/30 rounded-lg text-[#00d1ff] bg-[#00d1ff]/5 hover:bg-[#00d1ff]/15 transition-all text-sm font-medium tracking-wide active:scale-95 glow-accent"
+            className="enterprise-hero-button flex items-center gap-2 px-5 py-2 border border-[#00d1ff]/30 rounded-lg text-[#00d1ff] bg-[#00d1ff]/5 text-sm font-medium tracking-wide glow-accent"
           >
             <LogIn className="w-4 h-4" />
             Admin Login
@@ -761,25 +1127,19 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
       </nav>
 
       {/* Hero Header Area */}
-      <main className="relative z-10 px-6 md:px-12 max-w-7xl mx-auto pt-16 pb-20">
+      <main className="relative z-10 px-6 md:px-12 max-w-7xl mx-auto pt-5 lg:pt-6 pb-16">
         
-        <section id="hero-heading" className="landing-perf-region grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center mb-16 relative">
+        <section id="hero-heading" className="landing-perf-region hero-enterprise-shell grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-8 items-center mb-3 relative">
           
           {/* LEFT COLUMN: Primary content and actions */}
-          <div className="lg:col-span-7 flex flex-col items-start text-left space-y-6">
+          <div className="lg:col-span-7 flex flex-col items-start text-left space-y-4 lg:space-y-5">
             
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-[#00d1ff]/30 bg-[#00d1ff]/10 text-[#00d1ff] font-mono text-xs font-semibold select-none shadow-[0_0_15px_rgba(0,209,255,0.06)]">
               <span className="w-2 rounded-full h-2 bg-[#00d1ff] glow-active"></span>
               ENTERPRISE HARDWARE INTEGRITY PLATFORM
             </div>
 
-            <h1 className="text-3xl md:text-4xl lg:text-5xl font-black tracking-tight leading-[1.1] text-[#dae3ee]">
-              Monitor Every Asset.<br />
-              <span className="text-[#00d1ff] text-transparent bg-clip-text bg-gradient-to-r from-[#00d1ff] to-[#a4e6ff] drop-shadow-[0_0_12px_rgba(0,209,255,0.3)]">
-                Detect Every Change.
-              </span><br />
-              Secure Every Endpoint.
-            </h1>
+            <TypewriterHeroText />
 
             <p className="text-[#bbc9cf] text-sm md:text-base leading-relaxed font-light max-w-xl">
               Asset Sentinel continuously monitors hardware integrity, detects unauthorized RAM and motherboard changes, validates device identity, and provides real-time security visibility across enterprise environments.
@@ -789,17 +1149,31 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
               <button 
                 id="hero-login-btn"
                 onClick={() => onNavigate("login")}
-                className="px-6 py-3 border border-[#00d1ff]/40 bg-[#00d1ff]/5 hover:bg-[#00d1ff]/15 text-[#00d1ff] hover:text-white rounded-lg transition-all font-semibold text-xs uppercase tracking-wider active:scale-95 cursor-pointer shadow-[0_0_15px_rgba(0,209,255,0.1)] flex items-center justify-center gap-1.5"
+                className="enterprise-hero-button px-6 py-3 border border-[#00d1ff]/40 bg-[#00d1ff]/5 text-[#00d1ff] rounded-lg font-semibold text-xs uppercase tracking-wider cursor-pointer shadow-[0_0_15px_rgba(0,209,255,0.1)] flex items-center justify-center gap-1.5"
               >
                 <LogIn className="w-3.5 h-3.5" />
                 Admin Sign In
               </button>
               <button 
+                id="hero-admin-signup-btn"
+                onClick={() => onNavigate("admin-signup")}
+                className="enterprise-hero-button enterprise-primary-button px-6 py-3 bg-[#00d1ff] text-[#003543] font-bold rounded-lg shadow-[0_0_20px_rgba(0,209,255,0.35)] cursor-pointer flex items-center justify-center text-xs uppercase tracking-wider"
+              >
+                Admin Sign Up
+              </button>
+              <button 
                 id="launch-dashboard-btn"
                 onClick={() => onNavigate("dashboard")}
-                className="px-6 py-3 bg-[#00d1ff] hover:bg-cyan-300 text-[#003543] font-bold rounded-lg transition-all shadow-[0_0_20px_rgba(0,209,255,0.35)] active:scale-95 cursor-pointer flex items-center justify-center text-xs uppercase tracking-wider"
+                className="enterprise-hero-button px-6 py-3 border border-[#3c494e]/50 text-[#dae3ee] font-bold rounded-lg cursor-pointer flex items-center justify-center text-xs uppercase tracking-wider"
               >
-                Launch Dashboard Gateway
+                Launch Dashboard
+              </button>
+              <button 
+                type="button"
+                onClick={() => setIsModalOpen(true)}
+                className="enterprise-hero-button px-6 py-3 border border-amber-400/35 bg-amber-400/10 text-amber-200 font-bold rounded-lg cursor-pointer flex items-center justify-center text-xs uppercase tracking-wider"
+              >
+                Get Early Access
               </button>
             </div>
 
@@ -812,47 +1186,10 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
             </button>
           </div>
 
-          {/* RIGHT COLUMN: Compact Premium invitation-style early access card */}
-          <div className="lg:col-span-5 w-full flex justify-center lg:justify-end">
-            <div className="glass-panel w-full max-w-sm rounded-xl p-6 border border-[#00d1ff]/30 bg-[#121620]/95 relative overflow-hidden shadow-[0_0_25px_rgba(0,209,255,0.08),inset_0_1px_1px_rgba(255,255,255,0.05)] hover:shadow-[0_0_35px_rgba(0,209,255,0.22)] hover:border-[#00d1ff]/50 transition-all duration-500 group">
-              
-              {/* Cybersecurity Accent Top Line with neon glow */}
-              <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-[#00d1ff] to-transparent group-hover:via-cyan-400 transition-all duration-500"></div>
-              <div className="absolute -inset-px bg-gradient-to-r from-transparent via-[#00d1ff]/5 to-transparent rounded-xl pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
-
-              <div className="flex flex-col gap-4 select-none">
-                <div className="flex flex-col gap-1 items-start">
-                  {/* Premium Badge */}
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-500 font-mono text-[9px] font-black uppercase tracking-wider mb-1 animate-pulse">
-                    LIMITED EARLY ACCESS
-                  </span>
-                  <h3 className="text-base font-black text-[#dae3ee] tracking-tight uppercase">
-                    First 100 Organizations Only
-                  </h3>
-                  <p className="text-xs text-[#bbc9cf] font-light leading-relaxed">
-                    Get priority access to Asset Sentinel.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 mt-1">
-                  <button 
-                    type="button"
-                    onClick={() => setIsModalOpen(true)}
-                    className="rounded-lg py-2.5 px-2 flex items-center justify-center gap-1 text-[10px] uppercase tracking-wider text-[#003543] bg-[#00d1ff] hover:bg-cyan-300 hover:shadow-[0_0_12px_rgba(0,209,255,0.3)] transition-all active:scale-95 cursor-pointer font-mono font-black"
-                  >
-                    Get Early Access
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => onNavigate("demo")}
-                    className="rounded-lg py-2.5 px-2 flex items-center justify-center gap-1 text-[10px] uppercase tracking-wider text-[#dae3ee] border border-white/10 bg-white/5 hover:bg-white/10 transition-all active:scale-95 cursor-pointer font-mono font-bold"
-                  >
-                    View Sample
-                  </button>
-                </div>
-              </div>
-
-            </div>
+          {/* RIGHT COLUMN: live enterprise dashboard preview */}
+          <div className="lg:col-span-5 w-full flex flex-col gap-3 justify-center lg:justify-end hero-preview-fade">
+            <LiveDashboardPreview />
+            <HeroEarlyAccessCard onOpen={() => setIsModalOpen(true)} />
           </div>
 
         </section>
@@ -919,11 +1256,11 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
             </div>
 
             {/* Right side: Early Access Program */}
-            <div className="glass-panel p-8 rounded-xl border border-[#00d1ff]/25 bg-[#161B22]/70 flex flex-col justify-between min-h-[300px] transition-all hover:border-[#00d1ff]/40 shadow-[0_4px_20px_rgba(0,209,255,0.03)] relative overflow-hidden group">
-              <div className="absolute inset-0 bg-gradient-to-tr from-[#00d1ff]/5 via-transparent to-transparent pointer-events-none"></div>
+            <div className="glass-panel p-8 rounded-xl border border-amber-300/35 bg-[#181308]/75 flex flex-col justify-between min-h-[300px] transition-all hover:border-amber-300/60 shadow-[0_4px_24px_rgba(250,204,21,0.08)] relative overflow-hidden group">
+              <div className="absolute inset-0 bg-gradient-to-tr from-amber-300/10 via-transparent to-[#00d1ff]/5 pointer-events-none"></div>
               
               <div>
-                <span className="font-mono text-[9px] text-[#00d1ff] uppercase tracking-widest font-extrabold mb-2 block">
+                <span className="font-mono text-[9px] text-amber-200 uppercase tracking-widest font-extrabold mb-2 block">
                   EVALUATION POOL
                 </span>
                 <h3 className="text-xl md:text-2xl font-black text-[#dae3ee] tracking-tight uppercase mb-4">
@@ -940,19 +1277,19 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
                   </span>
                   <ul className="space-y-2.5 text-xs text-[#bbc9cf] font-light">
                     <li className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#00d1ff] shadow-[0_0_4px_#00d1ff]"></span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-300 shadow-[0_0_6px_rgba(250,204,21,0.9)]"></span>
                       Early platform access
                     </li>
                     <li className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#00d1ff] shadow-[0_0_4px_#00d1ff]"></span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-300 shadow-[0_0_6px_rgba(250,204,21,0.9)]"></span>
                       Priority onboarding
                     </li>
                     <li className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#00d1ff] shadow-[0_0_4px_#00d1ff]"></span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-300 shadow-[0_0_6px_rgba(250,204,21,0.9)]"></span>
                       Direct product feedback channel
                     </li>
                     <li className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#00d1ff] shadow-[0_0_4px_#00d1ff]"></span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-300 shadow-[0_0_6px_rgba(250,204,21,0.9)]"></span>
                       Future enterprise feature previews
                     </li>
                   </ul>
@@ -962,7 +1299,7 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
               <button 
                 type="button"
                 onClick={() => setIsModalOpen(true)}
-                className="w-full mt-6 px-6 py-3 bg-[#00d1ff] hover:bg-cyan-300 text-[#003543] font-mono text-xs font-black uppercase rounded-lg shadow-[0_0_15px_rgba(0,209,255,0.30)] transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+                className="early-access-yellow-button w-full mt-6 px-6 py-3 font-mono text-xs font-black uppercase rounded-lg transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
               >
                 Get Early Access
               </button>
@@ -986,22 +1323,19 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
           id="early-access-modal"
           className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md transition-all duration-300 animate-fade-in"
         >
-          <div className="glass-panel w-full max-w-[440px] rounded-xl p-8 bg-[#10141b]/95 border border-[#00d1ff]/50 backdrop-blur-xl shadow-[0_0_40px_rgba(0,209,255,0.25)] flex flex-col relative z-[101]">
+          <div className="glass-panel early-access-yellow-panel w-full max-w-[440px] rounded-xl p-8 bg-[#161207]/95 border border-amber-300/60 backdrop-blur-xl flex flex-col relative z-[101]">
             
             {/* Cybernetic header details */}
-            <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-[#00d1ff] to-transparent"></div>
+            <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-amber-300 to-transparent"></div>
             
             {/* Close button with premium hover style */}
             <button 
               type="button"
               onClick={() => {
                 setIsModalOpen(false);
-                setFormSubmitted(false);
-                setCompanyName("");
-                setBusinessEmail("");
-                setFormError("");
+                resetEarlyAccessForm();
               }}
-              className="absolute top-4 right-4 text-[#bbc9cf] hover:text-[#00d1ff] hover:rotate-90 transition-all duration-300 p-1.5 cursor-pointer rounded-full hover:bg-white/5"
+              className="absolute top-4 right-4 text-[#bbc9cf] hover:text-amber-200 hover:rotate-90 transition-all duration-300 p-1.5 cursor-pointer rounded-full hover:bg-amber-300/10"
               aria-label="Close modal"
             >
               <X className="w-4 h-4" />
@@ -1009,35 +1343,14 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
 
             {!formSubmitted ? (
               <form 
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!companyName.trim()) {
-                    setFormError("Company Name is required.");
-                    return;
-                  }
-                  if (!businessEmail.trim()) {
-                    setFormError("Business Email is required.");
-                    return;
-                  }
-                  if (!businessEmail.includes("@")) {
-                    setFormError("Please enter a valid email address.");
-                    return;
-                  }
-                  setFormError("");
-                  setIsSubmitting(true);
-                  // Simulate modern secure request transmission
-                  setTimeout(() => {
-                    setIsSubmitting(false);
-                    setFormSubmitted(true);
-                  }, 1200);
-                }}
+                onSubmit={submitEarlyAccess}
                 className="flex flex-col gap-5 mt-2"
               >
                 <div className="flex flex-col items-center text-center gap-2 mb-1 select-none">
-                  <div className="w-12 h-12 rounded-full bg-[#00d1ff]/10 border border-[#00d1ff]/40 flex items-center justify-center shadow-[0_0_15px_rgba(0,209,255,0.15)] mb-1">
+                  <div className="w-12 h-12 rounded-full bg-amber-300/10 border border-amber-300/45 flex items-center justify-center shadow-[0_0_18px_rgba(250,204,21,0.22)] mb-1">
                     <SentinelLogo className="w-6.5 h-6.5 animate-pulse" />
                   </div>
-                  <h3 className="text-sm font-black text-[#00d1ff] font-mono tracking-[0.2em] uppercase leading-none">
+                  <h3 className="text-sm font-black text-amber-200 font-mono tracking-[0.2em] uppercase leading-none">
                     Early Access Request
                   </h3>
                   <span className="text-[9px] text-[#bbc9cf] font-mono tracking-widest uppercase mt-1">
@@ -1046,14 +1359,27 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
+                  <label className="text-[9px] font-bold uppercase tracking-widest text-[#bbc9cf] font-mono" htmlFor="early-full-name">
+                    Full Name
+                  </label>
+                  <input 
+                    id="early-full-name"
+                    className="early-access-yellow-input w-full rounded-lg px-4 py-3 text-xs font-mono text-[#dae3ee] bg-[#070b10] border border-amber-300/15 focus:ring-1 focus:ring-amber-300 placeholder:text-[#3c494e] outline-none transition-all duration-200" 
+                    placeholder="Security operations contact" 
+                    type="text"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
                   <label className="text-[9px] font-bold uppercase tracking-widest text-[#bbc9cf] font-mono" htmlFor="company-name">
                     Company Name
                   </label>
                   <input 
                     id="company-name"
-                    className="w-full rounded-lg px-4 py-3 text-xs font-mono text-[#dae3ee] bg-[#070b10] border border-white/10 focus:border-[#00d1ff] focus:ring-1 focus:ring-[#00d1ff] focus:shadow-[0_0_10px_rgba(0,209,255,0.15)] placeholder:text-[#3c494e] outline-none transition-all duration-200" 
+                    className="early-access-yellow-input w-full rounded-lg px-4 py-3 text-xs font-mono text-[#dae3ee] bg-[#070b10] border border-amber-300/15 focus:ring-1 focus:ring-amber-300 placeholder:text-[#3c494e] outline-none transition-all duration-200" 
                     placeholder="Enter corporate or business entity" 
-                    required 
                     type="text"
                     value={companyName}
                     onChange={(e) => setCompanyName(e.target.value)}
@@ -1066,10 +1392,10 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
                   </label>
                   <input 
                     id="business-email"
-                    className="w-full rounded-lg px-4 py-3 text-xs font-mono text-[#dae3ee] bg-[#070b10] border border-white/10 focus:border-[#00d1ff] focus:ring-1 focus:ring-[#00d1ff] focus:shadow-[0_0_10px_rgba(0,209,255,0.15)] placeholder:text-[#3c494e] outline-none transition-all duration-200" 
+                    className="early-access-yellow-input w-full rounded-lg px-4 py-3 text-xs font-mono text-[#dae3ee] bg-[#070b10] border border-amber-300/15 focus:ring-1 focus:ring-amber-300 placeholder:text-[#3c494e] outline-none transition-all duration-200" 
                     placeholder="name@organization.com" 
                     required 
-                    type="email"
+                    type="text"
                     value={businessEmail}
                     onChange={(e) => setBusinessEmail(e.target.value)}
                   />
@@ -1084,7 +1410,7 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
                 <button 
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full rounded-lg py-3.5 mt-2 flex items-center justify-center gap-2 text-xs font-mono font-black uppercase text-[#003543] bg-[#00d1ff] hover:bg-cyan-300 hover:shadow-[0_0_20px_rgba(0,209,255,0.4)] transition-all cursor-pointer disabled:opacity-50"
+                  className="early-access-yellow-button w-full rounded-lg py-3.5 mt-2 flex items-center justify-center gap-2 text-xs font-mono font-black uppercase transition-all cursor-pointer disabled:opacity-50"
                 >
                   {isSubmitting ? "TRANSMITTING SIGNATURE..." : "Request Early Access"}
                 </button>
@@ -1105,18 +1431,22 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
                     Thank you for your interest in Asset Sentinel.
                   </p>
                   <p className="text-xs text-[#bbc9cf] font-light leading-relaxed">
-                    Your organization has been added to the Early Access Program waiting list.
+                    {emailSent
+                      ? "Thank you! Your Early Access request has been submitted successfully. A confirmation email has been sent."
+                      : "Your organization has been added to the Early Access Program waiting list."}
                   </p>
+                  {formError && (
+                    <p className="text-[10px] text-amber-200 font-mono leading-relaxed bg-amber-400/10 border border-amber-400/25 rounded-md px-3 py-2">
+                      {formError}
+                    </p>
+                  )}
                 </div>
 
                 <button 
                   type="button"
                   onClick={() => {
                     setIsModalOpen(false);
-                    setFormSubmitted(false);
-                    setCompanyName("");
-                    setBusinessEmail("");
-                    setFormError("");
+                    resetEarlyAccessForm();
                   }}
                   className="mt-6 px-6 py-2.5 bg-[#1B222A] hover:bg-[#252f3a] text-[#dae3ee] border border-white/10 rounded-lg text-xs font-mono font-bold uppercase tracking-wider transition-all cursor-pointer"
                 >

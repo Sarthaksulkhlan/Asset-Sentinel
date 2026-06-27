@@ -15,10 +15,11 @@ from database import get_db_session
 from models import RefreshToken, User
 
 
+ROLE_SUPER_ADMIN = "Super Admin"
 ROLE_ADMIN = "Admin"
 ROLE_IT_ADMIN = "IT Admin"
 ROLE_VIEWER = "Viewer"
-VALID_ROLES = {ROLE_ADMIN, ROLE_IT_ADMIN, ROLE_VIEWER}
+VALID_ROLES = {ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_IT_ADMIN, ROLE_VIEWER}
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -280,7 +281,8 @@ def ensure_auth_schema() -> None:
             """
             UPDATE users
             SET role = CASE lower(role)
-                WHEN 'super_admin' THEN 'Admin'
+                WHEN 'super_admin' THEN 'Super Admin'
+                WHEN 'super admin' THEN 'Super Admin'
                 WHEN 'admin' THEN 'Admin'
                 WHEN 'analyst' THEN 'IT Admin'
                 WHEN 'it admin' THEN 'IT Admin'
@@ -292,7 +294,7 @@ def ensure_auth_schema() -> None:
         session.execute(text(
             "ALTER TABLE users "
             "ADD CONSTRAINT chk_users_role "
-            "CHECK (role IN ('Admin', 'IT Admin', 'Viewer'))"
+            "CHECK (role IN ('Super Admin', 'Admin', 'IT Admin', 'Viewer'))"
         ))
         session.execute(text(
             """
@@ -330,7 +332,7 @@ def bootstrap_admin_user() -> None:
             existing.email = email
             existing.username = username
             existing.display_name = Config.BOOTSTRAP_ADMIN_DISPLAY_NAME
-            existing.role = ROLE_ADMIN
+            existing.role = ROLE_SUPER_ADMIN
             existing.is_active = True
             existing.external_provider = existing.external_provider or "local"
             existing.external_subject = existing.external_subject or username
@@ -345,7 +347,7 @@ def bootstrap_admin_user() -> None:
                 email=email,
                 display_name=Config.BOOTSTRAP_ADMIN_DISPLAY_NAME,
                 password_hash=hash_password(password),
-                role=ROLE_ADMIN,
+                role=ROLE_SUPER_ADMIN,
                 is_active=True,
                 external_provider="local",
                 external_subject=username,

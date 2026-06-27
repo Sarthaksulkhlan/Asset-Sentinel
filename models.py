@@ -239,7 +239,7 @@ class User(Base):
         UniqueConstraint("email", name="uq_users_email"),
         UniqueConstraint("username", name="uq_users_username"),
         UniqueConstraint("external_provider", "external_subject", name="uq_users_external_identity"),
-        CheckConstraint("role IN ('Admin', 'IT Admin', 'Viewer')", name="chk_users_role"),
+        CheckConstraint("role IN ('Super Admin', 'Admin', 'IT Admin', 'Viewer')", name="chk_users_role"),
         Index("idx_users_role", "role"),
         Index("idx_users_is_active", "is_active"),
         Index("idx_users_external_identity", "external_provider", "external_subject"),
@@ -264,4 +264,52 @@ class RefreshToken(Base):
         UniqueConstraint("jwt_id", name="uq_refresh_tokens_jwt_id"),
         Index("idx_refresh_tokens_user_id", "user_id"),
         Index("idx_refresh_tokens_expires_at", expires_at),
+    )
+
+
+class AdminUser(Base):
+    __tablename__ = "admin_users"
+
+    id = Column(BigInteger, primary_key=True)
+    company_name = Column(String(255), nullable=False)
+    company_website = Column(String(512))
+    industry = Column(String(120), nullable=False)
+    company_size = Column(String(80), nullable=False)
+    country = Column(String(120), nullable=False)
+    full_name = Column(String(255), nullable=False)
+    work_email = Column(String(320), nullable=False)
+    mobile_number = Column(String(40), nullable=False)
+    job_title = Column(String(160), nullable=False)
+    department = Column(String(160), nullable=False)
+    username = Column(String(255), nullable=False)
+    password_hash = Column(Text, nullable=False)
+    terms_accepted = Column(Boolean, nullable=False, default=False)
+    privacy_accepted = Column(Boolean, nullable=False, default=False)
+    ip_address = Column(INET)
+    user_agent = Column(Text)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("work_email", name="uq_admin_users_work_email"),
+        UniqueConstraint("username", name="uq_admin_users_username"),
+        Index("idx_admin_users_company_name", "company_name"),
+        Index("idx_admin_users_created_at", created_at.desc()),
+    )
+
+
+class EarlyAccessRequest(Base):
+    __tablename__ = "early_access_requests"
+
+    id = Column(BigInteger, primary_key=True)
+    full_name = Column(String(255))
+    email = Column(String(320), nullable=False)
+    company = Column(String(255))
+    ip_address = Column(INET)
+    user_agent = Column(Text)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("email", name="uq_early_access_requests_email"),
+        Index("idx_early_access_requests_company", "company"),
+        Index("idx_early_access_requests_created_at", created_at.desc()),
     )

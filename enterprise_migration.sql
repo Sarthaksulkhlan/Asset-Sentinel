@@ -65,10 +65,12 @@ WHERE assets.id = ranked.id
 
 ALTER TABLE assets ALTER COLUMN device_uid SET NOT NULL;
 
+ALTER TABLE assets DROP CONSTRAINT IF EXISTS chk_assets_status;
 ALTER TABLE assets
     ADD CONSTRAINT chk_assets_status
     CHECK (status IN ('Online', 'Idle', 'Offline', 'Overload'));
 
+ALTER TABLE assets DROP CONSTRAINT IF EXISTS uq_assets_device_uid;
 ALTER TABLE assets
     ADD CONSTRAINT uq_assets_device_uid UNIQUE (device_uid);
 

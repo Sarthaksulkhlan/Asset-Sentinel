@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS users (
     CONSTRAINT uq_users_username UNIQUE (username),
     CONSTRAINT uq_users_external_identity UNIQUE (external_provider, external_subject),
     CONSTRAINT chk_users_role
-        CHECK (role IN ('Admin', 'IT Admin', 'Viewer'))
+        CHECK (role IN ('Super Admin', 'Admin', 'IT Admin', 'Viewer'))
 );
 
 CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -157,6 +157,40 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT uq_refresh_tokens_token_hash UNIQUE (token_hash),
     CONSTRAINT uq_refresh_tokens_jwt_id UNIQUE (jwt_id)
+);
+
+CREATE TABLE IF NOT EXISTS admin_users (
+    id BIGSERIAL PRIMARY KEY,
+    company_name VARCHAR(255) NOT NULL,
+    company_website VARCHAR(512),
+    industry VARCHAR(120) NOT NULL,
+    company_size VARCHAR(80) NOT NULL,
+    country VARCHAR(120) NOT NULL,
+    full_name VARCHAR(255) NOT NULL,
+    work_email VARCHAR(320) NOT NULL,
+    mobile_number VARCHAR(40) NOT NULL,
+    job_title VARCHAR(160) NOT NULL,
+    department VARCHAR(160) NOT NULL,
+    username VARCHAR(255) NOT NULL,
+    password_hash TEXT NOT NULL,
+    terms_accepted BOOLEAN NOT NULL DEFAULT false,
+    privacy_accepted BOOLEAN NOT NULL DEFAULT false,
+    ip_address INET,
+    user_agent TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_admin_users_work_email UNIQUE (work_email),
+    CONSTRAINT uq_admin_users_username UNIQUE (username)
+);
+
+CREATE TABLE IF NOT EXISTS early_access_requests (
+    id BIGSERIAL PRIMARY KEY,
+    full_name VARCHAR(255),
+    email VARCHAR(320) NOT NULL,
+    company VARCHAR(255),
+    ip_address INET,
+    user_agent TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_early_access_requests_email UNIQUE (email)
 );
 
 CREATE OR REPLACE FUNCTION set_updated_at()
@@ -245,5 +279,15 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id
     ON refresh_tokens (user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at
     ON refresh_tokens (expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_admin_users_company_name
+    ON admin_users (company_name);
+CREATE INDEX IF NOT EXISTS idx_admin_users_created_at
+    ON admin_users (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_early_access_requests_company
+    ON early_access_requests (company);
+CREATE INDEX IF NOT EXISTS idx_early_access_requests_created_at
+    ON early_access_requests (created_at DESC);
 
 COMMIT;

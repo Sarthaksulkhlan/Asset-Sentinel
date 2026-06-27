@@ -14,7 +14,7 @@ import { SentinelLogo } from "./SentinelLogo";
 import { useAuth } from "../auth/AuthContext";
 
 interface LoginPageProps {
-  onNavigate: (view: "landing" | "login" | "dashboard" | "demo") => void;
+  onNavigate: (view: "landing" | "login" | "admin-signup" | "dashboard" | "demo") => void;
   onLoginSuccess: (email: string) => void;
 }
 

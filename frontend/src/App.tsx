@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useCallback } from "react";
 import LandingPage from "./components/LandingPage";
 import LoginPage from "./components/LoginPage";
+import AdminSignupPage from "./components/AdminSignupPage";
 import DashboardPage from "./components/DashboardPage";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 
-type ViewState = "landing" | "login" | "dashboard" | "demo";
+type ViewState = "landing" | "login" | "admin-signup" | "dashboard" | "demo";
 
 const routeForView = (view: ViewState) => {
   if (view === "login") return "/login";
+  if (view === "admin-signup") return "/admin-signup";
   if (view === "dashboard") return "/dashboard";
   if (view === "demo") return "/demo";
   return "/";
@@ -15,6 +17,7 @@ const routeForView = (view: ViewState) => {
 
 const viewForPath = (path: string): ViewState => {
   if (path === "/login") return "login";
+  if (path === "/admin-signup") return "admin-signup";
   if (path === "/dashboard") return "dashboard";
   if (path === "/demo") return "demo";
   return "landing";
@@ -72,6 +75,12 @@ function AppShell() {
           <LoginPage 
             onNavigate={(targetView) => navigate(targetView)} 
             onLoginSuccess={handleLoginSuccess}
+          />
+        );
+      case "admin-signup":
+        return (
+          <AdminSignupPage
+            onNavigate={(targetView) => navigate(targetView)}
           />
         );
       case "dashboard":

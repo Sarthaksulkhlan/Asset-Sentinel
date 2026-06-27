@@ -14,7 +14,8 @@ ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_users_role;
 ALTER TABLE users ALTER COLUMN role SET DEFAULT 'Admin';
 UPDATE users
 SET role = CASE lower(role)
-    WHEN 'super_admin' THEN 'Admin'
+    WHEN 'super admin' THEN 'Super Admin'
+    WHEN 'super_admin' THEN 'Super Admin'
     WHEN 'admin' THEN 'Admin'
     WHEN 'analyst' THEN 'IT Admin'
     WHEN 'it admin' THEN 'IT Admin'
@@ -23,7 +24,7 @@ SET role = CASE lower(role)
 END;
 ALTER TABLE users
     ADD CONSTRAINT chk_users_role
-    CHECK (role IN ('Admin', 'IT Admin', 'Viewer'));
+    CHECK (role IN ('Super Admin', 'Admin', 'IT Admin', 'Viewer'));
 
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     id BIGSERIAL PRIMARY KEY,
