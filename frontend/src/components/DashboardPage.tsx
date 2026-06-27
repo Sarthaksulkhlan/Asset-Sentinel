@@ -53,7 +53,7 @@ import { apiFetch } from "../lib/api";
 interface DashboardPageProps {
   userEmail: string;
   onSignOut: () => void;
-  onNavigate: (view: "landing" | "login" | "dashboard" | "demo") => void;
+  onNavigate: (view: "landing" | "login" | "admin-signup" | "dashboard" | "demo") => void;
   isDemoMode?: boolean;
 }
 

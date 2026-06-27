@@ -1,4 +1,5 @@
 import hashlib
+import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional
@@ -8,6 +9,9 @@ from sqlalchemy import delete, desc, func, select
 
 from database import get_db_session
 from models import ActiveApplication, ActiveApplicationHistory, Alert, Asset, HardwareChange, SessionRecord
+
+
+logger = logging.getLogger("asset_sentinel.storage")
 
 
 def _parse_datetime(value: Any) -> Optional[datetime]:
@@ -262,12 +266,15 @@ def upsert_asset(record: Dict[str, Any]) -> None:
     with get_db_session() as session:
         row = session.execute(select(Asset).where(Asset.device_uid == device_uid).limit(1)).scalar_one_or_none()
         if row is None:
+            logger.info("Creating PostgreSQL asset row for hostname=%s device_uid=%s", record.get("hostname"), device_uid)
             row = Asset(
                 device_uid=device_uid,
                 hostname=record.get("hostname") or "Unknown",
                 collected_at=_parse_required_datetime(record.get("collected_at")),
             )
             session.add(row)
+        else:
+            logger.debug("Updating PostgreSQL asset row for hostname=%s device_uid=%s", record.get("hostname"), device_uid)
         _apply_asset_record(row, record)
 
 
@@ -529,6 +536,11 @@ def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any 
     with get_db_session() as session:
         row = session.execute(select(Asset).where(Asset.hostname == hostname).limit(1)).scalar_one_or_none()
         if row is None:
+            logger.warning(
+                "Heartbeat skipped because hostname=%s is not present in PostgreSQL assets. "
+                "Startup telemetry bootstrap should create it first.",
+                hostname,
+            )
             return
         row.last_seen = now
         row.status = "Online"

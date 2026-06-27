@@ -294,8 +294,16 @@ def collect_cpu_usage_percent() -> Optional[float]:
         import psutil
         return round(float(psutil.cpu_percent(interval=0.2)), 2)
     except Exception as exc:
-        logger.warning("Could not collect CPU usage: %s", exc)
-        return None
+        logger.warning("Could not collect CPU usage with psutil: %s", exc)
+    try:
+        import wmi
+        rows = _wmi_query(wmi.WMI(), "Win32_Processor", ["LoadPercentage"])
+        values = [float(row["LoadPercentage"]) for row in rows if row.get("LoadPercentage") is not None]
+        if values:
+            return round(sum(values) / len(values), 2)
+    except Exception as exc:
+        logger.warning("Could not collect CPU usage with WMI fallback: %s", exc)
+    return None
 
 
 def collect_ram_usage_percent() -> Optional[float]:
@@ -303,8 +311,28 @@ def collect_ram_usage_percent() -> Optional[float]:
         import psutil
         return round(float(psutil.virtual_memory().percent), 2)
     except Exception as exc:
-        logger.warning("Could not collect RAM usage: %s", exc)
-        return None
+        logger.warning("Could not collect RAM usage with psutil: %s", exc)
+    try:
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        status = MEMORYSTATUSEX()
+        status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return round(float(status.dwMemoryLoad), 2)
+    except Exception as exc:
+        logger.warning("Could not collect RAM usage with Windows API fallback: %s", exc)
+    return None
 
 
 def collect_current_active_path() -> dict:

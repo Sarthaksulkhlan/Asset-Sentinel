@@ -265,6 +265,12 @@ def detect_login() -> Optional[Dict[str, Any]]:
     last_user = last_session.get("username")
     last_session_id = last_session.get("session_id")
     last_event_record_id = last_session.get("windows_event_record_id")
+    last_hostname = last_session.get("hostname")
+    current_hostname = current_session.get("hostname")
+
+    if current_hostname and current_hostname != last_hostname:
+        logger.info(f"Login detected: hostname changed from {last_hostname} to {current_hostname}")
+        return record_login(current_session)
 
     if current_event_record_id and current_event_record_id != last_event_record_id:
         if not has_session_event_signature(current_session.get("hostname"), current_event_record_id):

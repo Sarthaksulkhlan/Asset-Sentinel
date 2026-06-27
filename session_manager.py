@@ -19,6 +19,7 @@ Requires: pywin32, psutil (Windows only)
 
 import socket
 import logging
+import ctypes
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 import os
@@ -139,7 +140,7 @@ def get_session_id_via_wmi() -> Optional[str]:
     """
     if wmi is None:
         logger.warning("pywin32/wmi not available, cannot get Session ID via WMI")
-        return None
+        return get_session_id_via_windows_api()
     
     try:
         current_username = get_current_username()
@@ -163,7 +164,19 @@ def get_session_id_via_wmi() -> Optional[str]:
         
     except Exception as e:
         logger.warning(f"Error querying Session ID via WMI: {e}")
-        return None
+        return get_session_id_via_windows_api()
+
+
+def get_session_id_via_windows_api() -> Optional[str]:
+    try:
+        session_id = ctypes.c_ulong()
+        process_id = os.getpid()
+        if ctypes.windll.kernel32.ProcessIdToSessionId(process_id, ctypes.byref(session_id)):
+            return str(session_id.value)
+        logger.warning("ProcessIdToSessionId returned false for current process")
+    except Exception as exc:
+        logger.warning(f"Windows API session ID fallback failed: {exc}")
+    return None
 
 
 def get_login_timestamp() -> str:
