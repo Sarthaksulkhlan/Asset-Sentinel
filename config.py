@@ -2,9 +2,38 @@ import os
 from datetime import timedelta
 
 
+_ENV_LOADED = False
+_ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+
+
+def _load_local_env_file(force: bool = False) -> None:
+    """Load simple KEY=VALUE pairs from .env without overriding real env vars."""
+    global _ENV_LOADED
+    if _ENV_LOADED and not force:
+        return
+    _ENV_LOADED = True
+
+    if not os.path.exists(_ENV_PATH):
+        return
+
+    with open(_ENV_PATH, "r", encoding="utf-8-sig") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and (force or key not in os.environ):
+                os.environ[key] = value
+
+
+_load_local_env_file()
+
+
 class Config:
     POSTGRES_USER = os.environ.get("ASSET_SENTINEL_DB_USER", "postgres")
-    POSTGRES_PASSWORD = os.environ.get("ASSET_SENTINEL_DB_PASSWORD", "postgres")
+    POSTGRES_PASSWORD = os.environ.get("ASSET_SENTINEL_DB_PASSWORD", "OKAY1234")
     POSTGRES_HOST = os.environ.get("ASSET_SENTINEL_DB_HOST", "localhost")
     POSTGRES_PORT = os.environ.get("ASSET_SENTINEL_DB_PORT", "5432")
     POSTGRES_DB = os.environ.get("ASSET_SENTINEL_DB_NAME", "asset_sentinel")
@@ -21,7 +50,43 @@ class Config:
     JWT_REFRESH_TOKEN_DAYS = int(os.environ.get("ASSET_SENTINEL_REFRESH_TOKEN_DAYS", "7"))
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(minutes=JWT_ACCESS_TOKEN_MINUTES)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=JWT_REFRESH_TOKEN_DAYS)
-    BOOTSTRAP_ADMIN_USERNAME = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_USERNAME", "sentinelcommand")
-    BOOTSTRAP_ADMIN_EMAIL = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_EMAIL", "sentinelcommand@asset-sentinel.local")
-    BOOTSTRAP_ADMIN_PASSWORD = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_PASSWORD", "assetsentinel.alert")
-    BOOTSTRAP_ADMIN_DISPLAY_NAME = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_DISPLAY_NAME", "Sentinel Command")
+    BOOTSTRAP_ADMIN_USERNAME = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_USERNAME", "centralcommand")
+    BOOTSTRAP_ADMIN_EMAIL = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_EMAIL", "centralcommand@asset-sentinel.local")
+    BOOTSTRAP_ADMIN_PASSWORD = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_PASSWORD", "admin!123")
+    BOOTSTRAP_ADMIN_DISPLAY_NAME = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_DISPLAY_NAME", "Central Command")
+    SMTP_HOST = os.environ.get("SMTP_HOST", "")
+    SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+    SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
+    SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+    SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", SMTP_USERNAME)
+    SMTP_USE_SSL = os.environ.get("SMTP_USE_SSL", "").lower() in {"1", "true", "yes"}
+    SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
+    ALERT_EMAIL = os.environ.get("ALERT_EMAIL", "assetsentinel.alerts@gmail.com")
+
+    @classmethod
+    def refresh_from_environment(cls) -> None:
+        cls.SMTP_HOST = os.environ.get("SMTP_HOST", "")
+        cls.SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+        cls.SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
+        cls.SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+        cls.SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", cls.SMTP_USERNAME)
+        cls.SMTP_USE_SSL = os.environ.get("SMTP_USE_SSL", "").lower() in {"1", "true", "yes"}
+        cls.SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
+        cls.ALERT_EMAIL = os.environ.get("ALERT_EMAIL", "assetsentinel.alerts@gmail.com")
+
+    @classmethod
+    def reload_local_env(cls) -> None:
+        _load_local_env_file(force=True)
+        cls.refresh_from_environment()
+
+
+def print_startup_environment_diagnostics() -> None:
+    _load_local_env_file()
+    Config.refresh_from_environment()
+    print(f"Loaded .env: {_ENV_PATH}")
+    print(f"Exists: {os.path.exists(_ENV_PATH)}")
+    print(f"Config module: {os.path.abspath(__file__)}")
+    print(f"Working directory: {os.getcwd()}")
+    print(f"SMTP_HOST: {'FOUND' if Config.SMTP_HOST else 'MISSING'}")
+    print(f"SMTP_USERNAME: {'FOUND' if Config.SMTP_USERNAME else 'MISSING'}")
+    print(f"SMTP_PASSWORD: {'FOUND' if Config.SMTP_PASSWORD else 'MISSING'}")

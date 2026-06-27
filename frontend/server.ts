@@ -255,6 +255,24 @@ async function startServer() {
     return res.status(result.status).json(result.data);
   });
 
+  app.post("/api/early-access", async (req, res) => {
+    const result = await fetchFromBackend("early-access", {
+      method: "POST",
+      body: JSON.stringify(req.body || {}),
+    });
+    if (!result) return res.status(503).json({ error: "Registration backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
+  app.post("/api/admin-signup", async (req, res) => {
+    const result = await fetchFromBackend("admin-signup", {
+      method: "POST",
+      body: JSON.stringify(req.body || {}),
+    });
+    if (!result) return res.status(503).json({ error: "Registration backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
   app.get("/api/auth/me", async (req, res) => {
     const result = await fetchFromBackend("auth/me", {
       headers: authHeaders(req),

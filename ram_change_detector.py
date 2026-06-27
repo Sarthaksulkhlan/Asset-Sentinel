@@ -1,21 +1,7 @@
-import json
-import smtplib
-import ssl
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 
+from notifications import send_alert_email
 from storage import append_alert, list_alerts, list_assets, record_hardware_change
-
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-ADMIN_EMAIL     = "sarthak2004sul@gmail.com"
-SENDER_EMAIL    = "assetsentinel.alerts@gmail.com"
-SENDER_PASSWORD = "wgvpxmwdyfjrspqw"
-SMTP_HOST       = "smtp.gmail.com"
-SMTP_PORT       = 587
 
 
 # ---------------------------------------------------------------------------
@@ -123,53 +109,20 @@ def send_email_alert(change):
     direction = "increased" if change["difference_gb"] > 0 else "decreased"
 
     subject = f"[Asset Sentinel] RAM Change Detected on {change['hostname']}"
-
-    body = (
-        "Asset Sentinel - RAM Change Alert\n"
-        "===================================\n\n"
-        "A RAM change has been detected on a monitored machine.\n\n"
-        "Machine Details\n"
-        "---------------\n"
-        f"Hostname     : {change['hostname']}\n"
-        f"IP Address   : {change['ip_address']}\n\n"
-        "RAM Change\n"
-        "----------\n"
-        f"Previous RAM : {change['previous_ram']} GB\n"
-        f"Current RAM  : {change['current_ram']} GB\n"
-        f"Change       : RAM has {direction} by {abs(change['difference_gb'])} GB\n\n"
-        "Timestamps\n"
-        "----------\n"
-        f"Previous Snapshot : {change['previous_snapshot_time']}\n"
-        f"Current Snapshot  : {change['current_snapshot_time']}\n"
-        f"Alert Generated   : {change['detected_at']}\n\n"
-        "This is an automated alert from Asset Sentinel.\n"
-        "Please investigate this machine immediately."
-    )
-
-    try:
-        message = MIMEMultipart("alternative")
-        message["Subject"] = subject
-        message["From"]    = SENDER_EMAIL
-        message["To"]      = ADMIN_EMAIL
-        message.attach(MIMEText(body, "plain"))
-
-        context = ssl.create_default_context()
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.ehlo()
-            server.starttls(context=context)
-            server.login(SENDER_EMAIL, SENDER_PASSWORD)
-            server.sendmail(SENDER_EMAIL, ADMIN_EMAIL, message.as_string())
-
-        print(f"[EMAIL] Alert sent to {ADMIN_EMAIL}")
-
-    except smtplib.SMTPAuthenticationError:
-        print("[EMAIL ERROR] Authentication failed.")
-        print("  Make sure SENDER_PASSWORD is a valid Gmail App Password.")
-        print("  Generate one at: https://myaccount.google.com/apppasswords")
-    except smtplib.SMTPException as e:
-        print(f"[EMAIL ERROR] SMTP error: {e}")
-    except Exception as e:
-        print(f"[EMAIL ERROR] Unexpected error: {e}")
+    sent = send_alert_email(subject, {
+        "Hostname": change["hostname"],
+        "IP Address": change["ip_address"],
+        "Previous RAM": f"{change['previous_ram']} GB",
+        "Current RAM": f"{change['current_ram']} GB",
+        "Change": f"RAM has {direction} by {abs(change['difference_gb'])} GB",
+        "Previous Snapshot": change["previous_snapshot_time"],
+        "Current Snapshot": change["current_snapshot_time"],
+        "Alert Generated": change["detected_at"],
+    })
+    if sent:
+        print("[EMAIL] RAM change alert sent")
+    else:
+        print("[EMAIL ERROR] RAM change alert was saved but email notification failed")
 
 
 # ---------------------------------------------------------------------------
