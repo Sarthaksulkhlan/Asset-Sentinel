@@ -80,6 +80,16 @@ const formatSessionDurationSince = (value?: string | null) => {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
 };
 
+const telemetryTimeMs = (value?: string | null) => {
+  if (!value) return 0;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+};
+
+const newestTelemetryValue = (primary?: string | null, fallback?: string | null) => (
+  telemetryTimeMs(primary) >= telemetryTimeMs(fallback) ? primary : fallback
+);
+
 const resolveActivePath = (asset: Asset) => {
   const activePath = asset.currentWebsite?.trim();
   return activePath && activePath !== "-" ? activePath : "No Active File";
@@ -623,7 +633,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
       motherboardSerial: baseboardSerial,
       uuid: item.uuid || item.system_uuid || "No UUID",
       macAddress: item.mac_address || item.macAddress || "No MAC",
-      lastLogin: item.lastLogin || item.last_login || item.login_timestamp || "No login data",
+      lastLogin: item.current_login_time || item.lastLogin || item.last_login || item.login_timestamp || "No login data",
       lastLogout: item.lastLogout || item.last_logout || item.logout_timestamp || (status === "Online" ? "Currently Active" : "No logout data"),
       loginDuration: item.login_duration || item.session_duration || item.loginDuration || "No duration",
       loginsToday: Number(item.logins_today || item.loginsToday || 0),
@@ -786,37 +796,28 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
 
         if (active && Array.isArray(data)) {
           const mapped = data.map(mapBackendAsset).map(asset => {
-            const assetSessions = sessionsByHost[asset.hostname] || [];
+            const assetSessions = [...(sessionsByHost[asset.hostname] || [])].sort((a, b) => (
+              telemetryTimeMs(a.recorded_at || a.login_timestamp || a.logout_timestamp)
+              - telemetryTimeMs(b.recorded_at || b.login_timestamp || b.logout_timestamp)
+            ));
             const latestSession = assetSessions[assetSessions.length - 1];
-            const today = new Date().toDateString();
-            const now = new Date();
-            const weekStart = new Date(now);
-            weekStart.setHours(0, 0, 0, 0);
-            weekStart.setDate(now.getDate() - now.getDay() + 1);
             const loginSessions = assetSessions.filter((session: any) => session.event_type === "LOGIN");
-            const loginsToday = loginSessions.filter((session: any) => {
-              const stamp = session.login_timestamp || session.recorded_at;
-              return stamp && new Date(stamp).toDateString() === today;
-            }).length;
-            const loginsThisWeek = loginSessions.filter((session: any) => {
-              const stamp = session.login_timestamp || session.recorded_at;
-              return stamp && new Date(stamp) >= weekStart;
-            }).length;
             const latestLogin = [...loginSessions].reverse()[0];
             const latestLoginStamp = latestLogin?.login_timestamp || latestLogin?.recorded_at;
+            const authoritativeLoginStamp = newestTelemetryValue(asset.lastSuccessfulLogin || asset.lastLogin, latestLoginStamp);
             const sessionDuration = latestSession?.active
-              ? formatSessionDurationSince(latestLoginStamp)
+              ? formatSessionDurationSince(authoritativeLoginStamp || latestLoginStamp)
               : latestSession?.session_duration || latestSession?.duration || asset.loginDuration;
             const sessionPatch = latestSession ? {
-              lastLogin: formatTelemetryTimestamp(latestLoginStamp || latestSession.login_timestamp || latestSession.recorded_at),
+              lastLogin: formatTelemetryTimestamp(authoritativeLoginStamp || latestSession.login_timestamp || latestSession.recorded_at),
               lastLogout: latestSession.active === false
                 ? formatTelemetryTimestamp(latestSession.logout_timestamp)
                 : (latestSession.logout_timestamp ? formatTelemetryTimestamp(latestSession.logout_timestamp) : "Currently Active"),
               loginDuration: sessionDuration,
               currentUser: latestLogin?.username || latestSession.username || asset.currentUser,
-              loginsToday,
-              loginsThisWeek,
-              lastSuccessfulLogin: latestLoginStamp || asset.lastSuccessfulLogin
+              loginsToday: asset.loginsToday,
+              loginsThisWeek: asset.loginsThisWeek,
+              lastSuccessfulLogin: authoritativeLoginStamp || asset.lastSuccessfulLogin
             } : {};
 
             if (localOverrides[asset.hostname]) {
