@@ -29,6 +29,14 @@ def _client_ip(request) -> Optional[str]:
     return request.remote_addr
 
 
+def _safe_email_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    redacted_fields = {"password", "confirmPassword", "confirm_password"}
+    return {
+        key: "[redacted]" if key in redacted_fields else value
+        for key, value in payload.items()
+    }
+
+
 def _password_errors(password: str) -> list[str]:
     errors = []
     if len(password) < 8:
@@ -73,10 +81,11 @@ def _email_validation_error(email: str) -> Optional[str]:
 
 def _email_failure_response(message: str) -> Tuple[Dict[str, Any], int]:
     return {
-        "ok": True,
+        "ok": False,
+        "error": message,
         "message": message,
         "emailNotificationSent": False,
-    }, 202
+    }, 502
 
 
 def submit_early_access(payload: Dict[str, Any], request) -> Tuple[Dict[str, Any], int]:
@@ -119,11 +128,8 @@ def submit_early_access(payload: Dict[str, Any], request) -> Tuple[Dict[str, Any
         {
             "Full Name": full_name,
             "Company": company,
-            "Job Title": "",
+            "Submitted Payload": _safe_email_payload(payload),
             "Business Email": email,
-            "Mobile Number": "",
-            "Country": "",
-            "Company Size": "",
             "Timestamp": datetime.now(timezone.utc).isoformat(),
             "IP Address": ip_address,
             "Browser/User Agent": user_agent,
@@ -131,7 +137,7 @@ def submit_early_access(payload: Dict[str, Any], request) -> Tuple[Dict[str, Any
     )
     if not sent:
         detail = get_last_email_error()
-        message = "Early access request saved, but the email notification could not be sent."
+        message = "Early access request was saved, but the email notification could not be sent."
         if detail:
             message = f"{message} SMTP detail: {detail}."
         return _email_failure_response(
@@ -256,10 +262,17 @@ def register_admin(payload: Dict[str, Any], request) -> Tuple[Dict[str, Any], in
             "Industry": values["industry"],
             "Department": values["department"],
             "Username": username,
+            "Submitted Payload": _safe_email_payload(payload),
+            "Terms Accepted": str(bool(payload.get("termsAccepted"))),
+            "Privacy Accepted": str(bool(payload.get("privacyAccepted"))),
         },
     )
     if not sent:
+        detail = get_last_email_error()
+        message = "Registration was saved, but the email notification could not be sent."
+        if detail:
+            message = f"{message} SMTP detail: {detail}."
         return _email_failure_response(
-            "Registration saved, but the email notification could not be sent. Please check SMTP configuration."
+            message
         )
     return {"ok": True, "message": "Enterprise registration completed.", "emailNotificationSent": True}, 201

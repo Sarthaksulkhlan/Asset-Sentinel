@@ -24,7 +24,7 @@ def _load_local_env_file(force: bool = False) -> None:
             key, value = line.split("=", 1)
             key = key.strip()
             value = value.strip().strip('"').strip("'")
-            if key and (force or key not in os.environ):
+            if key and (force or not os.environ.get(key)):
                 os.environ[key] = value
 
 
@@ -54,7 +54,7 @@ class Config:
     BOOTSTRAP_ADMIN_EMAIL = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_EMAIL", "centralcommand@asset-sentinel.local")
     BOOTSTRAP_ADMIN_PASSWORD = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_PASSWORD", "admin!123")
     BOOTSTRAP_ADMIN_DISPLAY_NAME = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_DISPLAY_NAME", "Central Command")
-    SMTP_HOST = os.environ.get("SMTP_HOST", "")
+    SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
     SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
     SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
     SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
@@ -65,7 +65,7 @@ class Config:
 
     @classmethod
     def refresh_from_environment(cls) -> None:
-        cls.SMTP_HOST = os.environ.get("SMTP_HOST", "")
+        cls.SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
         cls.SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
         cls.SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
         cls.SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
@@ -81,7 +81,7 @@ class Config:
 
 
 def print_startup_environment_diagnostics() -> None:
-    _load_local_env_file()
+    _load_local_env_file(force=True)
     Config.refresh_from_environment()
     print(f"Loaded .env: {_ENV_PATH}")
     print(f"Exists: {os.path.exists(_ENV_PATH)}")
