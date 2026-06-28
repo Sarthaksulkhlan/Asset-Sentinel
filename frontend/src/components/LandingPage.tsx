@@ -32,7 +32,6 @@ interface RollingKpiValueProps {
   duration: number;
 }
 
-const KPI_STRIP_DIGITS = Array.from({ length: 160 }, (_, index) => index % 10);
 const GRID_CELL_BASE_CLASS = "w-full aspect-square rounded-sm border transition-all duration-300";
 const HEX_CHARS = "0123456789ABCDEF";
 const HERO_TYPEWRITER_LINES = [
@@ -99,6 +98,7 @@ const LandingScrollPerformanceController = React.memo(function LandingScrollPerf
 const RollingKpiValue = React.memo(function RollingKpiValue({ value, className, duration }: RollingKpiValueProps) {
   const digitRefs = useRef<Array<HTMLSpanElement | null>>([]);
   const animationFrameRef = useRef(0);
+  const settleTimeoutsRef = useRef<number[]>([]);
   const runIdRef = useRef(0);
   const valueChars = useMemo(() => value.split(""), [value]);
   const digitIndexes = useMemo(() => {
@@ -110,68 +110,54 @@ const RollingKpiValue = React.memo(function RollingKpiValue({ value, className, 
 
   const playAnimation = useCallback(() => {
     cancelAnimationFrame(animationFrameRef.current);
+    settleTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    settleTimeoutsRef.current = [];
 
     const digitCount = digitIndexes.length;
-    const startedAt = performance.now();
     const runId = runIdRef.current + 1;
     runIdRef.current = runId;
-    const baseDuration = Math.min(5000, Math.max(3000, duration + 1200));
+    const baseDuration = Math.min(920, Math.max(520, duration / 4));
 
-    const digitAnimations = digitIndexes.map((charIndex, digitOrder) => {
-      const targetDigit = Number(value[charIndex]);
-      const startDigit = Math.floor(Math.random() * 10);
-      const digitRefIndex = digitOrder;
-      const rotations = 7 + digitOrder + Math.floor(Math.random() * 2);
-      const forwardDelta = (targetDigit - startDigit + 10) % 10;
-      const startPosition = 10 + startDigit;
-      const endPosition = startPosition + rotations * 10 + forwardDelta;
-      const digitDuration = Math.min(5000, baseDuration + digitOrder * 180 + digitCount * 24);
-      const settleDelay = digitOrder * 22;
+    const digitAnimations = digitIndexes.map((_, digitOrder) => ({
+      ref: digitRefs.current[digitOrder],
+      duration: baseDuration + digitOrder * 36 + digitCount * 8,
+      delay: digitOrder * 28,
+    }));
 
-      return {
-        ref: digitRefs.current[digitRefIndex],
-        startPosition,
-        endPosition,
-        duration: digitDuration,
-        delay: settleDelay
-      };
+    digitAnimations.forEach(({ ref }) => {
+      if (!ref) return;
+      ref.style.transition = "none";
+      ref.style.opacity = "0";
+      ref.style.transform = "translate3d(0, 0.58em, 0) scale(0.96)";
+      ref.style.filter = "blur(3px)";
+      ref.style.willChange = "transform, opacity, filter";
     });
 
-    const setDigitPosition = (element: HTMLSpanElement | null, position: number) => {
-      if (!element) return;
-      element.style.transform = `translate3d(0, -${position}em, 0)`;
-    };
-
-    digitAnimations.forEach(({ ref, startPosition }) => {
-      setDigitPosition(ref, startPosition);
-    });
-
-    const easeOutQuint = (progress: number) => {
-      return 1 - Math.pow(1 - progress, 5);
-    };
-
-    const tick = (now: number) => {
+    animationFrameRef.current = requestAnimationFrame(() => {
       if (runIdRef.current !== runId) return;
-      let isComplete = true;
 
-      digitAnimations.forEach(({ ref, startPosition, endPosition, duration: digitDuration, delay }) => {
-        const elapsed = Math.max(0, now - startedAt - delay);
-        const progress = Math.min(elapsed / digitDuration, 1);
-        const easedProgress = easeOutQuint(progress);
-        const position = progress === 1
-          ? endPosition
-          : startPosition + (endPosition - startPosition) * easedProgress;
+      digitAnimations.forEach(({ ref, duration: digitDuration, delay }) => {
+        if (!ref) return;
+        ref.style.transition = [
+          `transform ${digitDuration}ms cubic-bezier(0.16, 1, 0.3, 1) ${delay}ms`,
+          `opacity ${Math.max(260, digitDuration - 120)}ms ease-out ${delay}ms`,
+          `filter ${Math.max(260, digitDuration - 160)}ms ease-out ${delay}ms`,
+        ].join(", ");
+        ref.style.opacity = "1";
+        ref.style.transform = "translate3d(0, 0, 0) scale(1)";
+        ref.style.filter = "blur(0)";
 
-        setDigitPosition(ref, position);
-        isComplete = isComplete && progress === 1;
+        const settleTimeout = window.setTimeout(() => {
+          if (runIdRef.current !== runId) return;
+          ref.style.transition = "none";
+          ref.style.opacity = "1";
+          ref.style.transform = "translate3d(0, 0, 0) scale(1)";
+          ref.style.filter = "none";
+          ref.style.willChange = "auto";
+        }, delay + digitDuration + 40);
+        settleTimeoutsRef.current.push(settleTimeout);
       });
-
-      if (isComplete) return;
-
-      animationFrameRef.current = requestAnimationFrame(tick);
-    };
-
-    animationFrameRef.current = requestAnimationFrame(tick);
+    });
   }, [digitIndexes, duration, value]);
 
   useLayoutEffect(() => {
@@ -187,6 +173,8 @@ const RollingKpiValue = React.memo(function RollingKpiValue({ value, className, 
 
     return () => {
       cancelAnimationFrame(animationFrameRef.current);
+      settleTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      settleTimeoutsRef.current = [];
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [playAnimation]);
@@ -217,37 +205,16 @@ const RollingKpiValue = React.memo(function RollingKpiValue({ value, className, 
             aria-hidden="true"
             style={{
               display: "inline-block",
-              width: "0.62em",
-              height: "1em",
-              lineHeight: "1em",
-              overflow: "hidden",
-              verticalAlign: "-0.04em"
+              minWidth: "0.62em",
+              lineHeight: "1",
+              textAlign: "center",
+              verticalAlign: "-0.02em",
+            }}
+            ref={(element) => {
+              digitRefs.current[currentDigitRefIndex] = element;
             }}
           >
-            <span
-              ref={(element) => {
-                digitRefs.current[currentDigitRefIndex] = element;
-              }}
-              style={{
-                display: "block",
-                lineHeight: "1em",
-                transform: `translate3d(0, -${Number(char)}em, 0)`,
-                willChange: "transform"
-              }}
-            >
-              {KPI_STRIP_DIGITS.map((digit, stripIndex) => (
-                <span
-                  key={stripIndex}
-                  style={{
-                    display: "block",
-                    height: "1em",
-                    lineHeight: "1em"
-                  }}
-                >
-                  {digit}
-                </span>
-              ))}
-            </span>
+            {char}
           </span>
         );
       })}
@@ -1145,7 +1112,7 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
               Asset Sentinel continuously monitors hardware integrity, detects unauthorized RAM and motherboard changes, validates device identity, and provides real-time security visibility across enterprise environments.
             </p>
 
-            <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto select-none pt-2">
+            <div className="hero-action-grid flex flex-col sm:flex-row gap-3 w-full sm:w-auto select-none pt-2">
               <button 
                 id="hero-login-btn"
                 onClick={() => onNavigate("login")}

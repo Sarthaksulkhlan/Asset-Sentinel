@@ -467,6 +467,207 @@ body {
   }
 }
 
+@media (max-width: 767px) {
+  #landing-screen {
+    min-height: 100svh;
+  }
+
+  #landing-screen #landing-navbar {
+    height: auto;
+    min-height: 3.1rem;
+    padding: 0.5rem 0.8rem;
+    gap: 0.55rem;
+  }
+
+  #landing-screen #landing-navbar .font-headline-md {
+    font-size: 0.86rem;
+    line-height: 1.1;
+  }
+
+  #landing-screen #nav-login-btn {
+    width: 2.45rem;
+    height: 2.25rem;
+    padding: 0;
+    font-size: 0;
+    gap: 0;
+    justify-content: center;
+    white-space: nowrap;
+  }
+
+  #landing-screen main {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+    padding-top: 0.7rem;
+    padding-bottom: 2rem;
+  }
+
+  #landing-screen #hero-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    margin-bottom: 0.7rem;
+  }
+
+  #landing-screen #hero-heading > div:first-child {
+    gap: 0.62rem;
+    width: 100%;
+  }
+
+  #landing-screen #hero-heading > div:first-child > .inline-flex {
+    display: none;
+  }
+
+  #landing-screen .hero-typewriter {
+    min-height: 3.8rem !important;
+    font-size: 1.44rem;
+    line-height: 1.05;
+  }
+
+  #landing-screen #hero-heading p {
+    display: none;
+  }
+
+  #landing-screen #hero-heading > div:first-child > button {
+    display: none;
+  }
+
+  #landing-screen .hero-action-grid {
+    display: grid !important;
+    grid-template-columns: 1fr;
+    gap: 0.45rem;
+    padding-top: 0.15rem;
+    width: 100%;
+  }
+
+  #landing-screen #hero-heading .enterprise-hero-button {
+    width: 100%;
+    min-height: 2.15rem;
+    padding: 0.56rem 0.75rem;
+    font-size: 0.62rem;
+    line-height: 1.05;
+    letter-spacing: 0.035em;
+    white-space: normal;
+  }
+
+  #landing-screen .hero-preview-fade {
+    gap: 0;
+    width: 100%;
+  }
+
+  #landing-screen .hero-dashboard-preview {
+    display: none;
+  }
+
+  #landing-screen .hero-early-access-card {
+    padding: 0.78rem;
+    border-radius: 0.65rem;
+  }
+
+  #landing-screen .hero-early-access-card .relative.flex {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.55rem;
+  }
+
+  #landing-screen #hero-heading .hero-early-access-card .enterprise-hero-button {
+    width: 100%;
+    min-width: 0;
+    min-height: 2rem;
+    padding-left: 0.85rem;
+    padding-right: 0.85rem;
+  }
+
+  #landing-screen .hero-early-access-card .inline-flex {
+    display: none;
+  }
+
+  #landing-screen .hero-early-access-card h3 {
+    margin-top: 0;
+    font-size: 0.82rem;
+    line-height: 1.12;
+  }
+
+  #landing-screen .hero-early-access-card p {
+    display: block;
+    font-size: 0.66rem;
+    line-height: 1.35;
+    margin-top: 0.2rem;
+  }
+
+  #landing-screen .hero-early-access-card .grid-cols-3 {
+    display: none;
+  }
+
+  #landing-screen .hero-stats-strip {
+    gap: 0.65rem;
+  }
+
+  #landing-screen #kpi-banner {
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
+    margin-bottom: 1.35rem;
+  }
+
+  #landing-screen #kpi-banner .glass-panel {
+    min-height: 3.35rem;
+    padding: 0.58rem 0.65rem;
+    border-radius: 0.65rem;
+  }
+
+  #landing-screen #kpi-banner span:first-child {
+    font-size: 0.56rem;
+    line-height: 1.15;
+    margin-bottom: 0.32rem;
+    letter-spacing: 0.08em;
+  }
+
+  #landing-screen #kpi-banner .text-3xl {
+    font-size: 1.28rem;
+    line-height: 1.05;
+  }
+
+  #landing-screen #kpi-banner [aria-label] {
+    display: inline-flex !important;
+    align-items: baseline;
+    justify-content: center;
+    min-height: 1.1em;
+  }
+
+  #landing-screen #live-monitoring-center {
+    margin-bottom: 2.5rem;
+  }
+
+  #landing-screen #protocols-showcase {
+    margin-top: 2.25rem;
+  }
+
+  #landing-screen #protocols-showcase h2 {
+    font-size: 1.25rem;
+    line-height: 1.2;
+  }
+
+  #landing-screen #contact-evaluation-sec {
+    margin-top: 3rem;
+  }
+
+  #landing-screen #contact-evaluation-sec .glass-panel {
+    min-height: auto;
+    padding: 1.25rem;
+  }
+
+  #landing-screen #early-access-modal {
+    align-items: flex-start;
+    overflow-y: auto;
+    padding: 1rem;
+  }
+
+  #landing-screen #early-access-modal .early-access-yellow-panel {
+    max-width: 100%;
+    padding: 1.25rem;
+    margin: 0.5rem 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .hero-enterprise-shell,
   .hero-preview-fade,
