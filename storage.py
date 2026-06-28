@@ -125,6 +125,14 @@ def _duration(start_value: Any, end_value: Any = None) -> Optional[str]:
     return f"{hours:02d}:{minutes:02d}:{remaining_seconds:02d}"
 
 
+def _local_tzinfo():
+    return datetime.now().astimezone().tzinfo
+
+
+def _local_date(value: datetime):
+    return value.astimezone(_local_tzinfo()).date()
+
+
 def serialize_asset(row: Asset) -> Dict[str, Any]:
     live_status = _status_from_last_seen(row.last_seen)
     ram_total = float(row.ram_total_gb) if row.ram_total_gb is not None else None
@@ -345,7 +353,7 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
     latest = rows[-1]
     latest_login = next((row for row in reversed(rows) if row.event_type == "LOGIN"), latest)
     active_login = next((row for row in reversed(rows) if row.event_type == "LOGIN" and row.active), latest_login)
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(_local_tzinfo()).date()
     week_start = today - timedelta(days=today.weekday())
     logins_today = 0
     logins_this_week = 0
@@ -354,7 +362,7 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
     last_logout = None
     for row in rows:
         stamp = row.login_timestamp or row.recorded_at
-        stamp_date = stamp.astimezone(timezone.utc).date() if stamp else None
+        stamp_date = _local_date(stamp) if stamp else None
         if row.event_type == "LOGIN":
             if stamp_date == today:
                 logins_today += 1
@@ -373,9 +381,11 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
         "session_id": active_login.session_id or latest_login.session_id,
         "login_timestamp": _iso(active_login.login_timestamp or active_login.recorded_at),
         "last_login": _iso(active_login.login_timestamp or active_login.recorded_at),
+        "current_login_time": _iso(active_login.login_timestamp or active_login.recorded_at),
         "logout_timestamp": _iso(last_logout or latest.logout_timestamp),
         "last_logout": _iso(last_logout or latest.logout_timestamp),
         "session_duration": active_login.session_duration if active_login.session_duration and active_login.session_duration != "Active" else _duration(active_login.login_timestamp or active_login.recorded_at),
+        "total_logins": sum(1 for row in rows if row.event_type == "LOGIN"),
         "logins_today": logins_today,
         "logins_this_week": logins_this_week,
         "last_successful_login": _iso(last_successful_login),

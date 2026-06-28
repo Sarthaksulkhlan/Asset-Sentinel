@@ -200,19 +200,21 @@ def _normalize_windows_username(value: Optional[str]) -> str:
 
 def _event_time_to_utc(value: Any) -> datetime:
     if isinstance(value, datetime):
-        return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        if value.tzinfo:
+            return value.astimezone(timezone.utc)
+        local_tz = datetime.now().astimezone().tzinfo
+        return value.replace(tzinfo=local_tz).astimezone(timezone.utc)
     return datetime.now(timezone.utc)
 
 
-def get_latest_windows_login_event(username: Optional[str]) -> Optional[Dict[str, Any]]:
+def _read_latest_windows_security_event(
+    username: Optional[str],
+    event_ids: set[int],
+    interactive_logons_only: bool = False,
+) -> Optional[Dict[str, Any]]:
     """
-    Read the Windows Security log and return the newest interactive login or
-    unlock event for the active user.
-
-    Asset Sentinel treats Security event 4624 with LogonType 2, 7, or 10 and
-    event 4801 as a login boundary. Event 4801 is emitted when a locked
-    workstation is unlocked, which is the important case where username and
-    terminal session id usually do not change.
+    Read the Windows Security log and return the newest matching event for
+    the active user. EventID is masked because pywin32 may include qualifiers.
     """
     if win32evtlog is None or os.name != "nt":
         return None
@@ -241,7 +243,7 @@ def get_latest_windows_login_event(username: Optional[str]) -> Optional[Dict[str
             for event in events:
                 scanned += 1
                 event_id = int(event.EventID) & 0xFFFF
-                if event_id not in {4624, 4801, 4778}:
+                if event_id not in event_ids:
                     continue
 
                 generated_at = _event_time_to_utc(event.TimeGenerated)
@@ -257,7 +259,7 @@ def get_latest_windows_login_event(username: Optional[str]) -> Optional[Dict[str
                 logon_type = None
                 if event_id == 4624 and len(inserts) > 8:
                     logon_type = inserts[8]
-                    if logon_type not in {"2", "7", "10"}:
+                    if interactive_logons_only and logon_type not in {"2", "7", "10"}:
                         continue
                     if logon_type == "7":
                         login_source = "windows_unlock"
@@ -265,6 +267,8 @@ def get_latest_windows_login_event(username: Optional[str]) -> Optional[Dict[str
                         login_source = "windows_remote_logon"
                 elif event_id == 4778:
                     login_source = "windows_session_reconnect"
+                elif event_id == 4634:
+                    login_source = "windows_logoff"
 
                 return {
                     "event_id": str(event_id),
@@ -282,6 +286,22 @@ def get_latest_windows_login_event(username: Optional[str]) -> Optional[Dict[str
             pass
 
     return None
+
+
+def get_latest_windows_login_event(username: Optional[str]) -> Optional[Dict[str, Any]]:
+    """
+    Return the newest interactive Windows login boundary for this user.
+
+    Security 4624 is the primary logon event. 4801/4778 are also kept as
+    login-like boundaries because unlock/reconnect events can update the
+    active session without changing the Windows session id.
+    """
+    return _read_latest_windows_security_event(username, {4624, 4801, 4778}, True)
+
+
+def get_latest_windows_logout_event(username: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Return the newest Windows Security 4634 logoff event for this user."""
+    return _read_latest_windows_security_event(username, {4634}, False)
 
 
 def get_device_status() -> str:
@@ -329,6 +349,7 @@ def get_current_session_info() -> Dict[str, Any]:
     """
     username = get_current_username()
     login_event = get_latest_windows_login_event(username)
+    logout_event = get_latest_windows_logout_event(username)
     login_timestamp = login_event.get("event_timestamp") if login_event else get_login_timestamp()
     session_info = {
         "username": username,
@@ -340,6 +361,9 @@ def get_current_session_info() -> Dict[str, Any]:
         "windows_event_id": login_event.get("event_id") if login_event else None,
         "windows_event_record_id": login_event.get("event_record_id") if login_event else None,
         "windows_logon_type": login_event.get("logon_type") if login_event else None,
+        "latest_logout_timestamp": logout_event.get("event_timestamp") if logout_event else None,
+        "latest_logout_event_id": logout_event.get("event_id") if logout_event else None,
+        "latest_logout_event_record_id": logout_event.get("event_record_id") if logout_event else None,
         "device_status": get_device_status(),
         "collection_timestamp": get_login_timestamp(),
     }

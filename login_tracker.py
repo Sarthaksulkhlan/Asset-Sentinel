@@ -32,6 +32,7 @@ from typing import Optional, List, Dict, Any
 from session_manager import get_current_session_info
 from storage import (
     append_alert,
+    append_session,
     has_session_event_signature,
     list_alerts,
     list_sessions,
@@ -190,6 +191,10 @@ def close_active_sessions(
     """
     current_user = current_session.get("username")
     current_session_id = current_session.get("session_id")
+    force_close = bool(current_session.get("force_close_active_sessions"))
+    logout_event_record_id = current_session.get("latest_logout_event_record_id")
+    logout_event_id = current_session.get("latest_logout_event_id") or "4634"
+    logout_records: List[Dict[str, Any]] = []
 
     for session in sessions:
         if session.get("event_type") != "LOGIN" or session.get("active") is False:
@@ -199,7 +204,7 @@ def close_active_sessions(
             session.get("username") == current_user and
             session.get("session_id") == current_session_id
         )
-        if same_session:
+        if same_session and not force_close:
             continue
 
         session["logout_timestamp"] = logout_timestamp
@@ -207,6 +212,24 @@ def close_active_sessions(
         session["active"] = False
         session["device_status"] = "Offline"
         session["last_seen"] = logout_timestamp
+
+        logout_records.append({
+            "event_type": "LOGOUT",
+            "username": session.get("username"),
+            "hostname": session.get("hostname"),
+            "ip_address": session.get("ip_address"),
+            "session_id": session.get("session_id"),
+            "login_timestamp": session.get("login_timestamp"),
+            "logout_timestamp": logout_timestamp,
+            "session_duration": session.get("session_duration"),
+            "active": False,
+            "device_status": "Offline",
+            "last_seen": logout_timestamp,
+            "login_source": "windows_logoff",
+            "windows_event_id": logout_event_id,
+            "windows_event_record_id": logout_event_record_id,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        })
 
         save_alert(
             alert_type="LOGOUT",
@@ -221,6 +244,7 @@ def close_active_sessions(
             }
         )
 
+    sessions.extend(logout_records)
     return sessions
 
 
@@ -242,16 +266,33 @@ def detect_login() -> Optional[Dict[str, Any]]:
     last_session = get_last_recorded_session()
     current_user = current_session.get("username")
 
+    logout_timestamp = (
+        current_session.get("latest_logout_timestamp")
+        or datetime.now(timezone.utc).isoformat()
+    )
+    logout_event_record_id = current_session.get("latest_logout_event_record_id")
+
     if not current_user:
         logger.info("No active Windows user detected - closing active sessions")
         sessions = load_sessions()
         updated_sessions = close_active_sessions(
             sessions,
             current_session,
-            datetime.now(timezone.utc).isoformat()
+            logout_timestamp
         )
         save_sessions(updated_sessions)
         return None
+
+    if logout_event_record_id and not has_session_event_signature(current_session.get("hostname"), logout_event_record_id):
+        sessions = load_sessions()
+        before_count = len(sessions)
+        updated_sessions = close_active_sessions(sessions, current_session, logout_timestamp)
+        if len(updated_sessions) != before_count:
+            logger.info(
+                "Windows logoff event 4634 record %s closed stale sessions",
+                logout_event_record_id,
+            )
+            save_sessions(updated_sessions)
     
     # First run - no previous session
     if last_session is None:
@@ -314,7 +355,9 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
     """
     sessions = load_sessions()
     now = datetime.now(timezone.utc).isoformat()
-    sessions = close_active_sessions(sessions, session_info, now)
+    session_info = {**session_info, "force_close_active_sessions": True}
+    close_timestamp = session_info.get("latest_logout_timestamp") or now
+    sessions = close_active_sessions(sessions, session_info, close_timestamp)
 
     # Create login record
     login_record = {
@@ -335,9 +378,15 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
         "recorded_at": now,
     }
     
-    # Append to PostgreSQL
-    sessions.append(login_record)
-    save_sessions(sessions)
+    if not save_sessions(sessions):
+        logger.error("Closed session updates were not persisted before login insert: %s", login_record)
+        return login_record
+
+    try:
+        append_session(login_record)
+    except Exception as exc:
+        logger.exception("Login record insert failed in PostgreSQL: %s", exc)
+        return login_record
     
     # Create alert for this login
     alert_details = {

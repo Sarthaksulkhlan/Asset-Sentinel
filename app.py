@@ -9,6 +9,7 @@ from active_application_monitor import (
     get_latest_active_applications,
     get_latest_active_application_for_host,
     start_active_application_monitor,
+    start_login_event_monitor,
 )
 
 # Import session tracking modules
@@ -327,6 +328,7 @@ if __name__ == "__main__":
         sys.exit(1)
     if os.environ.get("WERKZEUG_RUN_MAIN") in {None, "true"}:
         start_active_application_monitor()
+        start_login_event_monitor()
     print("=" * 70)
     print("  Asset Sentinel Backend")
     print("  Running on http://localhost:5000")
