@@ -33,7 +33,8 @@ body {
 #landing-screen .animate-float-3,
 #landing-screen .hero-telemetry-layer,
 #landing-screen .hero-dashboard-preview,
-#landing-screen .scanline {
+#landing-screen .scanline,
+#landing-screen .odometer-digit-strip {
   will-change: transform;
 }
 

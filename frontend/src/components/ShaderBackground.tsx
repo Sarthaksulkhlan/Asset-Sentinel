@@ -165,12 +165,13 @@ const ShaderBackground = React.memo(function ShaderBackground() {
     let frameId = 0;
     let isRunning = false;
     let isScrolling = false;
+    let isPointerFine = window.matchMedia("(pointer: fine)").matches;
     let scrollResumeTimer = 0;
     let lastFrameAt = 0;
     const startTime = performance.now();
 
     const resizeCanvas = () => {
-      const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.25);
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, isPointerFine ? 1.15 : 0.9);
       const w = Math.max(1, Math.floor(canvas.clientWidth * pixelRatio));
       const h = Math.max(1, Math.floor(Math.min(canvas.clientHeight, window.innerHeight * 1.25) * pixelRatio));
       if (canvas.width !== w || canvas.height !== h) {
@@ -183,7 +184,7 @@ const ShaderBackground = React.memo(function ShaderBackground() {
     const render = (now: number) => {
       if (!isRunning) return;
 
-      const frameInterval = isScrolling ? 82 : 33;
+      const frameInterval = isScrolling ? 120 : isPointerFine ? 50 : 66;
       if (now - lastFrameAt < frameInterval) {
         frameId = requestAnimationFrame(render);
         return;
@@ -217,6 +218,7 @@ const ShaderBackground = React.memo(function ShaderBackground() {
     };
 
     const resizeHandler = () => {
+      isPointerFine = window.matchMedia("(pointer: fine)").matches;
       resizeCanvas();
     };
     const scrollHandler = () => {

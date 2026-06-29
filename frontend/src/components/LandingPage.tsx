@@ -96,90 +96,55 @@ const LandingScrollPerformanceController = React.memo(function LandingScrollPerf
 });
 
 const RollingKpiValue = React.memo(function RollingKpiValue({ value, className, duration }: RollingKpiValueProps) {
-  const digitRefs = useRef<Array<HTMLSpanElement | null>>([]);
+  const previousDigitsRef = useRef<number[]>([]);
   const animationFrameRef = useRef(0);
-  const settleTimeoutsRef = useRef<number[]>([]);
-  const runIdRef = useRef(0);
-  const valueChars = useMemo(() => value.split(""), [value]);
-  const digitIndexes = useMemo(() => {
-    return valueChars.reduce<number[]>((indexes, char, index) => {
-      if (/\d/.test(char)) indexes.push(index);
-      return indexes;
+  const settleTimeoutRef = useRef(0);
+  const [digitOffsets, setDigitOffsets] = useState<number[]>(() => {
+    let digitIndex = 0;
+    return value.split("").reduce<number[]>((offsets, char) => {
+      if (/\d/.test(char)) {
+        offsets[digitIndex] = 0;
+        digitIndex += 1;
+      }
+      return offsets;
     }, []);
-  }, [valueChars]);
-
-  const playAnimation = useCallback(() => {
-    cancelAnimationFrame(animationFrameRef.current);
-    settleTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
-    settleTimeoutsRef.current = [];
-
-    const digitCount = digitIndexes.length;
-    const runId = runIdRef.current + 1;
-    runIdRef.current = runId;
-    const baseDuration = Math.min(920, Math.max(520, duration / 4));
-
-    const digitAnimations = digitIndexes.map((_, digitOrder) => ({
-      ref: digitRefs.current[digitOrder],
-      duration: baseDuration + digitOrder * 36 + digitCount * 8,
-      delay: digitOrder * 28,
-    }));
-
-    digitAnimations.forEach(({ ref }) => {
-      if (!ref) return;
-      ref.style.transition = "none";
-      ref.style.opacity = "0";
-      ref.style.transform = "translate3d(0, 0.58em, 0) scale(0.96)";
-      ref.style.filter = "blur(3px)";
-      ref.style.willChange = "transform, opacity, filter";
-    });
-
-    animationFrameRef.current = requestAnimationFrame(() => {
-      if (runIdRef.current !== runId) return;
-
-      digitAnimations.forEach(({ ref, duration: digitDuration, delay }) => {
-        if (!ref) return;
-        ref.style.transition = [
-          `transform ${digitDuration}ms cubic-bezier(0.16, 1, 0.3, 1) ${delay}ms`,
-          `opacity ${Math.max(260, digitDuration - 120)}ms ease-out ${delay}ms`,
-          `filter ${Math.max(260, digitDuration - 160)}ms ease-out ${delay}ms`,
-        ].join(", ");
-        ref.style.opacity = "1";
-        ref.style.transform = "translate3d(0, 0, 0) scale(1)";
-        ref.style.filter = "blur(0)";
-
-        const settleTimeout = window.setTimeout(() => {
-          if (runIdRef.current !== runId) return;
-          ref.style.transition = "none";
-          ref.style.opacity = "1";
-          ref.style.transform = "translate3d(0, 0, 0) scale(1)";
-          ref.style.filter = "none";
-          ref.style.willChange = "auto";
-        }, delay + digitDuration + 40);
-        settleTimeoutsRef.current.push(settleTimeout);
-      });
-    });
-  }, [digitIndexes, duration, value]);
+  });
+  const [isRolling, setIsRolling] = useState(false);
+  const valueChars = useMemo(() => value.split(""), [value]);
+  const targetDigits = useMemo(() => valueChars.filter((char) => /\d/.test(char)).map(Number), [valueChars]);
+  const stripDigits = useMemo(() => Array.from({ length: 100 }, (_, index) => index % 10), []);
 
   useLayoutEffect(() => {
-    playAnimation();
-
-    const handleVisibilityChange = () => {
-      if (!document.hidden) {
-        playAnimation();
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    cancelAnimationFrame(animationFrameRef.current);
+    window.clearTimeout(settleTimeoutRef.current);
+    setIsRolling(false);
+    animationFrameRef.current = requestAnimationFrame(() => {
+      const previousDigits = previousDigitsRef.current.length === targetDigits.length
+        ? previousDigitsRef.current
+        : new Array(targetDigits.length).fill(0);
+      setDigitOffsets((currentOffsets) => targetDigits.map((digit, index) => {
+        const previousDigit = previousDigits[index] ?? 0;
+        const previousOffset = currentOffsets[index] ?? previousDigit;
+        const delta = (digit - (previousOffset % 10) + 10) % 10;
+        return previousOffset + delta + (delta === 0 && previousDigit !== digit ? 10 : 0);
+      }));
+      previousDigitsRef.current = targetDigits;
+      setIsRolling(true);
+      const animationDuration = Math.min(3000, Math.max(2000, duration));
+      settleTimeoutRef.current = window.setTimeout(() => {
+        setIsRolling(false);
+        setDigitOffsets((currentOffsets) => currentOffsets.map((offset) => (offset % 10) + 20));
+      }, animationDuration + targetDigits.length * 28 + 80);
+    });
 
     return () => {
       cancelAnimationFrame(animationFrameRef.current);
-      settleTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
-      settleTimeoutsRef.current = [];
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.clearTimeout(settleTimeoutRef.current);
     };
-  }, [playAnimation]);
+  }, [duration, targetDigits]);
 
   let digitRefIndex = 0;
+  const rollDuration = Math.min(3000, Math.max(2000, duration));
 
   return (
     <span
@@ -197,6 +162,7 @@ const RollingKpiValue = React.memo(function RollingKpiValue({ value, className, 
         }
 
         const currentDigitRefIndex = digitRefIndex;
+        const offset = digitOffsets[currentDigitRefIndex] ?? Number(char);
         digitRefIndex += 1;
 
         return (
@@ -206,15 +172,27 @@ const RollingKpiValue = React.memo(function RollingKpiValue({ value, className, 
             style={{
               display: "inline-block",
               minWidth: "0.62em",
+              height: "1em",
               lineHeight: "1",
               textAlign: "center",
               verticalAlign: "-0.02em",
-            }}
-            ref={(element) => {
-              digitRefs.current[currentDigitRefIndex] = element;
+              overflow: "hidden",
             }}
           >
-            {char}
+            <span
+              className="odometer-digit-strip"
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                transform: `translate3d(0, -${offset}em, 0)`,
+                transition: isRolling ? `transform ${rollDuration + currentDigitRefIndex * 28}ms cubic-bezier(0.18, 0.9, 0.22, 1)` : "none",
+                willChange: isRolling ? "transform" : "auto",
+              }}
+            >
+              {stripDigits.map((digit, index) => (
+                <span key={`${digit}-${index}`} style={{ height: "1em", lineHeight: "1" }}>{digit}</span>
+              ))}
+            </span>
           </span>
         );
       })}
@@ -312,11 +290,10 @@ const LiveDashboardPreview = React.memo(function LiveDashboardPreview() {
         // Public landing page can render the integration-ready placeholder.
       }
     };
-    loadActiveApps();
-    const timer = window.setInterval(loadActiveApps, 5000);
+    const idleId = window.setTimeout(loadActiveApps, 900);
     return () => {
       active = false;
-      window.clearInterval(timer);
+      window.clearTimeout(idleId);
     };
   }, []);
 
@@ -425,6 +402,40 @@ const HeroEarlyAccessCard = React.memo(function HeroEarlyAccessCard({ onOpen }: 
         <span className="rounded border border-amber-300/20 bg-amber-300/8 px-2 py-1">Security review</span>
         <span className="rounded border border-amber-300/20 bg-amber-300/8 px-2 py-1">Product previews</span>
       </div>
+    </div>
+  );
+});
+
+const DeferredLandingSection = React.memo(function DeferredLandingSection({
+  children,
+  minHeight = 620,
+}: {
+  children: React.ReactNode;
+  minHeight?: number;
+}) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [shouldRender, setShouldRender] = useState(false);
+
+  useEffect(() => {
+    const node = rootRef.current;
+    if (!node) return;
+    if (!("IntersectionObserver" in window)) {
+      setShouldRender(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setShouldRender(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "760px 0px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={rootRef} style={{ minHeight }}>
+      {shouldRender ? children : null}
     </div>
   );
 });
@@ -1163,10 +1174,13 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
 
         <KpiAndMonitoringSections onNavigate={onNavigate} />
 
-        <HardwareCardsSection />
+        <DeferredLandingSection minHeight={380}>
+          <HardwareCardsSection />
+        </DeferredLandingSection>
 
 
         {/* Core Telemetry Protocols Display - Swiss visual, dark neon styling */}
+        <DeferredLandingSection minHeight={460}>
         <section id="protocols-showcase" className="landing-perf-region max-w-7xl mx-auto">
           <div className="flex items-center justify-center gap-4 mb-12 select-none">
             <div className="h-px bg-gradient-to-r from-transparent to-[#00d1ff]/40 w-28"></div>
@@ -1180,8 +1194,10 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
             {protocolCards}
           </div>
         </section>
+        </DeferredLandingSection>
 
         {/* Contact and Early Access Section near the bottom of the page */}
+        <DeferredLandingSection minHeight={440}>
         <section id="contact-evaluation-sec" className="landing-perf-region mt-20 max-w-7xl mx-auto px-0 select-none">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             
@@ -1274,6 +1290,7 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
 
           </div>
         </section>
+        </DeferredLandingSection>
 
       </main>
 
