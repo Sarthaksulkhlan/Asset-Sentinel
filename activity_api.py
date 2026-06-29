@@ -35,6 +35,9 @@ from typing import Dict, Any, List, Tuple
 
 from session_manager import get_current_session_info
 from login_tracker import load_sessions
+from storage import get_asset_status
+
+COUNTABLE_LOGIN_SOURCES = {"windows_interactive_logon"}
 
 # ============================================================================
 # Logging Setup
@@ -68,10 +71,11 @@ def get_current_user() -> Tuple[Dict[str, Any], int]:
     """
     try:
         session_info = get_current_session_info()
+        status = get_asset_status(session_info.get("hostname")) or {}
         response = {
             "username": session_info.get("username"),
             "hostname": session_info.get("hostname"),
-            "device_status": session_info.get("device_status"),
+            "device_status": status.get("device_status", "Offline"),
         }
         logger.info(f"GET /current-user: {response.get('username')} on {response.get('hostname')}")
         return response, 200
@@ -102,6 +106,9 @@ def get_current_session() -> Tuple[Dict[str, Any], int]:
     """
     try:
         session_info = get_current_session_info()
+        status = get_asset_status(session_info.get("hostname")) or {}
+        session_info["device_status"] = status.get("device_status", "Offline")
+        session_info["last_seen"] = status.get("last_seen")
         logger.info(f"GET /current-session: {session_info.get('username')}")
         return session_info, 200
     except Exception as e:
@@ -126,11 +133,14 @@ def get_device_status_endpoint() -> Tuple[Dict[str, Any], int]:
     """
     try:
         session_info = get_current_session_info()
-        device_status = session_info.get("device_status")
+        status = get_asset_status(session_info.get("hostname")) or {}
+        device_status = status.get("device_status", "Offline")
         response = {
             "device_status": device_status,
             "hostname": session_info.get("hostname"),
-            "last_activity": session_info.get("collection_timestamp"),
+            "last_activity": status.get("last_seen"),
+            "last_seen_human": status.get("last_seen_human"),
+            "heartbeat_timeout_seconds": status.get("heartbeat_timeout_seconds"),
         }
         logger.info(f"GET /device-status: {device_status}")
         return response, 200
@@ -191,7 +201,10 @@ def get_sessions_count() -> Tuple[Dict[str, Any], int]:
     """
     try:
         sessions = load_sessions()
-        login_count = len([s for s in sessions if s.get("event_type") == "LOGIN"])
+        login_count = len([
+            s for s in sessions
+            if s.get("event_type") == "LOGIN" and s.get("login_source") in COUNTABLE_LOGIN_SOURCES
+        ])
         logout_count = len([s for s in sessions if s.get("event_type") == "LOGOUT"])
         
         response = {

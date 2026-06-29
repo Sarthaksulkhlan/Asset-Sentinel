@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-25T12:02:13.364165+00:00",
+  "generated_at": "2026-06-29T19:20:21.338911+00:00",
   "status": "completed",
   "checks": {
     "database_connection": {
@@ -12,11 +12,11 @@
       "status": "ok",
       "details": {
         "assets": 2,
-        "alerts": 8,
-        "sessions": 2,
-        "active_applications": 34,
+        "alerts": 48,
+        "sessions": 41,
+        "active_applications": 245,
         "hardware_changes": 0,
-        "users": 0
+        "users": 1
       }
     },
     "crud_rollback": {
@@ -29,6 +29,13 @@
     "api_contracts": {
       "status": "ok",
       "details": {
+        "auth_context": {
+          "status_code": 200,
+          "json_type": "direct_token",
+          "keys": [
+            "Authorization"
+          ]
+        },
         "/api/assets": {
           "status_code": 200,
           "json_type": "list",
@@ -38,22 +45,22 @@
         "/api/alerts": {
           "status_code": 200,
           "json_type": "list",
-          "top_level_count": 8,
+          "top_level_count": 48,
           "keys": null
         },
         "/api/sessions": {
           "status_code": 200,
           "json_type": "list",
-          "top_level_count": 2,
+          "top_level_count": 41,
           "keys": null
         },
         "/api/active-applications": {
           "status_code": 200,
           "json_type": "list",
-          "top_level_count": 1,
+          "top_level_count": 2,
           "keys": null
         },
-        "/sessions/count": {
+        "/api/sessions/count": {
           "status_code": 200,
           "json_type": "dict",
           "top_level_count": null,
@@ -82,9 +89,17 @@
             "device_status",
             "hostname",
             "ip_address",
+            "last_seen",
+            "latest_logout_event_id",
+            "latest_logout_event_record_id",
+            "latest_logout_timestamp",
+            "login_source",
             "login_timestamp",
             "session_id",
-            "username"
+            "username",
+            "windows_event_id",
+            "windows_event_record_id",
+            "windows_logon_type"
           ]
         },
         "/device-status": {
@@ -93,8 +108,10 @@
           "top_level_count": null,
           "keys": [
             "device_status",
+            "heartbeat_timeout_seconds",
             "hostname",
-            "last_activity"
+            "last_activity",
+            "last_seen_human"
           ]
         }
       }
@@ -110,7 +127,7 @@
           "collected_at": true,
           "collection_method": true
         },
-        "collection_method": "composite"
+        "collection_method": "bios_serial"
       }
     },
     "login_tracking_read": {
@@ -121,18 +138,33 @@
           "device_status",
           "hostname",
           "ip_address",
+          "latest_logout_event_id",
+          "latest_logout_event_record_id",
+          "latest_logout_timestamp",
+          "login_source",
           "login_timestamp",
           "session_id",
-          "username"
+          "username",
+          "windows_event_id",
+          "windows_event_record_id",
+          "windows_logon_type"
         ],
-        "stored_sessions": 2
+        "stored_sessions": 41
       }
     },
     "active_application_collection": {
       "status": "ok",
       "details": {
-        "record_available": false,
-        "keys": []
+        "record_available": true,
+        "keys": [
+          "application_name",
+          "executable_name",
+          "hostname",
+          "process_path",
+          "timestamp",
+          "username",
+          "window_title"
+        ]
       }
     },
     "json_runtime_dependencies": {

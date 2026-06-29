@@ -1,14 +1,10 @@
 import os
-import os
-import socket
 import sys
 from flask import Flask, g, jsonify, request
 from flask_cors import CORS
 from config import print_startup_environment_diagnostics
-from collect_hardware import collect_current_active_path
 from active_application_monitor import (
     get_latest_active_applications,
-    get_latest_active_application_for_host,
     start_active_application_monitor,
     start_login_event_monitor,
 )
@@ -21,7 +17,7 @@ from activity_api import (
     get_sessions_history,
     get_sessions_count,
 )
-from database import init_db
+from database import database_host_for_display, init_db
 from storage import get_asset_details, list_alerts, list_assets, normalize_active_application_timestamps
 from registration import register_admin, submit_early_access
 from telemetry_bootstrap import bootstrap_local_telemetry
@@ -56,66 +52,6 @@ def add_live_api_cache_headers(response):
 # Helper functions
 # ---------------------------------------------------------------------------
 
-def enrich_assets_with_current_activity(assets):
-    """
-    Add the live foreground activity to the current machine's asset record.
-    This keeps the dashboard's current active path column populated while
-    preserving the existing API response format.
-    """
-    if not assets:
-        return assets
-
-    try:
-        current_hostname = socket.gethostname()
-        activity = collect_current_active_path()
-        current_activity = activity.get("active_process_path") or activity.get("current_website")
-        current_monitor_record = get_latest_active_application_for_host(current_hostname)
-        if not current_activity:
-            current_activity = (
-                current_monitor_record.get("process_path")
-                or current_monitor_record.get("executable_name")
-                if current_monitor_record
-                else None
-            )
-
-        enriched_assets = []
-        for asset in assets:
-            if asset.get("hostname") == current_hostname:
-                last_active_time = current_monitor_record.get("timestamp") if current_monitor_record else None
-                active_application = (
-                    current_monitor_record.get("application_name")
-                    if current_monitor_record
-                    else activity.get("active_process_name")
-                )
-                enriched_assets.append({
-                    **asset,
-                    **activity,
-                    "currentWebsite": current_activity,
-                    "current_website": current_activity,
-                    "current_active_path": current_activity,
-                    "active_window": activity.get("active_window_title"),
-                    "active_application": active_application,
-                    "current_application": active_application,
-                    "last_active_time": last_active_time,
-                })
-            else:
-                monitor_record = get_latest_active_application_for_host(asset.get("hostname"))
-                if monitor_record:
-                    enriched_assets.append({
-                        **asset,
-                        "active_application": monitor_record.get("application_name"),
-                        "current_application": monitor_record.get("application_name"),
-                        "active_window": monitor_record.get("window_title"),
-                        "last_active_time": monitor_record.get("timestamp"),
-                    })
-                else:
-                    enriched_assets.append(asset)
-        return enriched_assets
-    except Exception as e:
-        print(f"[WARNING] Could not enrich current activity: {e}")
-        return assets
-
-
 # ---------------------------------------------------------------------------
 # API endpoints
 # ---------------------------------------------------------------------------
@@ -127,8 +63,7 @@ def get_assets():
     GET /api/assets
     Returns all hardware snapshots from PostgreSQL.
     """
-    assets = list_assets()
-    return jsonify(enrich_assets_with_current_activity(assets))
+    return jsonify(list_assets())
 
 
 @app.route("/api/assets/<path:hostname>/details", methods=["GET"])
@@ -143,6 +78,12 @@ def get_asset_detail(hostname):
     if detail is None:
         return jsonify({"error": "Asset not found"}), 404
     return jsonify(detail)
+
+
+@app.route("/api/database/host", methods=["GET"])
+@require_auth()
+def get_database_host():
+    return jsonify({"host": database_host_for_display(), "source": "ASSET_SENTINEL_DATABASE_URL"})
 
 
 @app.route("/api/alerts", methods=["GET"])

@@ -62,6 +62,7 @@ const formatTelemetryTimestamp = (value?: string | null) => {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleString([], {
+    timeZone: "Asia/Kolkata",
     month: "short",
     day: "2-digit",
     hour: "2-digit",
@@ -175,7 +176,7 @@ const MiniLineChart = ({ title, icon, data, color = "#38bdf8" }: { title: string
     <div className="min-h-[156px] rounded-xl border border-[#2B3752] bg-[#0F1728] p-4 transition-all duration-200 hover:bg-[#1B2338]">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-[#d6e3ec] text-xs font-semibold">{icon}{title}</div>
-        <span className="text-[11px] text-[#9fb0bd]">{latest === null ? "Baseline" : `${latest.toFixed(1)}%`}</span>
+        <span className="text-[11px] text-[#9fb0bd]">{latest === null ? "No data" : `${latest.toFixed(1)}%`}</span>
       </div>
       {points.length > 1 ? (
         <svg viewBox="0 0 220 84" className="h-20 w-full overflow-visible">
@@ -183,11 +184,7 @@ const MiniLineChart = ({ title, icon, data, color = "#38bdf8" }: { title: string
           <path d={path} fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       ) : (
-        <svg viewBox="0 0 220 84" className="h-20 w-full overflow-visible opacity-55">
-          <path d="M 0 78 L 220 78" stroke="rgba(255,255,255,0.08)" strokeWidth="1" />
-          <path d="M 0 58 C 32 36, 54 70, 84 48 S 144 34, 176 52 S 206 66, 220 40" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeDasharray="6 8" />
-          <path d="M 0 58 C 32 36, 54 70, 84 48 S 144 34, 176 52 S 206 66, 220 40 L 220 84 L 0 84 Z" fill={color} opacity="0.08" />
-        </svg>
+        <div className="flex h-20 items-center justify-center rounded-lg border border-dashed border-[#2B3752] text-[11px] text-[#8EA0B8]">No database samples</div>
       )}
     </div>
   );
@@ -211,16 +208,7 @@ const MiniBarChart = ({ title, icon, data, colorClass = "bg-sky-400" }: { title:
           ))}
         </div>
       ) : (
-        <div className="space-y-3 opacity-60">
-          {["Mon", "Tue", "Wed", "Thu", "Fri"].map((label, index) => (
-            <div key={`${title}-placeholder-${label}`} className="grid grid-cols-[42px_1fr] items-center gap-2 text-[11px]">
-              <span className="text-[#8EA0B8]">{label}</span>
-              <div className="h-2 rounded-full bg-white/5">
-                <div className={`h-2 rounded-full ${colorClass}`} style={{ width: `${[58, 42, 74, 35, 64][index]}%` }} />
-              </div>
-            </div>
-          ))}
-        </div>
+        <div className="flex h-20 items-center justify-center rounded-lg border border-dashed border-[#2B3752] text-[11px] text-[#8EA0B8]">No database events</div>
       )}
     </div>
   );
@@ -233,12 +221,12 @@ const MiniDonutChart = ({ title, icon, data }: { title: string; icon: React.Reac
       <div className="mb-3 flex items-center gap-2 text-[#d6e3ec] text-xs font-semibold">{icon}{title}</div>
       <div className="flex items-center gap-4">
         <div
-          className={`h-20 w-20 rounded-full ${hasData ? "bg-[conic-gradient(#38BDF8_0_42%,#22C55E_42%_68%,#F59E0B_68%_82%,#2B3752_82%_100%)]" : "bg-[conic-gradient(#38BDF8_0_38%,#22C55E_38%_62%,#F59E0B_62%_76%,#2B3752_76%_100%)] opacity-60"} p-3`}
+          className={`h-20 w-20 rounded-full ${hasData ? "bg-[conic-gradient(#38BDF8_0_42%,#22C55E_42%_68%,#F59E0B_68%_82%,#2B3752_82%_100%)]" : "bg-[#1B2338]"} p-3`}
         >
           <div className="h-full w-full rounded-full bg-[#0F1728]" />
         </div>
         <div className="min-w-0 flex-1 space-y-2 text-[11px]">
-          {(hasData ? data.slice(0, 3) : [{ label: "Browser", value: 42 }, { label: "IDE", value: 26 }, { label: "Explorer", value: 18 }]).map((item) => (
+          {(hasData ? data.slice(0, 3) : [{ label: "No database events", value: 0 }]).map((item) => (
             <div key={`${title}-${item.label}`} className="flex items-center justify-between gap-2">
               <span className="truncate text-[#9fb0bd]">{item.label}</span>
               <span className="font-semibold text-[#d6e3ec]">{item.value}</span>
@@ -266,6 +254,7 @@ type BackendAlertRecord = {
 
 type PersistedDashboardState = {
   selectedHostname?: string | null;
+  selectedDeviceId?: string | null;
   searchQuery?: string;
   currentPage?: number;
   workspaceScrollTop?: number;
@@ -285,17 +274,6 @@ const readDashboardState = (): PersistedDashboardState => {
 const writeDashboardState = (patch: PersistedDashboardState) => {
   const current = readDashboardState();
   localStorage.setItem(DASHBOARD_STATE_KEY, JSON.stringify({ ...current, ...patch }));
-};
-
-const mergeNewestByKey = <T,>(incoming: T[], existing: T[], keyFor: (item: T) => string) => {
-  const byKey = new Map<string, T>();
-  [...incoming, ...existing].forEach((item) => {
-    const key = keyFor(item);
-    if (key && !byKey.has(key)) {
-      byKey.set(key, item);
-    }
-  });
-  return Array.from(byKey.values());
 };
 
 const newestApplicationEntry = (entries: Array<Record<string, any>>) => {
@@ -394,13 +372,13 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   const handleShowDevices = () => {
     setSearchQuery("");
     setCurrentPage(1);
-    if (!isDemoMode) writeDashboardState({ selectedHostname: null, searchQuery: "", currentPage: 1 });
+    if (!isDemoMode) writeDashboardState({ selectedHostname: null, selectedDeviceId: null, searchQuery: "", currentPage: 1 });
     setSelectedAsset(null);
     assetsTableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const handleCloseAssetDetail = () => {
-    if (!isDemoMode) writeDashboardState({ selectedHostname: null, detailScrollTop: 0 });
+    if (!isDemoMode) writeDashboardState({ selectedHostname: null, selectedDeviceId: null, detailScrollTop: 0 });
     setSelectedAsset(null);
     setSelectedAssetDetail(null);
   };
@@ -786,59 +764,27 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
 
     const fetchFleetData = async () => {
       try {
-        const [response, sessionsResponse] = await Promise.all([
-          apiFetch("/api/assets"),
-          apiFetch("/api/sessions").catch(() => null)
-        ]);
+        const response = await apiFetch("/api/assets");
         if (!response.ok) throw new Error("Assets endpoint error");
         const data = await response.json();
-        const sessionsData = sessionsResponse?.ok ? await sessionsResponse.json() : [];
-        const sessionsByHost = Array.isArray(sessionsData)
-          ? sessionsData.reduce((acc: Record<string, any[]>, session: any) => {
-              const host = session.hostname || session.host;
-              if (!host) return acc;
-              acc[host] = [...(acc[host] || []), session];
-              return acc;
-            }, {})
-          : {};
 
         if (active && Array.isArray(data)) {
           const mapped = data.map(mapBackendAsset).map(asset => {
-            const assetSessions = [...(sessionsByHost[asset.hostname] || [])].sort((a, b) => (
-              telemetryTimeMs(a.recorded_at || a.login_timestamp || a.logout_timestamp)
-              - telemetryTimeMs(b.recorded_at || b.login_timestamp || b.logout_timestamp)
-            ));
-            const latestSession = assetSessions[assetSessions.length - 1];
-            const loginSessions = assetSessions.filter((session: any) => session.event_type === "LOGIN");
-            const latestLogin = [...loginSessions].reverse()[0];
-            const latestLoginStamp = latestLogin?.login_timestamp || latestLogin?.recorded_at;
-            const authoritativeLoginStamp = newestTelemetryValue(asset.lastSuccessfulLogin || asset.lastLogin, latestLoginStamp);
-            const sessionDuration = latestSession?.active
-              ? formatSessionDurationSince(authoritativeLoginStamp || latestLoginStamp)
-              : latestSession?.session_duration || latestSession?.duration || asset.loginDuration;
-            const sessionPatch = latestSession ? {
-              lastLogin: formatTelemetryTimestamp(authoritativeLoginStamp || latestSession.login_timestamp || latestSession.recorded_at),
-              lastLogout: latestSession.active === false
-                ? formatTelemetryTimestamp(latestSession.logout_timestamp)
-                : (latestSession.logout_timestamp ? formatTelemetryTimestamp(latestSession.logout_timestamp) : "Currently Active"),
-              loginDuration: sessionDuration,
-              currentUser: latestLogin?.username || latestSession.username || asset.currentUser,
-              loginsToday: asset.loginsToday,
-              loginsThisWeek: asset.loginsThisWeek,
-              lastSuccessfulLogin: authoritativeLoginStamp || asset.lastSuccessfulLogin
-            } : {};
-
-            if (localOverrides[asset.hostname]) {
-              return { ...asset, ...sessionPatch, ...localOverrides[asset.hostname] };
+            if (isDemoMode && localOverrides[asset.hostname]) {
+              return { ...asset, ...localOverrides[asset.hostname] };
             }
-            return { ...asset, ...sessionPatch };
+            return asset;
           });
           setAssets(mapped);
           setSelectedAsset((current) => {
-            const persistedHostname = readDashboardState().selectedHostname;
-            const targetHostname = current?.hostname || persistedHostname;
-            if (!targetHostname) return current;
-            const refreshed = mapped.find((asset) => asset.hostname === targetHostname);
+            const persisted = readDashboardState();
+            const targetDeviceId = current?.deviceId || persisted.selectedDeviceId;
+            const targetHostname = current?.hostname || persisted.selectedHostname;
+            if (!targetDeviceId && !targetHostname) return current;
+            const refreshed = mapped.find((asset) =>
+              (targetDeviceId && asset.deviceId === targetDeviceId) ||
+              (!targetDeviceId && targetHostname && asset.hostname === targetHostname)
+            );
             return refreshed ? { ...(current || refreshed), ...refreshed } : current;
           });
         }
@@ -879,7 +825,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   // Handle opening of individual asset detail card drawer
   const handleSelectAsset = (asset: Asset) => {
     if (!isDemoMode) {
-      writeDashboardState({ selectedHostname: asset.hostname });
+      writeDashboardState({ selectedHostname: asset.hostname, selectedDeviceId: asset.deviceId || null });
       restoredDetailScrollRef.current = false;
     }
     setSelectedAsset(asset);
@@ -893,9 +839,12 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
 
   useEffect(() => {
     if (isDemoMode || selectedAsset || assets.length === 0) return;
-    const persistedHostname = readDashboardState().selectedHostname;
-    if (!persistedHostname) return;
-    const restoredAsset = assets.find((asset) => asset.hostname === persistedHostname);
+    const persisted = readDashboardState();
+    if (!persisted.selectedDeviceId && !persisted.selectedHostname) return;
+    const restoredAsset = assets.find((asset) =>
+      (persisted.selectedDeviceId && asset.deviceId === persisted.selectedDeviceId) ||
+      (!persisted.selectedDeviceId && persisted.selectedHostname && asset.hostname === persisted.selectedHostname)
+    );
     if (restoredAsset) {
       handleSelectAsset(restoredAsset);
     }
@@ -908,7 +857,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     const fetchAssetDetail = async () => {
       setAssetDetailLoading(true);
       try {
-        const response = await apiFetch(`/api/assets/${encodeURIComponent(selectedAsset.hostname)}/details`);
+        const response = await apiFetch(`/api/assets/${encodeURIComponent(selectedAsset.deviceId || selectedAsset.hostname)}/details`);
         if (!response.ok) throw new Error("Asset detail endpoint error");
         const payload = await response.json();
         const mappedAsset = mapBackendAsset(payload.asset || {});
@@ -930,27 +879,9 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
         };
         if (active) {
           const latestApplicationEntry = newestApplicationEntry(normalized.application_timeline as Array<Record<string, any>>);
-          setSelectedAssetDetail((previous) => {
-            if (!previous) {
-              return normalized;
-            }
-            const mergedApplicationTimeline = sortNewestTelemetry(mergeNewestByKey(
-              normalized.application_timeline,
-              previous.application_timeline,
-              (entry) => `${entry.timestamp || ""}-${entry.application || entry.application_name || ""}-${entry.window_title || ""}`
-            ));
-            return {
-              ...normalized,
-              application_timeline: mergedApplicationTimeline,
-              timeline: sortNewestTelemetry(mergeNewestByKey(
-                normalized.timeline,
-                previous.timeline,
-                (event) => `${event.timestamp || ""}-${event.event_type || event.type || ""}-${event.description || event.detail || ""}`
-              )),
-            };
-          });
+          setSelectedAssetDetail(normalized);
           setSelectedAsset((current) => {
-            if (current?.hostname !== selectedAsset.hostname) return current;
+            if ((current?.deviceId || current?.hostname) !== (selectedAsset.deviceId || selectedAsset.hostname)) return current;
             const activeApplicationPatch = latestApplicationEntry ? {
               activeApplication: latestApplicationEntry.application || latestApplicationEntry.application_name || mappedAsset.activeApplication,
               activeWindow: latestApplicationEntry.window_title || mappedAsset.activeWindow,
@@ -976,7 +907,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
       active = false;
       clearInterval(timer);
     };
-  }, [selectedAsset?.hostname, isDemoMode]);
+  }, [selectedAsset?.deviceId, selectedAsset?.hostname, isDemoMode]);
 
   // Search filter computes
   const filteredAssets = useMemo(() => {
@@ -2678,7 +2609,11 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                   <DetailField label="Current Active Window" value={selectedAsset.activeWindow} />
                   <DetailField label="Current Active Application" value={selectedAsset.activeApplication} accent />
                   <DetailField label="Active File Path" value={<span className="text-[#38BDF8]">{resolveActivePath(selectedAsset)}</span>} />
-                  <DetailField label="Live Status" value={<span className="inline-flex items-center gap-2 text-emerald-300"><span className="h-2 w-2 animate-pulse rounded-full bg-emerald-300" />Collecting</span>} />
+                  <DetailField label="Live Status" value={
+                    selectedAsset.status === "Online"
+                      ? <span className="inline-flex items-center gap-2 text-emerald-300"><span className="h-2 w-2 animate-pulse rounded-full bg-emerald-300" />Heartbeat active</span>
+                      : <span className="inline-flex items-center gap-2 text-red-300"><span className="h-2 w-2 rounded-full bg-red-300" />Heartbeat stopped</span>
+                  } />
                   <DetailField label="Last Active Time" value={formatTelemetryTimestamp(selectedAsset.lastActiveTime)} />
                   </div>
                   <div className="max-h-80 overflow-y-auto pr-2">
@@ -2695,17 +2630,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                         </div>
                       ))
                     ) : (
-                      ["Chrome opened", "VS Code opened", "Explorer opened", "Excel opened"].map((label, index) => (
-                        <div key={`placeholder-app-${label}`} className="relative grid grid-cols-[26px_92px_1fr] gap-3 pb-5 last:pb-0 opacity-70">
-                          {index < 3 ? <span className="absolute left-[9px] top-5 h-full w-px bg-[#2B3752]" /> : null}
-                          <span className="relative mt-1 h-5 w-5 rounded-full border-4 border-[#141B2D] bg-[#38BDF8]/70" />
-                          <span className="pt-1 text-[11px] font-semibold text-[#8EA0B8]">Baseline</span>
-                          <div className="rounded-xl border border-[#2B3752] bg-[#0F1728]/70 p-3">
-                            <p className="font-semibold text-white">{label}</p>
-                            <p className="mt-1 text-[11px] text-[#8EA0B8]">Awaiting live PostgreSQL activity events</p>
-                          </div>
-                        </div>
-                      ))
+                      <div className="rounded-xl border border-dashed border-[#2B3752] bg-[#0F1728]/70 p-4 text-sm text-[#8EA0B8]">No active application events stored in Neon yet.</div>
                     )}
                   </div>
                 </div>
@@ -2798,19 +2723,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                       );
                     })
                   ) : (
-                    ["Device Registered", "First Login", "Agent Connected", "Monitoring Started"].map((eventType, idx) => (
-                      <div key={`fallback-device-event-${eventType}`} className="grid grid-cols-[36px_120px_1fr] gap-3 bg-[#0F1728] p-3 border border-[#2B3752] rounded-xl text-[12px] leading-relaxed opacity-85">
-                        <div className="h-8 w-8 rounded-lg bg-[#38BDF8]/10 border border-[#38BDF8]/25 flex items-center justify-center"><Info className="w-4 h-4 text-sky-300" /></div>
-                        <div className="text-[#9fb0bd]">Baseline</div>
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-[#d6e3ec] font-semibold">{eventType}</span>
-                            <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold text-sky-300">INFO</span>
-                          </div>
-                          <div className="text-[#a9bac7] break-words mt-1">{idx === 0 ? "Asset inventory profile created" : idx === 1 ? "Initial user session observed" : idx === 2 ? "Monitoring agent established connection" : "Telemetry watch started"}</div>
-                        </div>
-                      </div>
-                    ))
+                    <div className="rounded-xl border border-dashed border-[#2B3752] bg-[#0F1728]/70 p-4 text-sm text-[#8EA0B8]">No device timeline events stored in Neon yet.</div>
                   )}
                 </div>
               </DetailSection>

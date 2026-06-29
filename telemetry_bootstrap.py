@@ -14,8 +14,6 @@ def _find_existing_asset(device_uid: str, hostname: Optional[str]) -> Optional[D
         for asset in list_assets():
             if asset.get("device_uid") == device_uid:
                 return asset
-            if hostname and asset.get("hostname") == hostname:
-                return asset
     except Exception as exc:
         logger.exception("Could not read existing assets before telemetry bootstrap: %s", exc)
     return None

@@ -5,13 +5,16 @@ from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional
 from uuid import UUID
 
-from sqlalchemy import delete, desc, func, select, text
+from sqlalchemy import delete, desc, func, or_, select, text
 
 from database import get_db_session
+from config import Config
 from models import ActiveApplication, ActiveApplicationHistory, Alert, Asset, HardwareChange, SessionRecord
 
 
 logger = logging.getLogger("asset_sentinel.storage")
+
+REAL_LOGIN_SOURCES = {"windows_interactive_logon"}
 
 
 def _parse_datetime(value: Any) -> Optional[datetime]:
@@ -76,11 +79,46 @@ def resolve_device_uid(record: Dict[str, Any]) -> str:
     return hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
 
 
+def _clean_identity_value(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    text_value = str(value).strip()
+    if not text_value:
+        return None
+    lowered = text_value.lower()
+    if lowered in {"none", "unknown", "unknown host", "to be filled by o.e.m.", "default string", "system serial number"}:
+        return None
+    return lowered
+
+
+def identity_candidates(record: Dict[str, Any]) -> List[tuple[str, str]]:
+    candidates: List[tuple[str, str]] = []
+    for key in ("uuid", "bios_serial", "baseboard_serial", "mac_address", "composite_id", "device_uid"):
+        value = _clean_identity_value(record.get(key))
+        if value:
+            candidates.append((key, value))
+    return candidates
+
+
+def _asset_identity_candidates(row: Asset) -> List[tuple[str, str]]:
+    return identity_candidates({
+        "uuid": row.uuid,
+        "bios_serial": row.bios_serial,
+        "baseboard_serial": row.baseboard_serial,
+        "mac_address": row.mac_address,
+        "composite_id": row.composite_id,
+        "device_uid": row.device_uid,
+    })
+
+
 def _human_age(value: Optional[datetime]) -> Optional[str]:
     if not value:
         return None
     now = datetime.now(value.tzinfo or timezone.utc)
-    seconds = max(0, int((now - value).total_seconds()))
+    raw_seconds = int((now - value).total_seconds())
+    if raw_seconds < -Config.HEARTBEAT_FUTURE_SKEW_SECONDS:
+        return f"clock skew: {-raw_seconds} seconds ahead"
+    seconds = max(0, raw_seconds)
     if seconds < 60:
         return f"{seconds} seconds ago"
     minutes = seconds // 60
@@ -97,7 +135,9 @@ def _status_from_last_seen(value: Optional[datetime]) -> str:
         return "Offline"
     now = datetime.now(value.tzinfo or timezone.utc)
     seconds = (now - value).total_seconds()
-    if seconds <= 60:
+    if seconds < -Config.HEARTBEAT_FUTURE_SKEW_SECONDS:
+        return "Offline"
+    if seconds <= max(1, Config.HEARTBEAT_TIMEOUT_SECONDS):
         return "Online"
     return "Offline"
 
@@ -131,7 +171,7 @@ def _duration(start_value: Any, end_value: Any = None) -> Optional[str]:
 
 
 def _local_tzinfo():
-    return datetime.now().astimezone().tzinfo
+    return Config.DISPLAY_TZINFO
 
 
 def _local_date(value: datetime):
@@ -236,6 +276,7 @@ def serialize_active_application_history(row: ActiveApplicationHistory) -> Dict[
 
 def list_assets() -> List[Dict[str, Any]]:
     with get_db_session() as session:
+        merge_duplicate_assets(session)
         rows = session.execute(select(Asset).order_by(Asset.hostname.asc())).scalars().all()
         assets = []
         for row in rows:
@@ -268,7 +309,9 @@ def _apply_asset_record(row: Asset, record: Dict[str, Any]) -> Asset:
     row.cpu_usage_percent = record.get("cpu_usage_percent")
     row.ram_usage_percent = record.get("ram_usage_percent")
     row.last_seen = _parse_required_datetime(record.get("last_seen") or record.get("collected_at"))
-    row.status = _status_from_last_seen(row.last_seen)
+    if (datetime.now(row.last_seen.tzinfo or timezone.utc) - row.last_seen).total_seconds() < -Config.HEARTBEAT_FUTURE_SKEW_SECONDS:
+        row.last_seen = datetime.now(timezone.utc)
+    row.status = "Offline"
     row.collection_method = record.get("collection_method") or "none"
     row.collection_errors = record.get("collection_errors") or []
     row.collected_at = _parse_required_datetime(record.get("collected_at"))
@@ -278,7 +321,7 @@ def _apply_asset_record(row: Asset, record: Dict[str, Any]) -> Asset:
 def upsert_asset(record: Dict[str, Any]) -> None:
     device_uid = resolve_device_uid(record)
     with get_db_session() as session:
-        row = session.execute(select(Asset).where(Asset.device_uid == device_uid).limit(1)).scalar_one_or_none()
+        row = _find_asset_row(session, record, device_uid)
         if row is None:
             logger.info("Creating PostgreSQL asset row for hostname=%s device_uid=%s", record.get("hostname"), device_uid)
             row = Asset(
@@ -290,6 +333,7 @@ def upsert_asset(record: Dict[str, Any]) -> None:
         else:
             logger.debug("Updating PostgreSQL asset row for hostname=%s device_uid=%s", record.get("hostname"), device_uid)
         _apply_asset_record(row, record)
+        merge_duplicate_assets(session)
 
 
 def append_asset(record: Dict[str, Any]) -> None:
@@ -328,14 +372,25 @@ def list_alerts() -> List[Dict[str, Any]]:
 
 
 def append_alert(alert_type: str, hostname: str, severity: str, details: Dict[str, Any], timestamp: Any = None) -> Dict[str, Any]:
-    row = Alert(
-        alert_type=alert_type,
-        hostname=hostname or "Unknown",
-        severity=severity,
-        timestamp=_parse_required_datetime(timestamp),
-        details=details or {},
-    )
     with get_db_session() as session:
+        event_record_id = (details or {}).get("windows_event_record_id")
+        if event_record_id:
+            existing = session.execute(
+                select(Alert)
+                .where(Alert.alert_type == alert_type)
+                .where(Alert.hostname == (hostname or "Unknown"))
+                .where(Alert.details["windows_event_record_id"].as_string() == str(event_record_id))
+                .limit(1)
+            ).scalar_one_or_none()
+            if existing is not None:
+                return serialize_alert(existing)
+        row = Alert(
+            alert_type=alert_type,
+            hostname=hostname or "Unknown",
+            severity=severity,
+            timestamp=_parse_required_datetime(timestamp),
+            details=details or {},
+        )
         session.add(row)
         session.flush()
         return serialize_alert(row)
@@ -356,9 +411,10 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
     if not rows:
         return {"logins_today": 0}
 
+    login_rows = [row for row in rows if _is_countable_login(row)]
     latest = rows[-1]
-    latest_login = next((row for row in reversed(rows) if row.event_type == "LOGIN"), latest)
-    active_login = next((row for row in reversed(rows) if row.event_type == "LOGIN" and row.active), latest_login)
+    latest_login = login_rows[-1] if login_rows else latest
+    active_login = next((row for row in reversed(login_rows) if row.active), latest_login)
     today = datetime.now(_local_tzinfo()).date()
     week_start = today - timedelta(days=today.weekday())
     logins_today = 0
@@ -369,7 +425,7 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
     for row in rows:
         stamp = row.login_timestamp or row.recorded_at
         stamp_date = _local_date(stamp) if stamp else None
-        if row.event_type == "LOGIN":
+        if _is_countable_login(row):
             if stamp_date == today:
                 logins_today += 1
             if stamp_date and stamp_date >= week_start:
@@ -391,7 +447,7 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
         "logout_timestamp": _iso(last_logout or latest.logout_timestamp),
         "last_logout": _iso(last_logout or latest.logout_timestamp),
         "session_duration": active_login.session_duration if active_login.session_duration and active_login.session_duration != "Active" else _duration(active_login.login_timestamp or active_login.recorded_at),
-        "total_logins": sum(1 for row in rows if row.event_type == "LOGIN"),
+        "total_logins": len(login_rows),
         "logins_today": logins_today,
         "logins_this_week": logins_this_week,
         "last_successful_login": _iso(last_successful_login),
@@ -415,6 +471,10 @@ def _alert_summary(session, hostname: str) -> Dict[str, Any]:
         "threat_score": threat_score,
         "hardware_changes": [row.alert_type for row in rows if "CHANGE" in row.alert_type],
     }
+
+
+def _is_countable_login(row: SessionRecord) -> bool:
+    return row.event_type == "LOGIN" and (row.login_source in REAL_LOGIN_SOURCES)
 
 
 def _activity_summary(session, hostname: str) -> Dict[str, Any]:
@@ -447,6 +507,24 @@ def replace_sessions(records: Iterable[Dict[str, Any]]) -> None:
 
 def append_session(record: Dict[str, Any]) -> None:
     with get_db_session() as session:
+        event_record_id = record.get("windows_event_record_id")
+        if event_record_id:
+            existing = session.execute(
+                select(SessionRecord.id)
+                .where(SessionRecord.hostname == (record.get("hostname") or "Unknown"))
+                .where(SessionRecord.windows_event_record_id == str(event_record_id))
+                .limit(1)
+            ).scalar_one_or_none()
+            if existing is not None:
+                return
+        if record.get("event_type") == "LOGIN" and record.get("login_source") not in REAL_LOGIN_SOURCES:
+            logger.info(
+                "Skipping non-login session event: host=%s source=%s event=%s",
+                record.get("hostname"),
+                record.get("login_source"),
+                record.get("windows_event_id"),
+            )
+            return
         session.add(_build_session_record(record))
 
 
@@ -480,7 +558,6 @@ def touch_active_session(hostname: str, username: Optional[str], session_id: Opt
         row = session.execute(query).scalar_one_or_none()
         if row:
             row.last_seen = now
-            row.device_status = "Online"
             row.session_duration = _duration(row.login_timestamp or row.recorded_at, now) or row.session_duration
 
 
@@ -515,23 +592,41 @@ def list_active_applications_history() -> List[Dict[str, Any]]:
 
 
 def append_active_application(record: Dict[str, Any]) -> None:
-    event_timestamp = func.now()
-    row = ActiveApplication(
-        hostname=record.get("hostname") or "Unknown",
-        username=record.get("username"),
-        application_name=record.get("application_name"),
-        executable_name=record.get("executable_name"),
-        window_title=record.get("window_title"),
-        timestamp=event_timestamp,
-    )
+    event_timestamp = _parse_datetime(record.get("timestamp")) or datetime.now(timezone.utc)
+    hostname = record.get("hostname") or "Unknown"
+    username = record.get("username")
+    application_name = record.get("application_name")
+    executable_name = record.get("executable_name")
+    window_title = record.get("window_title")
     with get_db_session() as session:
+        latest = session.execute(
+            select(ActiveApplicationHistory)
+            .where(ActiveApplicationHistory.hostname == hostname)
+            .order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if latest and (
+            latest.username == username
+            and latest.application == application_name
+            and latest.window_title == window_title
+            and latest.process_path == (record.get("process_path") or record.get("active_process_path") or executable_name)
+        ):
+            return
+        row = ActiveApplication(
+            hostname=hostname,
+            username=username,
+            application_name=application_name,
+            executable_name=executable_name,
+            window_title=window_title,
+            timestamp=event_timestamp,
+        )
         session.add(row)
         session.add(ActiveApplicationHistory(
-            hostname=record.get("hostname") or "Unknown",
-            username=record.get("username"),
-            application=record.get("application_name"),
-            window_title=record.get("window_title"),
-            process_path=record.get("process_path") or record.get("active_process_path") or record.get("executable_name"),
+            hostname=hostname,
+            username=username,
+            application=application_name,
+            window_title=window_title,
+            process_path=record.get("process_path") or record.get("active_process_path") or executable_name,
             timestamp=event_timestamp,
         ))
         session.flush()
@@ -574,7 +669,15 @@ def normalize_active_application_timestamps() -> int:
 def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any = None, activity: Optional[Dict[str, Any]] = None) -> None:
     now = datetime.now(timezone.utc)
     with get_db_session() as session:
-        row = session.execute(select(Asset).where(Asset.hostname == hostname).limit(1)).scalar_one_or_none()
+        lookup_record = {"hostname": hostname, **(activity or {})}
+        row = _find_asset_row(session, lookup_record, lookup_record.get("device_uid") or "")
+        if row is None and hostname:
+            row = session.execute(
+                select(Asset)
+                .where(Asset.hostname == hostname)
+                .order_by(Asset.last_seen.desc().nullslast(), Asset.collected_at.desc(), Asset.id.desc())
+                .limit(1)
+            ).scalar_one_or_none()
         if row is None:
             logger.warning(
                 "Heartbeat skipped because hostname=%s is not present in PostgreSQL assets. "
@@ -583,7 +686,7 @@ def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any 
             )
             return
         row.last_seen = now
-        row.status = "Online"
+        row.status = "Offline"
         if cpu_usage is not None:
             row.cpu_usage_percent = cpu_usage
         if ram_usage is not None:
@@ -616,6 +719,23 @@ def get_latest_active_application_for_host(hostname: str) -> Optional[Dict[str, 
             .limit(1)
         ).scalar_one_or_none()
         return serialize_active_application_history(row) if row else None
+
+
+def get_asset_status(hostname: str) -> Optional[Dict[str, Any]]:
+    with get_db_session() as session:
+        row = _find_asset_by_public_identifier(session, hostname)
+        if row is None:
+            return None
+        asset = serialize_asset(row)
+        return {
+            "hostname": row.hostname,
+            "device_uid": row.device_uid,
+            "device_status": asset["status"],
+            "status": asset["status"],
+            "last_seen": asset["last_seen"],
+            "last_seen_human": asset["last_seen_human"],
+            "heartbeat_timeout_seconds": Config.HEARTBEAT_TIMEOUT_SECONDS,
+        }
 
 
 def record_hardware_change(
@@ -670,11 +790,12 @@ def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
         return None
 
     with get_db_session() as session:
-        asset_row = session.execute(select(Asset).where(Asset.hostname == hostname).limit(1)).scalar_one_or_none()
+        asset_row = _find_asset_by_public_identifier(session, hostname)
         if asset_row is None:
             return None
 
         asset = serialize_asset(asset_row)
+        hostname = asset_row.hostname
         sessions = session.execute(
             select(SessionRecord)
             .where(SessionRecord.hostname == hostname)
@@ -701,9 +822,7 @@ def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
         ).scalars().all()
         asset_samples = session.execute(
             select(Asset)
-            .where(Asset.hostname == hostname)
-            .order_by(Asset.collected_at.desc(), Asset.id.desc())
-            .limit(100)
+            .where(Asset.id == asset_row.id)
         ).scalars().all()
 
         summary = _session_summary(session, hostname)
@@ -715,7 +834,8 @@ def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
         ordered_sessions = sorted(sessions, key=lambda row: (row.recorded_at, row.id), reverse=True)
         for row in ordered_sessions:
             if row.event_type == "LOGIN":
-                timeline.append(_timeline_event(row.login_timestamp or row.recorded_at, "Login", f"{row.username or 'Unknown user'} logged in", "LOW"))
+                if _is_countable_login(row):
+                    timeline.append(_timeline_event(row.login_timestamp or row.recorded_at, "Login", f"{row.username or 'Unknown user'} logged in", "LOW"))
             elif row.event_type == "LOGOUT":
                 timeline.append(_timeline_event(row.logout_timestamp or row.recorded_at, "Logout", f"{row.username or 'Unknown user'} logged out", "LOW"))
 
@@ -750,7 +870,7 @@ def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
 
         login_frequency: Dict[str, int] = {}
         for row in sessions:
-            if row.event_type != "LOGIN":
+            if not _is_countable_login(row):
                 continue
             stamp = row.login_timestamp or row.recorded_at
             day = stamp.astimezone(timezone.utc).date().isoformat()
@@ -793,3 +913,135 @@ def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
                 "alert_trend": [{"label": key, "value": value} for key, value in sorted(alert_trend.items())],
             },
         }
+
+
+def _find_asset_row(session, record: Dict[str, Any], device_uid: str) -> Optional[Asset]:
+    predicates = []
+    for key, value in identity_candidates({**record, "device_uid": device_uid}):
+        if key == "uuid":
+            parsed_uuid = _parse_uuid(value)
+            if parsed_uuid:
+                predicates.append(Asset.uuid == parsed_uuid)
+        elif key == "bios_serial":
+            predicates.append(func.lower(Asset.bios_serial) == value)
+        elif key == "baseboard_serial":
+            predicates.append(func.lower(Asset.baseboard_serial) == value)
+        elif key == "mac_address":
+            predicates.append(func.lower(Asset.mac_address) == value)
+        elif key == "composite_id":
+            predicates.append(func.lower(Asset.composite_id) == value)
+        elif key == "device_uid":
+            predicates.append(Asset.device_uid == value)
+    if not predicates:
+        return None
+    return session.execute(
+        select(Asset)
+        .where(or_(*predicates))
+        .order_by(Asset.last_seen.desc().nullslast(), Asset.collected_at.desc(), Asset.id.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _find_asset_by_public_identifier(session, identifier: str) -> Optional[Asset]:
+    if not identifier:
+        return None
+    normalized = identifier.strip().lower()
+    predicates = [
+        Asset.device_uid == normalized,
+        func.lower(Asset.hostname) == normalized,
+        func.lower(Asset.bios_serial) == normalized,
+        func.lower(Asset.baseboard_serial) == normalized,
+        func.lower(Asset.composite_id) == normalized,
+    ]
+    parsed_uuid = _parse_uuid(identifier)
+    if parsed_uuid:
+        predicates.append(Asset.uuid == parsed_uuid)
+    return session.execute(
+        select(Asset)
+        .where(or_(*predicates))
+        .order_by(Asset.last_seen.desc().nullslast(), Asset.collected_at.desc(), Asset.id.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def merge_duplicate_assets(session) -> int:
+    rows = session.execute(
+        select(Asset).order_by(Asset.last_seen.desc().nullslast(), Asset.collected_at.desc(), Asset.id.asc())
+    ).scalars().all()
+    owner_by_key: Dict[tuple[str, str], Asset] = {}
+    duplicate_to_owner: Dict[int, Asset] = {}
+    for row in rows:
+        candidates = _asset_identity_candidates(row)
+        owner = next((owner_by_key[key] for key in candidates if key in owner_by_key), None)
+        if owner is None:
+            for key in candidates:
+                owner_by_key[key] = row
+            continue
+        duplicate_to_owner[row.id] = owner
+        for key in candidates:
+            owner_by_key[key] = owner
+
+    rows_by_hostname: Dict[str, List[Asset]] = {}
+    for row in rows:
+        hostname_key = _clean_identity_value(row.hostname)
+        if hostname_key:
+            rows_by_hostname.setdefault(hostname_key, []).append(row)
+
+    for hostname_rows in rows_by_hostname.values():
+        live_rows = [row for row in hostname_rows if row.id not in duplicate_to_owner]
+        if len(live_rows) < 2 or not _same_hostname_rows_are_safe_to_merge(live_rows):
+            continue
+        owner = sorted(
+            live_rows,
+            key=lambda row: (row.last_seen or row.collected_at or datetime.min.replace(tzinfo=timezone.utc), -(row.id or 0)),
+            reverse=True,
+        )[0]
+        for duplicate in live_rows:
+            if duplicate.id != owner.id:
+                duplicate_to_owner[duplicate.id] = owner
+
+    for duplicate_id, owner in duplicate_to_owner.items():
+        duplicate = session.get(Asset, duplicate_id)
+        if duplicate is None or duplicate.id == owner.id:
+            continue
+        _merge_asset_row(owner, duplicate)
+        session.execute(
+            HardwareChange.__table__.update()
+            .where(HardwareChange.previous_asset_id == duplicate.id)
+            .values(previous_asset_id=owner.id)
+        )
+        session.execute(
+            HardwareChange.__table__.update()
+            .where(HardwareChange.current_asset_id == duplicate.id)
+            .values(current_asset_id=owner.id)
+        )
+        session.delete(duplicate)
+    return len(duplicate_to_owner)
+
+
+def _same_hostname_rows_are_safe_to_merge(rows: List[Asset]) -> bool:
+    for field in ("uuid", "bios_serial", "baseboard_serial"):
+        values = {
+            _clean_identity_value(getattr(row, field))
+            for row in rows
+            if _clean_identity_value(getattr(row, field))
+        }
+        if len(values) > 1:
+            return False
+    return True
+
+
+def _merge_asset_row(owner: Asset, duplicate: Asset) -> None:
+    preferred = owner
+    if duplicate.last_seen and (not owner.last_seen or duplicate.last_seen > owner.last_seen):
+        preferred = duplicate
+    for attr in (
+        "hostname", "ip_address", "mac_address", "bios_serial", "baseboard_serial", "uuid",
+        "composite_id", "cpu_name", "ram_total_gb", "baseboard_manufacturer",
+        "baseboard_product", "windows_version", "current_website", "active_window_title",
+        "active_process_path", "active_process_name", "cpu_usage_percent", "ram_usage_percent",
+        "collection_method", "collection_errors", "collected_at", "last_seen",
+    ):
+        value = getattr(preferred, attr)
+        if value not in (None, "", []):
+            setattr(owner, attr, value)

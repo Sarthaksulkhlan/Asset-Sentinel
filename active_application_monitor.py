@@ -6,10 +6,11 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from collect_hardware import collect_current_active_path
-from login_tracker import detect_login, record_login
+from login_tracker import detect_login
 from session_manager import get_current_session_info
 from storage import (
     append_active_application,
+    append_alert,
     get_latest_active_application_for_host as get_latest_active_application_for_host_from_db,
     get_latest_active_applications as get_latest_active_applications_from_db,
     has_session_event_signature,
@@ -114,7 +115,7 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
     Security 4624/4634 remains the preferred source, but normal desktop
     processes often cannot open the Security log. The foreground monitor can
     still observe LockApp during Win+L; the transition from LockApp to the next
-    user application is a real unlock boundary and should create a login row.
+    user application is a real unlock boundary but is not a login.
     """
     global _lock_screen_observed, _last_unlock_fallback_at
 
@@ -140,13 +141,19 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
         _lock_screen_observed = False
         return
 
-    session_info.update({
-        "login_timestamp": timestamp,
-        "login_source": "windows_unlock_observed",
-        "windows_event_id": "LOCKAPP_UNLOCK",
-        "windows_event_record_id": synthetic_record_id,
-    })
-    record_login(session_info)
+    append_alert(
+        "UNLOCK",
+        session_info.get("hostname") or socket.gethostname(),
+        "LOW",
+        {
+            "username": session_info.get("username"),
+            "login_source": "windows_unlock_observed",
+            "windows_event_id": "LOCKAPP_UNLOCK",
+            "windows_event_record_id": synthetic_record_id,
+            "description": "Windows unlock observed from LockApp transition.",
+        },
+        timestamp,
+    )
     _last_unlock_fallback_at = now
     _lock_screen_observed = False
 

@@ -8,9 +8,10 @@ from sqlalchemy import text
 from active_application_monitor import collect_active_application_record
 from app import app
 from collect_hardware import collect_hardware
+from auth import create_access_token
 from database import SessionLocal, engine
 from login_tracker import load_sessions
-from models import ActiveApplication, Alert, Asset, SessionRecord
+from models import ActiveApplication, Alert, Asset, SessionRecord, User
 from session_manager import get_current_session_info
 
 
@@ -103,7 +104,7 @@ def check_api_contracts() -> Dict[str, Any]:
         "/api/alerts",
         "/api/sessions",
         "/api/active-applications",
-        "/sessions/count",
+        "/api/sessions/count",
         "/current-user",
         "/current-session",
         "/device-status",
@@ -111,8 +112,16 @@ def check_api_contracts() -> Dict[str, Any]:
     results = {}
     try:
         with app.test_client() as client:
+            with SessionLocal() as session:
+                user = session.query(User).filter(User.is_active.is_(True)).order_by(User.id.asc()).first()
+                if not user:
+                    raise RuntimeError("No active user exists for authenticated API validation.")
+                session.expunge(user)
+            token = create_access_token(user)
+            headers = {"Authorization": f"Bearer {token}"} if token else {}
+            results["auth_context"] = {"status_code": 200, "json_type": "direct_token", "keys": ["Authorization"]}
             for endpoint in endpoints:
-                response = client.get(endpoint)
+                response = client.get(endpoint, headers=headers)
                 payload = response.get_json(silent=True)
                 results[endpoint] = {
                     "status_code": response.status_code,

@@ -26,6 +26,24 @@ def _database_url_for_display() -> str:
         return Config.SQLALCHEMY_DATABASE_URL
 
 
+def database_host_for_display() -> str:
+    try:
+        return make_url(Config.SQLALCHEMY_DATABASE_URL).host or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def assert_neon_postgresql_url() -> None:
+    url = make_url(Config.SQLALCHEMY_DATABASE_URL)
+    if url.drivername.startswith("sqlite"):
+        raise RuntimeError("SQLite is not supported. Set ASSET_SENTINEL_DATABASE_URL to the Neon PostgreSQL URL.")
+    if "postgresql" not in url.drivername:
+        raise RuntimeError("Asset Sentinel requires PostgreSQL via ASSET_SENTINEL_DATABASE_URL.")
+    host = (url.host or "").lower()
+    if "localhost" in host or host.startswith("127.") or host == "::1":
+        raise RuntimeError("Local PostgreSQL is not allowed. Use the Neon host in ASSET_SENTINEL_DATABASE_URL.")
+
+
 def _database_connection_error_message() -> str:
     return (
         "\n[DATABASE] Could not connect to PostgreSQL.\n"
@@ -52,6 +70,7 @@ def get_db_session():
 def init_db():
     import models  # noqa: F401
 
+    assert_neon_postgresql_url()
     try:
         Base.metadata.create_all(bind=engine)
     except OperationalError as exc:

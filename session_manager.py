@@ -255,20 +255,22 @@ def _read_latest_windows_security_event(
                 if normalized_user not in lowered:
                     continue
 
-                login_source = "windows_unlock" if event_id == 4801 else "windows_logon"
+                login_source = "windows_unlock" if event_id == 4801 else "windows_interactive_logon"
                 logon_type = None
                 if event_id == 4624 and len(inserts) > 8:
                     logon_type = inserts[8]
-                    if interactive_logons_only and logon_type not in {"2", "7", "10"}:
+                    if interactive_logons_only and logon_type != "2":
                         continue
-                    if logon_type == "7":
-                        login_source = "windows_unlock"
-                    elif logon_type == "10":
-                        login_source = "windows_remote_logon"
                 elif event_id == 4778:
                     login_source = "windows_session_reconnect"
                 elif event_id == 4634:
                     login_source = "windows_logoff"
+                elif event_id == 4647:
+                    login_source = "windows_user_logoff"
+                elif event_id == 4779:
+                    login_source = "windows_session_disconnect"
+                elif event_id == 4800:
+                    login_source = "windows_lock"
 
                 return {
                     "event_id": str(event_id),
@@ -292,16 +294,15 @@ def get_latest_windows_login_event(username: Optional[str]) -> Optional[Dict[str
     """
     Return the newest interactive Windows login boundary for this user.
 
-    Security 4624 is the primary logon event. 4801/4778 are also kept as
-    login-like boundaries because unlock/reconnect events can update the
-    active session without changing the Windows session id.
+    Security 4624 logon type 2 is the only countable interactive login.
+    Unlock, reconnect, and session refresh events are not logins.
     """
-    return _read_latest_windows_security_event(username, {4624, 4801, 4778}, True)
+    return _read_latest_windows_security_event(username, {4624}, True)
 
 
 def get_latest_windows_logout_event(username: Optional[str]) -> Optional[Dict[str, Any]]:
-    """Return the newest Windows Security 4634 logoff event for this user."""
-    return _read_latest_windows_security_event(username, {4634}, False)
+    """Return the newest Windows lock, disconnect, or logoff event for this user."""
+    return _read_latest_windows_security_event(username, {4634, 4647, 4779, 4800}, False)
 
 
 def get_device_status() -> str:

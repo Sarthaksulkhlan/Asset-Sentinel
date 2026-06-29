@@ -18,7 +18,7 @@ from active_application_monitor import (
 )
 from collect_hardware import collect_hardware
 from config import Config
-from database import init_db
+from database import database_host_for_display, init_db
 from login_tracker import detect_login
 from service_logging import LOG_DIR, configure_logging, ensure_log_dir
 from storage import (
@@ -98,6 +98,7 @@ class AssetSentinelAgent:
     def start(self) -> None:
         logger.info("Asset Sentinel monitoring agent starting.")
         logger.info("Database URL configured from ASSET_SENTINEL_DATABASE_URL: %s", bool(Config.SQLALCHEMY_DATABASE_URL))
+        logger.info("Database host: %s", database_host_for_display())
         init_db()
         corrected = normalize_active_application_timestamps()
         if corrected:

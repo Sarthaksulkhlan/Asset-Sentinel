@@ -41,6 +41,8 @@ from storage import (
     update_asset_heartbeat,
 )
 
+COUNTABLE_LOGIN_SOURCES = {"windows_interactive_logon"}
+
 # ============================================================================
 # Logging Setup
 # ============================================================================
@@ -210,7 +212,7 @@ def close_active_sessions(
         session["logout_timestamp"] = logout_timestamp
         session["session_duration"] = _format_duration(session.get("login_timestamp"), logout_timestamp)
         session["active"] = False
-        session["device_status"] = "Offline"
+        session["device_status"] = None
         session["last_seen"] = logout_timestamp
 
         logout_records.append({
@@ -223,7 +225,7 @@ def close_active_sessions(
             "logout_timestamp": logout_timestamp,
             "session_duration": session.get("session_duration"),
             "active": False,
-            "device_status": "Offline",
+            "device_status": None,
             "last_seen": logout_timestamp,
             "login_source": "windows_logoff",
             "windows_event_id": logout_event_id,
@@ -296,8 +298,9 @@ def detect_login() -> Optional[Dict[str, Any]]:
     
     # First run - no previous session
     if last_session is None:
-        logger.info("First run detected - recording initial login")
-        return record_login(current_session)
+        logger.info("First run detected - waiting for a real Windows interactive login event")
+        update_asset_heartbeat(current_session.get("hostname"))
+        return None
     
     # Check if user or session changed (indicates logout/login)
     current_session_id = current_session.get("session_id")
@@ -324,13 +327,15 @@ def detect_login() -> Optional[Dict[str, Any]]:
     
     # Different username = new login
     if current_user != last_user:
-        logger.info(f"Login detected: user changed from {last_user} to {current_user}")
-        return record_login(current_session)
+        logger.info("User changed but no countable Windows interactive logon event was available; not recording login.")
+        update_asset_heartbeat(current_session.get("hostname"))
+        return None
     
     # Different session ID with same user = new login
     if current_session_id != last_session_id and current_user == last_user:
-        logger.info(f"Login detected: session ID changed from {last_session_id} to {current_session_id}")
-        return record_login(current_session)
+        logger.info("Session ID changed without a countable Windows interactive logon event; not recording login.")
+        update_asset_heartbeat(current_session.get("hostname"))
+        return None
     
     # No login detected
     touch_active_session(
@@ -355,6 +360,21 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
     """
     sessions = load_sessions()
     now = datetime.now(timezone.utc).isoformat()
+    event_record_id = session_info.get("windows_event_record_id")
+    hostname = session_info.get("hostname")
+    if event_record_id and has_session_event_signature(hostname, event_record_id):
+        logger.info("Skipping duplicate Windows login event record %s for %s", event_record_id, hostname)
+        touch_active_session(hostname, session_info.get("username"), session_info.get("session_id"))
+        return {}
+    if session_info.get("login_source") not in COUNTABLE_LOGIN_SOURCES:
+        logger.info(
+            "Skipping non-countable login source: host=%s source=%s event=%s",
+            hostname,
+            session_info.get("login_source"),
+            session_info.get("windows_event_id"),
+        )
+        update_asset_heartbeat(hostname)
+        return {}
     session_info = {**session_info, "force_close_active_sessions": True}
     close_timestamp = session_info.get("latest_logout_timestamp") or now
     sessions = close_active_sessions(sessions, session_info, close_timestamp)
@@ -370,7 +390,7 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
         "logout_timestamp": None,
         "session_duration": "Active",
         "active": True,
-        "device_status": "Online",
+        "device_status": None,
         "last_seen": now,
         "login_source": session_info.get("login_source"),
         "windows_event_id": session_info.get("windows_event_id"),

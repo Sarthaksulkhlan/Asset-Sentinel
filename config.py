@@ -1,5 +1,6 @@
 import os
-from datetime import timedelta
+from datetime import timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 _ENV_LOADED = False
@@ -31,6 +32,16 @@ def _load_local_env_file(force: bool = False) -> None:
 _load_local_env_file()
 
 
+def _display_tzinfo():
+    name = os.environ.get("ASSET_SENTINEL_DISPLAY_TIMEZONE", "Asia/Kolkata")
+    try:
+        return name, ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        if name in {"Asia/Kolkata", "Asia/Calcutta"}:
+            return name, timezone(timedelta(hours=5, minutes=30))
+        raise
+
+
 def _required_database_url() -> str:
     value = os.environ.get("ASSET_SENTINEL_DATABASE_URL", "").strip()
     if not value:
@@ -45,6 +56,9 @@ class Config:
     SQLALCHEMY_DATABASE_URL = _required_database_url()
     SQLALCHEMY_ECHO = os.environ.get("ASSET_SENTINEL_SQL_ECHO", "").lower() in {"1", "true", "yes"}
     SQLALCHEMY_POOL_PRE_PING = True
+    HEARTBEAT_TIMEOUT_SECONDS = int(os.environ.get("ASSET_SENTINEL_HEARTBEAT_TIMEOUT_SECONDS", "60"))
+    HEARTBEAT_FUTURE_SKEW_SECONDS = int(os.environ.get("ASSET_SENTINEL_HEARTBEAT_FUTURE_SKEW_SECONDS", "10"))
+    DISPLAY_TIMEZONE, DISPLAY_TZINFO = _display_tzinfo()
     JWT_SECRET_KEY = os.environ.get("ASSET_SENTINEL_JWT_SECRET", "your_secret_here")
     JWT_ISSUER = os.environ.get("ASSET_SENTINEL_JWT_ISSUER", "asset-sentinel")
     JWT_AUDIENCE = os.environ.get("ASSET_SENTINEL_JWT_AUDIENCE", "asset-sentinel-frontend")
