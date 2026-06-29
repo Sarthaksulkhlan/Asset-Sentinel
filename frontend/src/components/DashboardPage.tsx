@@ -90,6 +90,10 @@ const newestTelemetryValue = (primary?: string | null, fallback?: string | null)
   telemetryTimeMs(primary) >= telemetryTimeMs(fallback) ? primary : fallback
 );
 
+const sortNewestTelemetry = <T extends { timestamp?: string | null }>(items: T[]) => (
+  [...items].sort((a, b) => telemetryTimeMs(b.timestamp) - telemetryTimeMs(a.timestamp))
+);
+
 const resolveActivePath = (asset: Asset) => {
   const activePath = asset.currentWebsite?.trim();
   return activePath && activePath !== "-" ? activePath : "No Active File";
@@ -292,6 +296,10 @@ const mergeNewestByKey = <T,>(incoming: T[], existing: T[], keyFor: (item: T) =>
     }
   });
   return Array.from(byKey.values());
+};
+
+const newestApplicationEntry = (entries: Array<Record<string, any>>) => {
+  return sortNewestTelemetry(entries).find((entry) => entry && entry.timestamp);
 };
 
 export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemoMode = false }: DashboardPageProps) {
@@ -908,7 +916,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
           ...payload,
           asset: mappedAsset,
           timeline: Array.isArray(payload.timeline) ? payload.timeline : [],
-          application_timeline: Array.isArray(payload.application_timeline) ? payload.application_timeline : [],
+          application_timeline: sortNewestTelemetry(Array.isArray(payload.application_timeline) ? payload.application_timeline : []),
           alerts: Array.isArray(payload.alerts) ? payload.alerts : [],
           sessions: Array.isArray(payload.sessions) ? payload.sessions : [],
           hardware_changes: Array.isArray(payload.hardware_changes) ? payload.hardware_changes : [],
@@ -921,23 +929,37 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
           }
         };
         if (active) {
+          const latestApplicationEntry = newestApplicationEntry(normalized.application_timeline as Array<Record<string, any>>);
           setSelectedAssetDetail((previous) => {
-            if (!previous) return normalized;
+            if (!previous) {
+              return normalized;
+            }
+            const mergedApplicationTimeline = sortNewestTelemetry(mergeNewestByKey(
+              normalized.application_timeline,
+              previous.application_timeline,
+              (entry) => `${entry.timestamp || ""}-${entry.application || entry.application_name || ""}-${entry.window_title || ""}`
+            ));
             return {
               ...normalized,
-              application_timeline: mergeNewestByKey(
-                normalized.application_timeline,
-                previous.application_timeline,
-                (entry) => `${entry.timestamp || ""}-${entry.application || entry.application_name || ""}-${entry.window_title || ""}`
-              ).sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()),
-              timeline: mergeNewestByKey(
+              application_timeline: mergedApplicationTimeline,
+              timeline: sortNewestTelemetry(mergeNewestByKey(
                 normalized.timeline,
                 previous.timeline,
                 (event) => `${event.timestamp || ""}-${event.event_type || event.type || ""}-${event.description || event.detail || ""}`
-              ).sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()),
+              )),
             };
           });
-          setSelectedAsset((current) => current?.hostname === selectedAsset.hostname ? { ...current, ...mappedAsset } : current);
+          setSelectedAsset((current) => {
+            if (current?.hostname !== selectedAsset.hostname) return current;
+            const activeApplicationPatch = latestApplicationEntry ? {
+              activeApplication: latestApplicationEntry.application || latestApplicationEntry.application_name || mappedAsset.activeApplication,
+              activeWindow: latestApplicationEntry.window_title || mappedAsset.activeWindow,
+              currentWebsite: latestApplicationEntry.process_path || mappedAsset.currentWebsite,
+              lastActiveTime: latestApplicationEntry.timestamp || mappedAsset.lastActiveTime,
+              applicationHistory: normalized.application_timeline,
+            } : {};
+            return { ...current, ...mappedAsset, ...activeApplicationPatch };
+          });
           setTelemetryCPU(Number(String(mappedAsset.cpuUsage || "0").replace("%", "")) || 0);
           setTelemetryRAM(Number(String(mappedAsset.ramUsage || "0").replace("%", "")) || 0);
         }
