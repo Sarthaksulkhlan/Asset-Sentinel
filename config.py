@@ -31,16 +31,18 @@ def _load_local_env_file(force: bool = False) -> None:
 _load_local_env_file()
 
 
+def _required_database_url() -> str:
+    value = os.environ.get("ASSET_SENTINEL_DATABASE_URL", "").strip()
+    if not value:
+        raise RuntimeError(
+            "ASSET_SENTINEL_DATABASE_URL is required. Configure it with the Neon "
+            "PostgreSQL connection string before starting Asset Sentinel."
+        )
+    return value
+
+
 class Config:
-    POSTGRES_USER = os.environ.get("ASSET_SENTINEL_DB_USER", "postgres")
-    POSTGRES_PASSWORD = os.environ.get("ASSET_SENTINEL_DB_PASSWORD", "OKAY1234")
-    POSTGRES_HOST = os.environ.get("ASSET_SENTINEL_DB_HOST", "localhost")
-    POSTGRES_PORT = os.environ.get("ASSET_SENTINEL_DB_PORT", "5432")
-    POSTGRES_DB = os.environ.get("ASSET_SENTINEL_DB_NAME", "asset_sentinel")
-    SQLALCHEMY_DATABASE_URL = os.environ.get(
-        "ASSET_SENTINEL_DATABASE_URL",
-        f"postgresql+psycopg2://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}",
-    )
+    SQLALCHEMY_DATABASE_URL = _required_database_url()
     SQLALCHEMY_ECHO = os.environ.get("ASSET_SENTINEL_SQL_ECHO", "").lower() in {"1", "true", "yes"}
     SQLALCHEMY_POOL_PRE_PING = True
     JWT_SECRET_KEY = os.environ.get("ASSET_SENTINEL_JWT_SECRET", "change-me-before-production")

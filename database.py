@@ -30,18 +30,9 @@ def _database_connection_error_message() -> str:
     return (
         "\n[DATABASE] Could not connect to PostgreSQL.\n"
         f"[DATABASE] SQLAlchemy URL: {_database_url_for_display()}\n\n"
-        "Asset Sentinel is configured to use PostgreSQL at startup, but the "
-        "database server is not accepting connections. Start PostgreSQL and "
-        "create the configured database, or point ASSET_SENTINEL_DATABASE_URL "
-        "at a running PostgreSQL instance.\n\n"
-        "Expected local defaults:\n"
-        "  host: localhost\n"
-        "  port: 5432\n"
-        "  database: asset_sentinel\n"
-        "  user: postgres\n\n"
-        "Example PowerShell override:\n"
-        "  $env:ASSET_SENTINEL_DATABASE_URL="
-        "'postgresql+psycopg2://postgres:postgres@localhost:5432/asset_sentinel'\n"
+        "Asset Sentinel now requires ASSET_SENTINEL_DATABASE_URL for every "
+        "SQLAlchemy connection. Confirm the Neon PostgreSQL URL is present, "
+        "reachable, and includes the required SSL options.\n"
     )
 
 

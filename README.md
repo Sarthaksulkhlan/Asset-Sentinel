@@ -29,9 +29,9 @@ The schema keeps the current append-only behavior of JSON files. In particular, 
 
 ## Create Database
 
-Install PostgreSQL, then create a database and user for Asset Sentinel.
+Create or select a Neon PostgreSQL database for Asset Sentinel.
 
-If `python app.py` fails with `connection refused` on `localhost:5432`, PostgreSQL is not running or the app is pointed at the wrong database host/port. Start PostgreSQL first, then confirm the configured database exists.
+If `python app.py` fails during database startup, confirm `ASSET_SENTINEL_DATABASE_URL` is set to the Neon connection string and includes the required SSL options.
 
 Example using `psql` as a PostgreSQL admin:
 
@@ -67,7 +67,7 @@ GRANT USAGE, SELECT ON SEQUENCES TO asset_sentinel_app;
 The Flask integration uses this environment variable:
 
 ```powershell
-ASSET_SENTINEL_DATABASE_URL=postgresql+psycopg2://asset_sentinel_app:postgres@localhost:5432/asset_sentinel
+ASSET_SENTINEL_DATABASE_URL=postgresql://asset_sentinel_app:change_this_password@your-neon-host.neon.tech/asset_sentinel?sslmode=require
 ```
 
 Optional SQL logging:
