@@ -13,6 +13,7 @@ import json
 import hashlib
 import logging
 import ctypes
+from ctypes import wintypes
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -24,6 +25,27 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("collect_hardware")
+
+
+def _configure_foreground_window_api(user32, kernel32) -> None:
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -351,6 +373,7 @@ def collect_current_active_path() -> dict:
     try:
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
+        _configure_foreground_window_api(user32, kernel32)
 
         hwnd = user32.GetForegroundWindow()
         if not hwnd:
@@ -362,7 +385,7 @@ def collect_current_active_path() -> dict:
             user32.GetWindowTextW(hwnd, title_buffer, title_length + 1)
             details["active_window_title"] = title_buffer.value or None
 
-        process_id = ctypes.c_ulong()
+        process_id = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
 
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -375,7 +398,7 @@ def collect_current_active_path() -> dict:
         if process_handle:
             try:
                 path_buffer = ctypes.create_unicode_buffer(32768)
-                size = ctypes.c_ulong(len(path_buffer))
+                size = wintypes.DWORD(len(path_buffer))
                 if kernel32.QueryFullProcessImageNameW(
                     process_handle,
                     0,

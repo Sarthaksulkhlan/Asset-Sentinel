@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional
 from uuid import UUID
 
-from sqlalchemy import delete, desc, func, select
+from sqlalchemy import delete, desc, func, select, text
 
 from database import get_db_session
 from models import ActiveApplication, ActiveApplicationHistory, Alert, Asset, HardwareChange, SessionRecord
@@ -18,10 +18,15 @@ def _parse_datetime(value: Any) -> Optional[datetime]:
     if value in (None, ""):
         return None
     if isinstance(value, datetime):
-        return value
+        if value.tzinfo:
+            return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=_local_tzinfo()).astimezone(timezone.utc)
     if isinstance(value, str):
         try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo:
+                return parsed.astimezone(timezone.utc)
+            return parsed.replace(tzinfo=_local_tzinfo()).astimezone(timezone.utc)
         except ValueError:
             return None
     return None
@@ -212,6 +217,7 @@ def serialize_active_application(row: ActiveApplication) -> Dict[str, Any]:
         "application_name": row.application_name,
         "executable_name": row.executable_name,
         "window_title": row.window_title,
+        "process_path": row.executable_name,
         "timestamp": _iso(row.timestamp),
     }
 
@@ -412,26 +418,21 @@ def _alert_summary(session, hostname: str) -> Dict[str, Any]:
 
 
 def _activity_summary(session, hostname: str) -> Dict[str, Any]:
-    latest = session.execute(
-        select(ActiveApplication)
-        .where(ActiveApplication.hostname == hostname)
-        .order_by(ActiveApplication.timestamp.desc(), ActiveApplication.id.desc())
-        .limit(1)
-    ).scalar_one_or_none()
     history = session.execute(
         select(ActiveApplicationHistory)
         .where(ActiveApplicationHistory.hostname == hostname)
         .order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc())
         .limit(10)
     ).scalars().all()
-    if not latest and not history:
+    latest = history[0] if history else None
+    if not latest:
         return {"application_history": []}
-    latest_payload = serialize_active_application(latest) if latest else {}
+    latest_payload = serialize_active_application_history(latest)
     return {
         "active_application": latest_payload.get("application_name"),
         "current_application": latest_payload.get("application_name"),
         "active_window": latest_payload.get("window_title"),
-        "current_active_path": latest_payload.get("executable_name"),
+        "current_active_path": latest_payload.get("process_path"),
         "last_active_time": latest_payload.get("timestamp"),
         "application_history": [serialize_active_application_history(row) for row in history],
     }
@@ -506,19 +507,22 @@ def _build_session_record(record: Dict[str, Any]) -> SessionRecord:
 def list_active_applications_history() -> List[Dict[str, Any]]:
     with get_db_session() as session:
         rows = session.execute(
-            select(ActiveApplication).order_by(ActiveApplication.timestamp.asc(), ActiveApplication.id.asc())
+            select(ActiveApplicationHistory)
+            .order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc())
+            .limit(500)
         ).scalars().all()
-        return [serialize_active_application(row) for row in rows]
+        return [serialize_active_application_history(row) for row in rows]
 
 
 def append_active_application(record: Dict[str, Any]) -> None:
+    event_timestamp = func.now()
     row = ActiveApplication(
         hostname=record.get("hostname") or "Unknown",
         username=record.get("username"),
         application_name=record.get("application_name"),
         executable_name=record.get("executable_name"),
         window_title=record.get("window_title"),
-        timestamp=_parse_required_datetime(record.get("timestamp")),
+        timestamp=event_timestamp,
     )
     with get_db_session() as session:
         session.add(row)
@@ -528,7 +532,7 @@ def append_active_application(record: Dict[str, Any]) -> None:
             application=record.get("application_name"),
             window_title=record.get("window_title"),
             process_path=record.get("process_path") or record.get("active_process_path") or record.get("executable_name"),
-            timestamp=_parse_required_datetime(record.get("timestamp")),
+            timestamp=event_timestamp,
         ))
         session.flush()
         old_rows = session.execute(
@@ -539,6 +543,32 @@ def append_active_application(record: Dict[str, Any]) -> None:
         ).scalars().all()
         if old_rows:
             session.execute(delete(ActiveApplicationHistory).where(ActiveApplicationHistory.id.in_(old_rows)))
+
+
+def normalize_active_application_timestamps() -> int:
+    local_offset = datetime.now().astimezone().utcoffset()
+    if not local_offset:
+        return 0
+
+    offset_seconds = int(local_offset.total_seconds())
+    if offset_seconds == 0:
+        return 0
+
+    statement_template = (
+        "UPDATE {table_name} "
+        "SET timestamp = timestamp - (:offset_seconds * interval '1 second') "
+        "WHERE timestamp > now() + interval '10 seconds'"
+    )
+
+    corrected = 0
+    with get_db_session() as session:
+        for table_name in ("active_applications", "active_application_history"):
+            result = session.execute(
+                text(statement_template.format(table_name=table_name)),
+                {"offset_seconds": offset_seconds},
+            )
+            corrected += max(result.rowcount or 0, 0)
+    return corrected
 
 
 def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any = None, activity: Optional[Dict[str, Any]] = None) -> None:
@@ -570,7 +600,7 @@ def get_latest_active_applications() -> List[Dict[str, Any]]:
     latest_by_host: Dict[str, Dict[str, Any]] = {}
     for record in history:
         hostname = record.get("hostname")
-        if hostname:
+        if hostname and hostname not in latest_by_host:
             latest_by_host[hostname] = record
     return list(latest_by_host.values())
 
@@ -580,12 +610,12 @@ def get_latest_active_application_for_host(hostname: str) -> Optional[Dict[str, 
         return None
     with get_db_session() as session:
         row = session.execute(
-            select(ActiveApplication)
-            .where(ActiveApplication.hostname == hostname)
-            .order_by(desc(ActiveApplication.timestamp), desc(ActiveApplication.id))
+            select(ActiveApplicationHistory)
+            .where(ActiveApplicationHistory.hostname == hostname)
+            .order_by(desc(ActiveApplicationHistory.timestamp), desc(ActiveApplicationHistory.id))
             .limit(1)
         ).scalar_one_or_none()
-        return serialize_active_application(row) if row else None
+        return serialize_active_application_history(row) if row else None
 
 
 def record_hardware_change(

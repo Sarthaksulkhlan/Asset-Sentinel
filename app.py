@@ -21,7 +21,7 @@ from activity_api import (
     get_sessions_count,
 )
 from database import init_db
-from storage import get_asset_details, list_alerts, list_assets
+from storage import get_asset_details, list_alerts, list_assets, normalize_active_application_timestamps
 from registration import register_admin, submit_early_access
 from telemetry_bootstrap import bootstrap_local_telemetry
 from auth import (
@@ -40,6 +40,15 @@ from auth import (
 
 app = Flask(__name__)
 CORS(app, supports_credentials=True, allow_headers=["Content-Type", "Authorization"])  # Allow React frontend auth headers
+
+
+@app.after_request
+def add_live_api_cache_headers(response):
+    if request.path.startswith("/api/assets") or request.path == "/api/active-applications":
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +70,12 @@ def enrich_assets_with_current_activity(assets):
         current_activity = activity.get("active_process_path") or activity.get("current_website")
         current_monitor_record = get_latest_active_application_for_host(current_hostname)
         if not current_activity:
-            current_activity = current_monitor_record.get("executable_name") if current_monitor_record else None
+            current_activity = (
+                current_monitor_record.get("process_path")
+                or current_monitor_record.get("executable_name")
+                if current_monitor_record
+                else None
+            )
 
         enriched_assets = []
         for asset in assets:
@@ -320,6 +334,9 @@ if __name__ == "__main__":
     print_startup_environment_diagnostics()
     try:
         init_db()
+        corrected_app_timestamps = normalize_active_application_timestamps()
+        if corrected_app_timestamps:
+            print(f"[INFO] Corrected {corrected_app_timestamps} future active application timestamps.")
         ensure_auth_schema()
         bootstrap_admin_user()
         bootstrap_local_telemetry()

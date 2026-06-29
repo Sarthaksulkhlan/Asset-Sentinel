@@ -24,7 +24,7 @@ LOGIN_POLL_INTERVAL_SECONDS = 5
 _monitor_lock = threading.Lock()
 _monitor_started = False
 _login_monitor_started = False
-_last_signature: Optional[tuple] = None
+_last_signature_by_host: Dict[str, tuple] = {}
 _lock_screen_observed = False
 _last_unlock_fallback_at = 0.0
 
@@ -64,7 +64,7 @@ def collect_active_application_record() -> Optional[Dict[str, Any]]:
         return None
 
     application_name = executable_name.rsplit(".", 1)[0] if executable_name else "Unknown"
-    timestamp = datetime.now().isoformat()
+    timestamp = datetime.now().astimezone().isoformat()
     process_path = activity.get("active_process_path")
 
     return {
@@ -90,7 +90,7 @@ def _record_signature(record: Dict[str, Any]) -> tuple:
     return (
         record.get("hostname"),
         record.get("username"),
-        record.get("executable_name"),
+        record.get("application_name") or record.get("application") or record.get("executable_name"),
         record.get("window_title"),
     )
 
@@ -152,23 +152,24 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
 
 
 def _append_if_changed(record: Dict[str, Any]) -> None:
-    global _last_signature
-
     signature = _record_signature(record)
+    hostname = record.get("hostname") or socket.gethostname()
     with _monitor_lock:
         history = _read_activity_history()
-        if history:
-            latest = history[-1]
+        for latest in history:
+            if (latest.get("hostname") or hostname) != hostname:
+                continue
             if _record_signature(latest) == signature:
-                _last_signature = signature
+                _last_signature_by_host[hostname] = signature
                 return
+            break
 
-        if _last_signature == signature:
+        if _last_signature_by_host.get(hostname) == signature:
             return
 
         history.append(record)
         _write_activity_history(history)
-        _last_signature = signature
+        _last_signature_by_host[hostname] = signature
 
 
 def _monitor_loop() -> None:
@@ -186,15 +187,18 @@ def _monitor_loop() -> None:
 
 
 def start_active_application_monitor() -> None:
-    global _monitor_started, _last_signature, _lock_screen_observed
+    global _monitor_started, _lock_screen_observed
 
     with _monitor_lock:
         if _monitor_started:
             return
         history = _read_activity_history()
         if history:
-            _last_signature = _record_signature(history[-1])
-            _lock_screen_observed = _is_lock_app(history[-1])
+            for record in history:
+                hostname = record.get("hostname")
+                if hostname and hostname not in _last_signature_by_host:
+                    _last_signature_by_host[hostname] = _record_signature(record)
+            _lock_screen_observed = _is_lock_app(history[0])
         _monitor_started = True
 
     thread = threading.Thread(target=_monitor_loop, name="active-application-monitor", daemon=True)
