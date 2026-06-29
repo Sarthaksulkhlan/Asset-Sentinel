@@ -1,4 +1,5 @@
 import os
+import os
 import socket
 import sys
 from flask import Flask, g, jsonify, request
@@ -343,9 +344,14 @@ if __name__ == "__main__":
     except RuntimeError as exc:
         print(exc)
         sys.exit(1)
-    if os.environ.get("WERKZEUG_RUN_MAIN") in {None, "true"}:
+    if (
+        os.environ.get("ASSET_SENTINEL_EMBEDDED_MONITOR", "").lower() in {"1", "true", "yes"}
+        and os.environ.get("WERKZEUG_RUN_MAIN") in {None, "true"}
+    ):
         start_active_application_monitor()
         start_login_event_monitor()
+    else:
+        print("[INFO] Embedded monitor disabled. Use AssetSentinelMonitoringService for endpoint telemetry.")
     print("=" * 70)
     print("  Asset Sentinel Backend")
     print("  Running on http://localhost:5000")
