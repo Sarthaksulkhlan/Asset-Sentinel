@@ -4,6 +4,7 @@
 !.env.example
 
 # Runtime logs
+logs/
 *.log
 app_runtime.err.log
 app_runtime.out.log
@@ -11,8 +12,12 @@ app_runtime.out.log
 # Python cache
 __pycache__/
 _pycache_/
+*.pyc
 *.py[cod]
 
 # Frontend dependencies and build output
+node_modules/
+dist/
+build/
 frontend/node_modules/
 frontend/dist/

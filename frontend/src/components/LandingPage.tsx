@@ -1224,10 +1224,10 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
                 <div className="p-3.5 bg-[#0d1217] border border-white/5 rounded-lg flex flex-col gap-1">
                   <span className="text-[9px] text-[#bbc9cf]/70 uppercase font-bold tracking-wider">Business Email</span>
                   <a 
-                    href="mailto:contact-assetsentinel.alert@gmail.com" 
+                    href="mailto:contact@example.com" 
                     className="text-[#00d1ff] text-xs font-semibold hover:underline select-all cursor-pointer transition-colors"
                   >
-                    contact-assetsentinel.alert@gmail.com
+                    contact@example.com
                   </a>
                 </div>
                 <div className="p-3.5 bg-[#0d1217] border border-white/5 rounded-lg flex flex-col gap-1">

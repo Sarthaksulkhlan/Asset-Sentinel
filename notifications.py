@@ -8,7 +8,6 @@ from config import Config
 
 logger = logging.getLogger("asset_sentinel.notifications")
 _last_email_error = ""
-ALERT_RECIPIENT = "assetsentinel.alerts@gmail.com"
 
 
 def get_last_email_error() -> str:
@@ -66,6 +65,7 @@ def send_alert_email(subject: str, fields: Dict[str, Any]) -> bool:
             "SMTP_HOST": Config.SMTP_HOST,
             "SMTP_USERNAME": Config.SMTP_USERNAME,
             "SMTP_PASSWORD": Config.SMTP_PASSWORD,
+            "ALERT_EMAIL": Config.ALERT_EMAIL,
         }.items()
         if not value
     ]
@@ -82,7 +82,7 @@ def send_alert_email(subject: str, fields: Dict[str, Any]) -> bool:
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = Config.SMTP_FROM_EMAIL or Config.SMTP_USERNAME
-    message["To"] = ALERT_RECIPIENT
+    message["To"] = Config.ALERT_EMAIL
     message.set_content(_build_email_body(subject, fields))
 
     try:
@@ -94,7 +94,7 @@ def send_alert_email(subject: str, fields: Dict[str, Any]) -> bool:
                 smtp.ehlo()
             smtp.login(Config.SMTP_USERNAME, Config.SMTP_PASSWORD)
             smtp.send_message(message)
-        logger.info("Email notification sent to %s with subject %s", ALERT_RECIPIENT, subject)
+        logger.info("Email notification sent to %s with subject %s", Config.ALERT_EMAIL, subject)
         return True
     except smtplib.SMTPAuthenticationError as exc:
         _set_last_email_error(f"SMTP authentication failed for {Config.SMTP_USERNAME} via {Config.SMTP_HOST}:{Config.SMTP_PORT}: {exc}")

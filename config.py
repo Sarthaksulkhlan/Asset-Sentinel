@@ -45,7 +45,7 @@ class Config:
     SQLALCHEMY_DATABASE_URL = _required_database_url()
     SQLALCHEMY_ECHO = os.environ.get("ASSET_SENTINEL_SQL_ECHO", "").lower() in {"1", "true", "yes"}
     SQLALCHEMY_POOL_PRE_PING = True
-    JWT_SECRET_KEY = os.environ.get("ASSET_SENTINEL_JWT_SECRET", "change-me-before-production")
+    JWT_SECRET_KEY = os.environ.get("ASSET_SENTINEL_JWT_SECRET", "your_secret_here")
     JWT_ISSUER = os.environ.get("ASSET_SENTINEL_JWT_ISSUER", "asset-sentinel")
     JWT_AUDIENCE = os.environ.get("ASSET_SENTINEL_JWT_AUDIENCE", "asset-sentinel-frontend")
     JWT_ACCESS_TOKEN_MINUTES = int(os.environ.get("ASSET_SENTINEL_ACCESS_TOKEN_MINUTES", "15"))
@@ -54,7 +54,7 @@ class Config:
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=JWT_REFRESH_TOKEN_DAYS)
     BOOTSTRAP_ADMIN_USERNAME = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_USERNAME", "centralcommand")
     BOOTSTRAP_ADMIN_EMAIL = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_EMAIL", "centralcommand@asset-sentinel.local")
-    BOOTSTRAP_ADMIN_PASSWORD = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_PASSWORD", "admin!123")
+    BOOTSTRAP_ADMIN_PASSWORD = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_PASSWORD", "your_admin_password")
     BOOTSTRAP_ADMIN_DISPLAY_NAME = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_DISPLAY_NAME", "Central Command")
     SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
     SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
@@ -63,7 +63,7 @@ class Config:
     SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", SMTP_USERNAME)
     SMTP_USE_SSL = os.environ.get("SMTP_USE_SSL", "").lower() in {"1", "true", "yes"}
     SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
-    ALERT_EMAIL = os.environ.get("ALERT_EMAIL", "assetsentinel.alerts@gmail.com")
+    ALERT_EMAIL = os.environ.get("ALERT_EMAIL", "")
 
     @classmethod
     def refresh_from_environment(cls) -> None:
@@ -74,7 +74,7 @@ class Config:
         cls.SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", cls.SMTP_USERNAME)
         cls.SMTP_USE_SSL = os.environ.get("SMTP_USE_SSL", "").lower() in {"1", "true", "yes"}
         cls.SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
-        cls.ALERT_EMAIL = os.environ.get("ALERT_EMAIL", "assetsentinel.alerts@gmail.com")
+        cls.ALERT_EMAIL = os.environ.get("ALERT_EMAIL", "")
 
     @classmethod
     def reload_local_env(cls) -> None:
