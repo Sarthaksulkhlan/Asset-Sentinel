@@ -67,7 +67,7 @@ GRANT USAGE, SELECT ON SEQUENCES TO asset_sentinel_app;
 The Flask integration uses this environment variable:
 
 ```powershell
-ASSET_SENTINEL_DATABASE_URL=postgresql://asset_sentinel_app:change_this_password@your-neon-host.neon.tech/asset_sentinel?sslmode=require
+ASSET_SENTINEL_DATABASE_URL=postgresql://username:password@host/database
 ```
 
 Optional SQL logging:
@@ -80,7 +80,7 @@ Default local Super Admin bootstrap credentials:
 
 ```powershell
 username: centralcommand
-password: admin!123
+password: your_admin_password
 ```
 
 Email notifications use SMTP settings from environment variables only:
@@ -89,8 +89,8 @@ Email notifications use SMTP settings from environment variables only:
 SMTP_HOST=smtp.example.com
 SMTP_PORT=587
 SMTP_USERNAME=alerts@example.com
-SMTP_PASSWORD=change_this_password
-ALERT_EMAIL=assetsentinel.alerts@gmail.com
+SMTP_PASSWORD=your_app_password
+ALERT_EMAIL=security_team@example.com
 ```
 
 Do not commit real production passwords or service credentials.
@@ -158,3 +158,100 @@ The database design is intended to preserve these existing response shapes:
 - `GET /sessions/count`
 
 The frontend should continue to work without modification once the Flask storage layer is moved to PostgreSQL.
+
+## Windows Monitoring Service
+
+Asset Sentinel separates runtime responsibilities:
+
+```text
+Windows Endpoint
+  AssetSentinelMonitoringService
+    -> monitoring_agent.py
+    -> Windows/WMI/Event Log/foreground window telemetry
+    -> ASSET_SENTINEL_DATABASE_URL
+    -> Neon PostgreSQL
+
+API Server
+  app.py
+    -> Flask authenticated API
+    -> Neon PostgreSQL
+
+React Dashboard
+  frontend/
+    -> API Server
+    -> live fleet, login, heartbeat, hardware and active app views
+```
+
+The React frontend and dashboard are not Windows Services. Only the endpoint monitoring agent is installed as a Windows Service.
+
+### Install
+
+Run Command Prompt or PowerShell as Administrator:
+
+```bat
+install_service.bat
+```
+
+The installer registers `AssetSentinelMonitoringService`, sets Automatic Delayed Start, configures restart-on-failure recovery, and starts the service.
+
+### Start and Stop
+
+```bat
+start_service.bat
+stop_service.bat
+```
+
+### Uninstall
+
+Run as Administrator:
+
+```bat
+uninstall_service.bat
+```
+
+### Debug the Agent Without Installing
+
+```powershell
+python monitoring_agent.py --console
+```
+
+### Logs
+
+Runtime logs are written to:
+
+```text
+logs/service.log
+logs/agent.log
+logs/error.log
+logs/telemetry_spool.jsonl
+```
+
+`telemetry_spool.jsonl` stores telemetry that could not be uploaded during temporary Neon or network failures. The service retries this spool until uploads succeed.
+
+### Verify the Service
+
+Run as Administrator:
+
+```powershell
+Get-Service AssetSentinelMonitoringService
+sc.exe qc AssetSentinelMonitoringService
+sc.exe qfailure AssetSentinelMonitoringService
+```
+
+Confirm Neon receives records:
+
+```sql
+select hostname, last_seen from assets order by last_seen desc limit 5;
+select hostname, application, timestamp from active_application_history order by timestamp desc limit 5;
+select username, hostname, event_type, recorded_at from sessions order by recorded_at desc limit 5;
+```
+
+### Production Notes
+
+`app.py` no longer starts endpoint monitoring by default. For legacy local development only, set:
+
+```powershell
+$env:ASSET_SENTINEL_EMBEDDED_MONITOR="1"
+```
+
+Production deployments should run the Flask API and `AssetSentinelMonitoringService` separately.
