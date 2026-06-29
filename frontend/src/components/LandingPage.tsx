@@ -169,6 +169,7 @@ const RollingKpiValue = React.memo(function RollingKpiValue({ value, className, 
           <span
             key={`${char}-${charIndex}`}
             aria-hidden="true"
+            className="odometer-digit"
             style={{
               display: "inline-block",
               minWidth: "0.62em",
@@ -190,7 +191,7 @@ const RollingKpiValue = React.memo(function RollingKpiValue({ value, className, 
               }}
             >
               {stripDigits.map((digit, index) => (
-                <span key={`${digit}-${index}`} style={{ height: "1em", lineHeight: "1" }}>{digit}</span>
+                <span key={`${digit}-${index}`} className="odometer-strip-digit" style={{ height: "1em", lineHeight: "1" }}>{digit}</span>
               ))}
             </span>
           </span>

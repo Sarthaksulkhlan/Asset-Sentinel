@@ -498,19 +498,19 @@ body {
   #landing-screen main {
     padding-left: 0.75rem;
     padding-right: 0.75rem;
-    padding-top: 0.7rem;
+    padding-top: 0.55rem;
     padding-bottom: 2rem;
   }
 
   #landing-screen #hero-heading {
     display: flex;
     flex-direction: column;
-    gap: 0.7rem;
-    margin-bottom: 0.7rem;
+    gap: 0.56rem;
+    margin-bottom: 0.55rem;
   }
 
   #landing-screen #hero-heading > div:first-child {
-    gap: 0.62rem;
+    gap: 0.5rem;
     width: 100%;
   }
 
@@ -519,8 +519,8 @@ body {
   }
 
   #landing-screen .hero-typewriter {
-    min-height: 3.8rem !important;
-    font-size: 1.44rem;
+    min-height: 3.45rem !important;
+    font-size: 1.38rem;
     line-height: 1.05;
   }
 
@@ -535,9 +535,14 @@ body {
   #landing-screen .hero-action-grid {
     display: grid !important;
     grid-template-columns: 1fr;
-    gap: 0.45rem;
-    padding-top: 0.15rem;
+    gap: 0.42rem;
+    padding-top: 0.05rem;
     width: 100%;
+  }
+
+  #landing-screen #launch-dashboard-btn,
+  #landing-screen .hero-action-grid > button:nth-child(4) {
+    display: none !important;
   }
 
   #landing-screen #hero-heading .enterprise-hero-button {
@@ -560,20 +565,20 @@ body {
   }
 
   #landing-screen .hero-early-access-card {
-    padding: 0.78rem;
+    padding: 0.72rem;
     border-radius: 0.65rem;
   }
 
   #landing-screen .hero-early-access-card .relative.flex {
     flex-direction: column;
     align-items: stretch;
-    gap: 0.55rem;
+    gap: 0.46rem;
   }
 
   #landing-screen #hero-heading .hero-early-access-card .enterprise-hero-button {
     width: 100%;
     min-width: 0;
-    min-height: 2rem;
+    min-height: 2.05rem;
     padding-left: 0.85rem;
     padding-right: 0.85rem;
   }
@@ -592,7 +597,7 @@ body {
     display: block;
     font-size: 0.66rem;
     line-height: 1.35;
-    margin-top: 0.2rem;
+    margin-top: 0.16rem;
   }
 
   #landing-screen .hero-early-access-card .grid-cols-3 {
@@ -604,38 +609,93 @@ body {
   }
 
   #landing-screen #kpi-banner {
-    grid-template-columns: 1fr;
-    gap: 0.55rem;
-    margin-bottom: 1.35rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.62rem;
+    margin-bottom: 0.85rem;
   }
 
   #landing-screen #kpi-banner .glass-panel {
-    min-height: 3.35rem;
-    padding: 0.58rem 0.65rem;
+    width: 100%;
+    min-width: 0;
+    min-height: 5.05rem;
+    padding: 0.72rem 0.58rem;
     border-radius: 0.65rem;
+    align-items: center;
   }
 
-  #landing-screen #kpi-banner span:first-child {
+  #landing-screen #kpi-banner .glass-panel > span:first-child {
     font-size: 0.56rem;
-    line-height: 1.15;
-    margin-bottom: 0.32rem;
+    line-height: 1.18;
+    margin-bottom: 0.46rem;
     letter-spacing: 0.08em;
+    min-height: 1.34rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   #landing-screen #kpi-banner .text-3xl {
-    font-size: 1.28rem;
-    line-height: 1.05;
+    font-size: 1.42rem;
+    line-height: 1;
   }
 
   #landing-screen #kpi-banner [aria-label] {
     display: inline-flex !important;
-    align-items: baseline;
+    align-items: center;
     justify-content: center;
-    min-height: 1.1em;
+    min-height: 1.12em;
+    width: 100%;
+    gap: 0.01em;
+    overflow: visible;
+  }
+
+  #landing-screen #kpi-banner [aria-hidden="true"] {
+    line-height: 1;
+    flex: 0 0 auto;
+  }
+
+  #landing-screen #kpi-banner [aria-label] > [aria-hidden="true"] {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    min-width: 0.68em !important;
+    width: 0.68em;
+    height: 1.08em !important;
+    overflow: hidden;
+  }
+
+  #landing-screen #kpi-banner .odometer-digit {
+    position: relative;
+    min-width: 0.72em !important;
+    width: 0.72em;
+    height: 1em !important;
+    contain: strict;
+  }
+
+  #landing-screen #kpi-banner .odometer-digit-strip {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    align-items: center;
+    transform-origin: center center;
+  }
+
+  #landing-screen #kpi-banner .odometer-strip-digit {
+    display: block;
+    width: 100%;
+    height: 1em !important;
+    min-height: 1em !important;
+    line-height: 1 !important;
+    text-align: center;
   }
 
   #landing-screen #live-monitoring-center {
-    margin-bottom: 2.5rem;
+    margin-top: 0;
+    margin-bottom: 2.1rem;
+  }
+
+  #landing-screen #live-monitoring-center .mb-6 {
+    margin-bottom: 1rem;
   }
 
   #landing-screen #protocols-showcase {
