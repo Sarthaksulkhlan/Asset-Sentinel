@@ -194,11 +194,21 @@ install_service.bat
 
 The installer registers `AssetSentinelMonitoringService`, sets Automatic Delayed Start, configures restart-on-failure recovery, and starts the service.
 
+Active Application Timeline requires a user-session helper because Windows Services cannot read the foreground window from the interactive desktop. Install it once for each monitored Windows user:
+
+```bat
+install_active_app_agent.bat
+```
+
+This registers `active_application_user_agent.py` at user logon when Task Scheduler permissions are available, or falls back to a current-user Startup launcher. It records only real foreground-window events; if Windows does not expose a foreground window, no application event is inserted.
+
 ### Start and Stop
 
 ```bat
 start_service.bat
 stop_service.bat
+start_active_app_agent.bat
+stop_active_app_agent.bat
 ```
 
 ### Uninstall
@@ -207,6 +217,7 @@ Run as Administrator:
 
 ```bat
 uninstall_service.bat
+uninstall_active_app_agent.bat
 ```
 
 ### Debug the Agent Without Installing
