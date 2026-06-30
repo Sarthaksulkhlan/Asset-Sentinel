@@ -30,6 +30,11 @@ except ImportError:
     wmi = None
 
 try:
+    import pythoncom
+except ImportError:
+    pythoncom = None
+
+try:
     import psutil
 except ImportError:
     psutil = None
@@ -48,6 +53,18 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("session_manager")
+
+
+def _coinitialize_for_wmi() -> bool:
+    if pythoncom is None:
+        logger.warning("pythoncom not available; WMI session lookup may fail in threads")
+        return False
+    try:
+        pythoncom.CoInitialize()
+        return True
+    except Exception as exc:
+        logger.warning("pythoncom.CoInitialize failed before WMI session lookup: %s", exc)
+        return False
 
 
 # ============================================================================
@@ -141,7 +158,8 @@ def get_session_id_via_wmi() -> Optional[str]:
     if wmi is None:
         logger.warning("pywin32/wmi not available, cannot get Session ID via WMI")
         return get_session_id_via_windows_api()
-    
+
+    com_initialized = _coinitialize_for_wmi()
     try:
         current_username = get_current_username()
         if not current_username:
@@ -165,6 +183,12 @@ def get_session_id_via_wmi() -> Optional[str]:
     except Exception as e:
         logger.warning(f"Error querying Session ID via WMI: {e}")
         return get_session_id_via_windows_api()
+    finally:
+        if com_initialized and pythoncom is not None:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception as exc:
+                logger.debug("pythoncom.CoUninitialize failed after WMI session lookup: %s", exc)
 
 
 def get_session_id_via_windows_api() -> Optional[str]:
