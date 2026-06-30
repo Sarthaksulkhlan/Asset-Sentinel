@@ -37,7 +37,11 @@ from session_manager import get_current_session_info
 from login_tracker import load_sessions
 from storage import get_asset_status
 
-COUNTABLE_LOGIN_SOURCES = {"windows_interactive_logon"}
+NON_COUNTABLE_LOGIN_SOURCES = {
+    "windows_session_reconnect",
+    "windows_lock",
+    "windows_session_disconnect",
+}
 
 # ============================================================================
 # Logging Setup
@@ -203,7 +207,8 @@ def get_sessions_count() -> Tuple[Dict[str, Any], int]:
         sessions = load_sessions()
         login_count = len([
             s for s in sessions
-            if s.get("event_type") == "LOGIN" and s.get("login_source") in COUNTABLE_LOGIN_SOURCES
+            if s.get("event_type") == "LOGIN"
+            and s.get("login_source") not in NON_COUNTABLE_LOGIN_SOURCES
         ])
         logout_count = len([s for s in sessions if s.get("event_type") == "LOGOUT"])
         

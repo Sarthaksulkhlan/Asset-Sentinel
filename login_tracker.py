@@ -38,10 +38,10 @@ from storage import (
     list_sessions,
     replace_sessions,
     touch_active_session,
-    update_asset_heartbeat,
 )
 
-COUNTABLE_LOGIN_SOURCES = {"windows_interactive_logon"}
+COUNTABLE_LOGIN_SOURCES = {"windows_interactive_logon", "windows_unlock", "windows_unlock_observed"}
+COUNTABLE_LOGIN_EVENT_IDS = {"4624", "4801", "LOCKAPP_UNLOCK"}
 
 # ============================================================================
 # Logging Setup
@@ -232,6 +232,14 @@ def close_active_sessions(
             "windows_event_record_id": logout_event_record_id,
             "recorded_at": datetime.now(timezone.utc).isoformat(),
         })
+        logger.info(
+            "Logout detected: user=%s host=%s session=%s event_id=%s record_id=%s",
+            session.get("username"),
+            session.get("hostname"),
+            session.get("session_id"),
+            logout_event_id,
+            logout_event_record_id,
+        )
 
         save_alert(
             alert_type="LOGOUT",
@@ -267,6 +275,8 @@ def detect_login() -> Optional[Dict[str, Any]]:
     current_session = get_current_session_info()
     last_session = get_last_recorded_session()
     current_user = current_session.get("username")
+    current_session_id = current_session.get("session_id")
+    current_event_record_id = current_session.get("windows_event_record_id")
 
     logout_timestamp = (
         current_session.get("latest_logout_timestamp")
@@ -298,14 +308,17 @@ def detect_login() -> Optional[Dict[str, Any]]:
     
     # First run - no previous session
     if last_session is None:
+        if current_event_record_id and current_session.get("login_source") in COUNTABLE_LOGIN_SOURCES:
+            logger.info(
+                "First run detected with real Windows login event %s record %s",
+                current_session.get("windows_event_id"),
+                current_event_record_id,
+            )
+            return record_login(current_session)
         logger.info("First run detected - waiting for a real Windows interactive login event")
-        update_asset_heartbeat(current_session.get("hostname"))
         return None
     
     # Check if user or session changed (indicates logout/login)
-    current_session_id = current_session.get("session_id")
-    current_event_record_id = current_session.get("windows_event_record_id")
-    
     last_user = last_session.get("username")
     last_session_id = last_session.get("session_id")
     last_event_record_id = last_session.get("windows_event_record_id")
@@ -328,13 +341,11 @@ def detect_login() -> Optional[Dict[str, Any]]:
     # Different username = new login
     if current_user != last_user:
         logger.info("User changed but no countable Windows interactive logon event was available; not recording login.")
-        update_asset_heartbeat(current_session.get("hostname"))
         return None
     
     # Different session ID with same user = new login
     if current_session_id != last_session_id and current_user == last_user:
         logger.info("Session ID changed without a countable Windows interactive logon event; not recording login.")
-        update_asset_heartbeat(current_session.get("hostname"))
         return None
     
     # No login detected
@@ -343,7 +354,6 @@ def detect_login() -> Optional[Dict[str, Any]]:
         current_session.get("username"),
         current_session.get("session_id"),
     )
-    update_asset_heartbeat(current_session.get("hostname"))
     logger.debug(f"No login detected - user {current_user} still in session {current_session_id}")
     return None
 
@@ -366,14 +376,16 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
         logger.info("Skipping duplicate Windows login event record %s for %s", event_record_id, hostname)
         touch_active_session(hostname, session_info.get("username"), session_info.get("session_id"))
         return {}
-    if session_info.get("login_source") not in COUNTABLE_LOGIN_SOURCES:
+    if (
+        session_info.get("login_source") not in COUNTABLE_LOGIN_SOURCES
+        and str(session_info.get("windows_event_id") or "") not in COUNTABLE_LOGIN_EVENT_IDS
+    ):
         logger.info(
             "Skipping non-countable login source: host=%s source=%s event=%s",
             hostname,
             session_info.get("login_source"),
             session_info.get("windows_event_id"),
         )
-        update_asset_heartbeat(hostname)
         return {}
     session_info = {**session_info, "force_close_active_sessions": True}
     close_timestamp = session_info.get("latest_logout_timestamp") or now
@@ -426,8 +438,14 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
         details=alert_details
     )
     
-    logger.info(f"Login recorded: {login_record.get('username')} on {login_record.get('hostname')}")
-    update_asset_heartbeat(login_record.get("hostname"))
+    logger.info(
+        "Login detected and recorded: user=%s host=%s session=%s event_id=%s record_id=%s",
+        login_record.get("username"),
+        login_record.get("hostname"),
+        login_record.get("session_id"),
+        login_record.get("windows_event_id"),
+        login_record.get("windows_event_record_id"),
+    )
     
     return login_record
 

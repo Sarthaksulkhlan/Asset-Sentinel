@@ -294,10 +294,10 @@ def get_latest_windows_login_event(username: Optional[str]) -> Optional[Dict[str
     """
     Return the newest interactive Windows login boundary for this user.
 
-    Security 4624 logon type 2 is the only countable interactive login.
-    Unlock, reconnect, and session refresh events are not logins.
+    Security 4624 logon type 2 is a full interactive login, and 4801 is
+    workstation unlock after a successful user authentication.
     """
-    return _read_latest_windows_security_event(username, {4624}, True)
+    return _read_latest_windows_security_event(username, {4624, 4801}, True)
 
 
 def get_latest_windows_logout_event(username: Optional[str]) -> Optional[Dict[str, Any]]:
