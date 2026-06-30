@@ -28,6 +28,12 @@ logger = logging.getLogger("collect_hardware")
 
 
 def _configure_foreground_window_api(user32, kernel32) -> None:
+    user32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    user32.OpenInputDesktop.restype = wintypes.HANDLE
+    user32.SetThreadDesktop.argtypes = [wintypes.HANDLE]
+    user32.SetThreadDesktop.restype = wintypes.BOOL
+    user32.CloseDesktop.argtypes = [wintypes.HANDLE]
+    user32.CloseDesktop.restype = wintypes.BOOL
     user32.GetForegroundWindow.restype = wintypes.HWND
     user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
     user32.GetWindowTextLengthW.restype = ctypes.c_int
@@ -46,6 +52,31 @@ def _configure_foreground_window_api(user32, kernel32) -> None:
     kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
+
+
+def _attach_to_input_desktop(user32) -> Optional[int]:
+    """
+    Attach this thread to the currently active input desktop.
+
+    Windows foreground-window APIs return 0 when a background process has no
+    desktop attached. This does not bypass Session 0 isolation; it only lets an
+    interactive user-context process read its own real foreground window.
+    """
+    DESKTOP_READOBJECTS = 0x0001
+    DESKTOP_CREATEWINDOW = 0x0002
+    DESKTOP_ENUMERATE = 0x0040
+    DESKTOP_SWITCHDESKTOP = 0x0100
+    access_mask = DESKTOP_READOBJECTS | DESKTOP_CREATEWINDOW | DESKTOP_ENUMERATE | DESKTOP_SWITCHDESKTOP
+
+    desktop = user32.OpenInputDesktop(0, False, access_mask)
+    if not desktop:
+        logger.debug("OpenInputDesktop returned no desktop handle.")
+        return None
+    if not user32.SetThreadDesktop(desktop):
+        logger.debug("SetThreadDesktop failed for active input desktop.")
+        user32.CloseDesktop(desktop)
+        return None
+    return desktop
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -371,12 +402,42 @@ def collect_current_active_path() -> dict:
     }
 
     try:
+        import psutil
+        import win32gui
+        import win32process
+
+        hwnd = win32gui.GetForegroundWindow()
+        if hwnd:
+            title = win32gui.GetWindowText(hwnd) or None
+            _, process_id = win32process.GetWindowThreadProcessId(hwnd)
+            process = psutil.Process(process_id) if process_id else None
+            process_path = process.exe() if process else None
+            process_name = process.name() if process else None
+            details["active_window_title"] = title
+            details["active_process_path"] = process_path
+            details["active_process_name"] = process_name
+            if title and process_name:
+                details["current_website"] = f"{process_name} | {title}"
+            elif title:
+                details["current_website"] = title
+            elif process_name:
+                details["current_website"] = process_name
+            return details
+        logger.debug("win32gui.GetForegroundWindow returned no window handle.")
+    except Exception as exc:
+        logger.debug("pywin32 foreground collection failed: %s", exc)
+
+    try:
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
         _configure_foreground_window_api(user32, kernel32)
+        input_desktop = _attach_to_input_desktop(user32)
 
         hwnd = user32.GetForegroundWindow()
         if not hwnd:
+            logger.debug("GetForegroundWindow returned no window handle.")
+            if input_desktop:
+                user32.CloseDesktop(input_desktop)
             return details
 
         title_length = user32.GetWindowTextLengthW(hwnd)
@@ -410,6 +471,8 @@ def collect_current_active_path() -> dict:
                     details["active_process_name"] = process_path.split("\\")[-1]
             finally:
                 kernel32.CloseHandle(process_handle)
+        if input_desktop:
+            user32.CloseDesktop(input_desktop)
 
         title = details.get("active_window_title")
         process_name = details.get("active_process_name")
@@ -520,7 +583,6 @@ def collect_hardware() -> dict:
         # Meta
         "collection_method": "none",
         "collected_at": datetime.now(timezone.utc).isoformat(),
-        "last_seen": datetime.now(timezone.utc).isoformat(),
         "collection_errors": [],
     }
 
