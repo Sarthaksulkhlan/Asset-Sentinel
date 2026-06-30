@@ -41,7 +41,11 @@ CORS(app, supports_credentials=True, allow_headers=["Content-Type", "Authorizati
 
 @app.after_request
 def add_live_api_cache_headers(response):
-    if request.path.startswith("/api/assets") or request.path == "/api/active-applications":
+    if (
+        request.path.startswith("/api/assets")
+        or request.path in {"/api/active-applications", "/api/sessions", "/api/sessions/count"}
+        or request.path in {"/sessions", "/sessions/count", "/device-status", "/current-session", "/current-user"}
+    ):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"

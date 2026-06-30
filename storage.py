@@ -14,7 +14,13 @@ from models import ActiveApplication, ActiveApplicationHistory, Alert, Asset, Ha
 
 logger = logging.getLogger("asset_sentinel.storage")
 
-REAL_LOGIN_SOURCES = {"windows_interactive_logon"}
+REAL_LOGIN_SOURCES = {"windows_interactive_logon", "windows_unlock", "windows_unlock_observed"}
+REAL_LOGIN_EVENT_IDS = {"4624", "4801", "LOCKAPP_UNLOCK"}
+NON_COUNTABLE_LOGIN_SOURCES = {
+    "windows_session_reconnect",
+    "windows_lock",
+    "windows_session_disconnect",
+}
 
 
 def _parse_datetime(value: Any) -> Optional[datetime]:
@@ -285,6 +291,12 @@ def list_assets() -> List[Dict[str, Any]]:
             asset.update(_alert_summary(session, row.hostname))
             asset.update(_activity_summary(session, row.hostname))
             assets.append(asset)
+        logger.info(
+            "Dashboard assets query returned %s assets: online=%s offline=%s",
+            len(assets),
+            sum(1 for asset in assets if asset.get("status") == "Online"),
+            sum(1 for asset in assets if asset.get("status") == "Offline"),
+        )
         return assets
 
 
@@ -308,10 +320,11 @@ def _apply_asset_record(row: Asset, record: Dict[str, Any]) -> Asset:
     row.active_process_name = record.get("active_process_name")
     row.cpu_usage_percent = record.get("cpu_usage_percent")
     row.ram_usage_percent = record.get("ram_usage_percent")
-    row.last_seen = _parse_required_datetime(record.get("last_seen") or record.get("collected_at"))
-    if (datetime.now(row.last_seen.tzinfo or timezone.utc) - row.last_seen).total_seconds() < -Config.HEARTBEAT_FUTURE_SKEW_SECONDS:
-        row.last_seen = datetime.now(timezone.utc)
-    row.status = "Offline"
+    if record.get("last_seen"):
+        row.last_seen = _parse_required_datetime(record.get("last_seen"))
+        if (datetime.now(row.last_seen.tzinfo or timezone.utc) - row.last_seen).total_seconds() < -Config.HEARTBEAT_FUTURE_SKEW_SECONDS:
+            row.last_seen = datetime.now(timezone.utc)
+    row.status = _status_from_last_seen(row.last_seen)
     row.collection_method = record.get("collection_method") or "none"
     row.collection_errors = record.get("collection_errors") or []
     row.collected_at = _parse_required_datetime(record.get("collected_at"))
@@ -409,7 +422,8 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
         .order_by(SessionRecord.recorded_at.asc(), SessionRecord.id.asc())
     ).scalars().all()
     if not rows:
-        return {"logins_today": 0}
+        logger.info("Dashboard login summary for hostname=%s: no login_history records", hostname)
+        return {"logins_today": 0, "logins_this_week": 0, "total_logins": 0}
 
     login_rows = [row for row in rows if _is_countable_login(row)]
     latest = rows[-1]
@@ -437,7 +451,7 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
         if isinstance(details, dict) and details.get("failed_login_timestamp"):
             last_failed_login = _parse_datetime(details.get("failed_login_timestamp"))
 
-    return {
+    summary = {
         "current_user": active_login.username or latest_login.username,
         "username": active_login.username or latest_login.username,
         "session_id": active_login.session_id or latest_login.session_id,
@@ -454,6 +468,15 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
         "last_failed_login": _iso(last_failed_login),
         "active_session": active_login.active,
     }
+    logger.info(
+        "Dashboard login summary for hostname=%s: total=%s today=%s week=%s last_success=%s",
+        hostname,
+        summary["total_logins"],
+        summary["logins_today"],
+        summary["logins_this_week"],
+        summary["last_successful_login"],
+    )
+    return summary
 
 
 def _alert_summary(session, hostname: str) -> Dict[str, Any]:
@@ -474,7 +497,15 @@ def _alert_summary(session, hostname: str) -> Dict[str, Any]:
 
 
 def _is_countable_login(row: SessionRecord) -> bool:
-    return row.event_type == "LOGIN" and (row.login_source in REAL_LOGIN_SOURCES)
+    if row.event_type != "LOGIN":
+        return False
+    if row.login_source in NON_COUNTABLE_LOGIN_SOURCES:
+        return False
+    if row.login_source in REAL_LOGIN_SOURCES:
+        return True
+    if str(row.windows_event_id or "") in REAL_LOGIN_EVENT_IDS:
+        return True
+    return True
 
 
 def _activity_summary(session, hostname: str) -> Dict[str, Any]:
@@ -516,8 +547,16 @@ def append_session(record: Dict[str, Any]) -> None:
                 .limit(1)
             ).scalar_one_or_none()
             if existing is not None:
+                logger.info(
+                    "Skipping duplicate session event: hostname=%s event_record_id=%s",
+                    record.get("hostname"),
+                    event_record_id,
+                )
                 return
-        if record.get("event_type") == "LOGIN" and record.get("login_source") not in REAL_LOGIN_SOURCES:
+        if record.get("event_type") == "LOGIN" and (
+            record.get("login_source") not in REAL_LOGIN_SOURCES
+            and str(record.get("windows_event_id") or "") not in REAL_LOGIN_EVENT_IDS
+        ):
             logger.info(
                 "Skipping non-login session event: host=%s source=%s event=%s",
                 record.get("hostname"),
@@ -526,6 +565,14 @@ def append_session(record: Dict[str, Any]) -> None:
             )
             return
         session.add(_build_session_record(record))
+        logger.info(
+            "%s detected and inserted: hostname=%s username=%s event_id=%s record_id=%s",
+            record.get("event_type") or "LOGIN",
+            record.get("hostname"),
+            record.get("username"),
+            record.get("windows_event_id"),
+            record.get("windows_event_record_id"),
+        )
 
 
 def has_session_event_signature(hostname: str, windows_event_record_id: Optional[str]) -> bool:
@@ -611,6 +658,12 @@ def append_active_application(record: Dict[str, Any]) -> None:
             and latest.window_title == window_title
             and latest.process_path == (record.get("process_path") or record.get("active_process_path") or executable_name)
         ):
+            logger.info(
+                "Application event skipped as duplicate: hostname=%s application=%s window=%s",
+                hostname,
+                application_name,
+                window_title,
+            )
             return
         row = ActiveApplication(
             hostname=hostname,
@@ -630,6 +683,14 @@ def append_active_application(record: Dict[str, Any]) -> None:
             timestamp=event_timestamp,
         ))
         session.flush()
+        logger.info(
+            "Application event inserted: hostname=%s username=%s application=%s window=%s timestamp=%s",
+            hostname,
+            username,
+            application_name,
+            window_title,
+            event_timestamp.isoformat(),
+        )
         old_rows = session.execute(
             select(ActiveApplicationHistory.id)
             .where(ActiveApplicationHistory.hostname == (record.get("hostname") or "Unknown"))
@@ -686,7 +747,7 @@ def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any 
             )
             return
         row.last_seen = now
-        row.status = "Offline"
+        row.status = "Online"
         if cpu_usage is not None:
             row.cpu_usage_percent = cpu_usage
         if ram_usage is not None:
@@ -696,6 +757,14 @@ def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any 
             row.active_window_title = activity.get("window_title") or row.active_window_title
             row.active_process_path = activity.get("process_path") or row.active_process_path
             row.current_website = activity.get("window_title") or row.current_website
+        logger.info(
+            "Heartbeat received: hostname=%s last_seen=%s cpu=%s ram=%s active_app=%s",
+            row.hostname,
+            now.isoformat(),
+            cpu_usage,
+            ram_usage,
+            (activity or {}).get("application_name"),
+        )
 
 
 def get_latest_active_applications() -> List[Dict[str, Any]]:
@@ -705,7 +774,9 @@ def get_latest_active_applications() -> List[Dict[str, Any]]:
         hostname = record.get("hostname")
         if hostname and hostname not in latest_by_host:
             latest_by_host[hostname] = record
-    return list(latest_by_host.values())
+    latest = list(latest_by_host.values())
+    logger.info("Dashboard active applications query returned %s latest host records", len(latest))
+    return latest
 
 
 def get_latest_active_application_for_host(hostname: str) -> Optional[Dict[str, Any]]:
@@ -718,7 +789,9 @@ def get_latest_active_application_for_host(hostname: str) -> Optional[Dict[str, 
             .order_by(desc(ActiveApplicationHistory.timestamp), desc(ActiveApplicationHistory.id))
             .limit(1)
         ).scalar_one_or_none()
-        return serialize_active_application_history(row) if row else None
+        result = serialize_active_application_history(row) if row else None
+        logger.info("Dashboard latest active application query for hostname=%s found=%s", hostname, bool(result))
+        return result
 
 
 def get_asset_status(hostname: str) -> Optional[Dict[str, Any]]:
@@ -887,7 +960,7 @@ def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
             if row.ram_usage_percent is not None
         ]
 
-        return {
+        result = {
             "asset": asset,
             "sessions": [serialize_session(row) for row in sessions],
             "alerts": [serialize_alert(row) for row in alerts],
@@ -913,6 +986,16 @@ def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
                 "alert_trend": [{"label": key, "value": value} for key, value in sorted(alert_trend.items())],
             },
         }
+        logger.info(
+            "Dashboard detail query for hostname=%s: sessions=%s app_events=%s timeline=%s logins_today=%s logins_week=%s",
+            hostname,
+            len(sessions),
+            len(app_history),
+            len(timeline[:200]),
+            summary.get("logins_today"),
+            summary.get("logins_this_week"),
+        )
+        return result
 
 
 def _find_asset_row(session, record: Dict[str, Any], device_uid: str) -> Optional[Asset]:

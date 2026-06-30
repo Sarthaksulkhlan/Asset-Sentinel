@@ -36,9 +36,10 @@ from telemetry_bootstrap import _find_existing_asset, _record_change_if_needed
 logger = logging.getLogger("asset_sentinel.agent")
 
 LOGIN_POLL_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_LOGIN_POLL_SECONDS", "5"))
+HEARTBEAT_POLL_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_HEARTBEAT_POLL_SECONDS", str(POLL_INTERVAL_SECONDS)))
 HARDWARE_POLL_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_HARDWARE_POLL_SECONDS", "900"))
 SPOOL_RETRY_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_SPOOL_RETRY_SECONDS", "30"))
-HEARTBEAT_LOG_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_HEARTBEAT_LOG_SECONDS", "60"))
+THREAD_WATCHDOG_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_THREAD_WATCHDOG_SECONDS", "5"))
 
 
 class TelemetrySpool:
@@ -91,9 +92,10 @@ class AssetSentinelAgent:
     def __init__(self, stop_event: Optional[threading.Event] = None, spool: Optional[TelemetrySpool] = None) -> None:
         self.stop_event = stop_event or threading.Event()
         self.spool = spool or TelemetrySpool()
-        self._threads: List[threading.Thread] = []
+        self._threads: Dict[str, threading.Thread] = {}
+        self._thread_targets: Dict[str, Callable[[], None]] = {}
+        self._thread_lock = threading.Lock()
         self._last_active_signature_by_host: Dict[str, tuple] = {}
-        self._last_heartbeat_log_at = 0.0
 
     def start(self) -> None:
         logger.info("Asset Sentinel monitoring agent starting.")
@@ -105,10 +107,12 @@ class AssetSentinelAgent:
             logger.info("Corrected %s future active application timestamps.", corrected)
 
         self._run_hardware_cycle(spool_on_failure=True)
-        self._start_thread("spool-retry", self._spool_retry_loop)
-        self._start_thread("hardware-inventory", self._hardware_loop)
-        self._start_thread("login-activity", self._login_loop)
-        self._start_thread("active-application", self._active_application_loop)
+        self._register_thread("spool-retry", self._spool_retry_loop)
+        self._register_thread("hardware-inventory", self._hardware_loop)
+        self._register_thread("heartbeat", self._heartbeat_loop)
+        self._register_thread("login-activity", self._login_loop)
+        self._register_thread("active-application", self._active_application_loop)
+        self._register_thread("thread-watchdog", self._thread_watchdog_loop, supervised=False)
         logger.info("Asset Sentinel monitoring agent started.")
 
     def run_forever(self) -> None:
@@ -123,15 +127,22 @@ class AssetSentinelAgent:
         logger.info("Asset Sentinel monitoring agent shutdown requested.")
         self.stop_event.set()
         deadline = time.time() + timeout
-        for thread in self._threads:
+        for thread in list(self._threads.values()):
             remaining = max(0.1, deadline - time.time())
             thread.join(timeout=remaining)
         logger.info("Asset Sentinel monitoring agent stopped.")
 
+    def _register_thread(self, name: str, target: Callable[[], None], supervised: bool = True) -> None:
+        if supervised:
+            self._thread_targets[name] = target
+        self._start_thread(name, target)
+
     def _start_thread(self, name: str, target: Callable[[], None]) -> None:
         thread = threading.Thread(target=lambda: self._thread_main(name, target), name=f"asset-sentinel-{name}", daemon=True)
-        self._threads.append(thread)
+        with self._thread_lock:
+            self._threads[name] = thread
         thread.start()
+        logger.info("Thread started: name=%s ident=%s", name, thread.ident)
 
     def _thread_main(self, name: str, target: Callable[[], None]) -> None:
         pythoncom = None
@@ -152,6 +163,7 @@ class AssetSentinelAgent:
                     pythoncom.CoUninitialize()
                 except Exception:
                     pass
+            logger.warning("Thread exited: name=%s", name)
 
     def _wait(self, seconds: int) -> bool:
         return self.stop_event.wait(seconds)
@@ -166,6 +178,16 @@ class AssetSentinelAgent:
         while not self.stop_event.is_set():
             self._run_hardware_cycle(spool_on_failure=True)
             self._wait(HARDWARE_POLL_INTERVAL_SECONDS)
+
+    def _heartbeat_loop(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                cpu_usage, ram_usage = self._usage_snapshot()
+                update_asset_heartbeat(socket.gethostname(), cpu_usage, ram_usage, None)
+                self._log_heartbeat(cpu_usage, ram_usage, None)
+            except Exception as exc:
+                logger.exception("Heartbeat polling failed: %s", exc)
+            self._wait(HEARTBEAT_POLL_INTERVAL_SECONDS)
 
     def _login_loop(self) -> None:
         while not self.stop_event.is_set():
@@ -186,15 +208,35 @@ class AssetSentinelAgent:
         while not self.stop_event.is_set():
             try:
                 record = collect_active_application_record()
-                cpu_usage, ram_usage = self._usage_snapshot()
-                update_asset_heartbeat(socket.gethostname(), cpu_usage, ram_usage, record)
-                self._log_heartbeat(cpu_usage, ram_usage, record)
                 _record_unlock_fallback_if_needed(record)
                 if record and self._is_new_active_application(record):
+                    logger.info(
+                        "Foreground application changed: hostname=%s application=%s window=%s",
+                        record.get("hostname"),
+                        record.get("application_name"),
+                        record.get("window_title"),
+                    )
                     self._upload_or_spool("active_application", record)
             except Exception as exc:
                 logger.exception("Active application polling failed: %s", exc)
             self._wait(POLL_INTERVAL_SECONDS)
+
+    def _thread_watchdog_loop(self) -> None:
+        while not self.stop_event.is_set():
+            with self._thread_lock:
+                snapshots = list(self._threads.items())
+            for name, thread in snapshots:
+                if name == "thread-watchdog":
+                    continue
+                if thread.is_alive():
+                    continue
+                target = self._thread_targets.get(name)
+                if target is None or self.stop_event.is_set():
+                    continue
+                logger.error("Thread died unexpectedly; restarting: name=%s", name)
+                self._start_thread(name, target)
+                logger.info("Thread restarted: name=%s", name)
+            self._wait(THREAD_WATCHDOG_INTERVAL_SECONDS)
 
     def _run_hardware_cycle(self, spool_on_failure: bool) -> None:
         try:
@@ -291,10 +333,6 @@ class AssetSentinelAgent:
             return None, None
 
     def _log_heartbeat(self, cpu_usage: Any, ram_usage: Any, record: Optional[Dict[str, Any]]) -> None:
-        now = time.time()
-        if now - self._last_heartbeat_log_at < HEARTBEAT_LOG_INTERVAL_SECONDS:
-            return
-        self._last_heartbeat_log_at = now
         logger.info(
             "Heartbeat uploaded: hostname=%s cpu=%s ram=%s active_app=%s",
             socket.gethostname(),

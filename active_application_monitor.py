@@ -1,4 +1,5 @@
 import os
+import logging
 import socket
 import threading
 import time
@@ -11,6 +12,7 @@ from session_manager import get_current_session_info
 from storage import (
     append_active_application,
     append_alert,
+    append_session,
     get_latest_active_application_for_host as get_latest_active_application_for_host_from_db,
     get_latest_active_applications as get_latest_active_applications_from_db,
     has_session_event_signature,
@@ -21,12 +23,14 @@ from storage import (
 
 POLL_INTERVAL_SECONDS = 2
 LOGIN_POLL_INTERVAL_SECONDS = 5
+logger = logging.getLogger("asset_sentinel.active_application_monitor")
 
 _monitor_lock = threading.Lock()
 _monitor_started = False
 _login_monitor_started = False
 _last_signature_by_host: Dict[str, tuple] = {}
 _lock_screen_observed = False
+_last_lock_fallback_at = 0.0
 _last_unlock_fallback_at = 0.0
 
 
@@ -115,11 +119,44 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
     Security 4624/4634 remains the preferred source, but normal desktop
     processes often cannot open the Security log. The foreground monitor can
     still observe LockApp during Win+L; the transition from LockApp to the next
-    user application is a real unlock boundary but is not a login.
+    user application is a real lock/unlock boundary.
     """
-    global _lock_screen_observed, _last_unlock_fallback_at
+    global _lock_screen_observed, _last_lock_fallback_at, _last_unlock_fallback_at
 
     if _is_lock_app(record):
+        now = time.time()
+        if not _lock_screen_observed and now - _last_lock_fallback_at >= 15:
+            session_info = get_current_session_info()
+            timestamp = datetime.now().astimezone().isoformat()
+            synthetic_record_id = (
+                f"lockapp-lock:{session_info.get('hostname')}:"
+                f"{session_info.get('username')}:{int(now)}"
+            )
+            if not has_session_event_signature(session_info.get("hostname"), synthetic_record_id):
+                append_session({
+                    "event_type": "LOGOUT",
+                    "username": session_info.get("username"),
+                    "hostname": session_info.get("hostname") or socket.gethostname(),
+                    "ip_address": session_info.get("ip_address"),
+                    "session_id": session_info.get("session_id"),
+                    "login_timestamp": session_info.get("login_timestamp"),
+                    "logout_timestamp": timestamp,
+                    "session_duration": "Locked",
+                    "active": False,
+                    "device_status": None,
+                    "last_seen": timestamp,
+                    "login_source": "windows_lock_observed",
+                    "windows_event_id": "LOCKAPP_LOCK",
+                    "windows_event_record_id": synthetic_record_id,
+                    "recorded_at": timestamp,
+                })
+                logger.info(
+                    "Logout detected from LockApp fallback: user=%s host=%s record_id=%s",
+                    session_info.get("username"),
+                    session_info.get("hostname"),
+                    synthetic_record_id,
+                )
+                _last_lock_fallback_at = now
         _lock_screen_observed = True
         return
 
@@ -141,6 +178,23 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
         _lock_screen_observed = False
         return
 
+    append_session({
+        "event_type": "LOGIN",
+        "username": session_info.get("username"),
+        "hostname": session_info.get("hostname") or socket.gethostname(),
+        "ip_address": session_info.get("ip_address"),
+        "session_id": session_info.get("session_id"),
+        "login_timestamp": timestamp,
+        "logout_timestamp": None,
+        "session_duration": "Active",
+        "active": True,
+        "device_status": None,
+        "last_seen": timestamp,
+        "login_source": "windows_unlock_observed",
+        "windows_event_id": "LOCKAPP_UNLOCK",
+        "windows_event_record_id": synthetic_record_id,
+        "recorded_at": timestamp,
+    })
     append_alert(
         "UNLOCK",
         session_info.get("hostname") or socket.gethostname(),
@@ -153,6 +207,12 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
             "description": "Windows unlock observed from LockApp transition.",
         },
         timestamp,
+    )
+    logger.info(
+        "Login detected from LockApp fallback: user=%s host=%s record_id=%s",
+        session_info.get("username"),
+        session_info.get("hostname"),
+        synthetic_record_id,
     )
     _last_unlock_fallback_at = now
     _lock_screen_observed = False
@@ -177,6 +237,12 @@ def _append_if_changed(record: Dict[str, Any]) -> None:
         history.append(record)
         _write_activity_history(history)
         _last_signature_by_host[hostname] = signature
+        logger.info(
+            "Foreground application changed: hostname=%s application=%s window=%s",
+            hostname,
+            record.get("application_name") or record.get("application"),
+            record.get("window_title"),
+        )
 
 
 def _monitor_loop() -> None:
