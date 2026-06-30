@@ -13,9 +13,10 @@ import json
 import hashlib
 import logging
 import ctypes
+import os
 from ctypes import wintypes
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 # ---------------------------------------------------------------------------
 # Logging — prints to console during POC; swap for file handler in production
@@ -77,6 +78,166 @@ def _attach_to_input_desktop(user32) -> Optional[int]:
         user32.CloseDesktop(desktop)
         return None
     return desktop
+
+
+def _coinitialize_for_wmi() -> tuple[Any, bool]:
+    """
+    WMI uses COM. Python threads do not inherit COM initialization, so each
+    thread that touches WMI must initialize COM for itself.
+    """
+    try:
+        import pythoncom
+
+        pythoncom.CoInitialize()
+        return pythoncom, True
+    except ImportError:
+        logger.warning("pythoncom is not installed; WMI may fail in threaded collectors.")
+    except Exception as exc:
+        logger.warning("pythoncom.CoInitialize failed before WMI access: %s", exc)
+    return None, False
+
+
+def _safe_user_object_name(user32, handle: int) -> Optional[str]:
+    if not handle:
+        return None
+    try:
+        UOI_NAME = 2
+        needed = wintypes.DWORD(0)
+        user32.GetUserObjectInformationW.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        user32.GetUserObjectInformationW.restype = wintypes.BOOL
+        user32.GetUserObjectInformationW(handle, UOI_NAME, None, 0, ctypes.byref(needed))
+        if needed.value <= 0:
+            return None
+        buffer = ctypes.create_unicode_buffer(max(1, needed.value // ctypes.sizeof(ctypes.c_wchar)))
+        if user32.GetUserObjectInformationW(handle, UOI_NAME, buffer, needed, ctypes.byref(needed)):
+            return buffer.value or None
+    except Exception as exc:
+        logger.debug("Could not read Windows user object name: %s", exc)
+    return None
+
+
+def _current_integrity_level() -> Optional[str]:
+    try:
+        advapi32 = ctypes.windll.advapi32
+        kernel32 = ctypes.windll.kernel32
+        TOKEN_QUERY = 0x0008
+        TOKEN_INTEGRITY_LEVEL = 25
+
+        class SID_AND_ATTRIBUTES(ctypes.Structure):
+            _fields_ = [("Sid", wintypes.LPVOID), ("Attributes", wintypes.DWORD)]
+
+        token = wintypes.HANDLE()
+        if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(token)):
+            return None
+        try:
+            needed = wintypes.DWORD(0)
+            advapi32.GetTokenInformation(token, TOKEN_INTEGRITY_LEVEL, None, 0, ctypes.byref(needed))
+            if needed.value <= 0:
+                return None
+            buffer = ctypes.create_string_buffer(needed.value)
+            if not advapi32.GetTokenInformation(
+                token,
+                TOKEN_INTEGRITY_LEVEL,
+                buffer,
+                needed,
+                ctypes.byref(needed),
+            ):
+                return None
+
+            sid_and_attributes = ctypes.cast(buffer, ctypes.POINTER(SID_AND_ATTRIBUTES)).contents
+            advapi32.GetSidSubAuthorityCount.restype = ctypes.POINTER(ctypes.c_ubyte)
+            advapi32.GetSidSubAuthority.restype = ctypes.POINTER(wintypes.DWORD)
+            count = advapi32.GetSidSubAuthorityCount(sid_and_attributes.Sid).contents.value
+            rid = advapi32.GetSidSubAuthority(sid_and_attributes.Sid, count - 1).contents.value
+            if rid >= 0x4000:
+                return "System"
+            if rid >= 0x3000:
+                return "High"
+            if rid >= 0x2000:
+                return "Medium"
+            if rid >= 0x1000:
+                return "Low"
+            return f"Unknown({rid})"
+        finally:
+            kernel32.CloseHandle(token)
+    except Exception as exc:
+        logger.debug("Could not determine process integrity level: %s", exc)
+        return None
+
+
+def collect_foreground_diagnostics() -> dict:
+    """
+    Report the Windows desktop/session context used by foreground collection.
+    This makes Session 0 or non-interactive startup failures visible in logs.
+    """
+    diagnostics: dict[str, Any] = {
+        "process_id": os.getpid(),
+        "parent_process_id": None,
+        "parent_process_name": None,
+        "current_session_id": None,
+        "active_console_session_id": None,
+        "windows_username": os.environ.get("USERDOMAIN", "") + "\\" + os.environ.get("USERNAME", ""),
+        "integrity_level": _current_integrity_level(),
+        "window_station": None,
+        "desktop_name": None,
+        "get_foreground_window_null": None,
+        "foreground_hwnd": None,
+        "get_window_thread_process_id_succeeded": False,
+        "foreground_process_id": None,
+        "foreground_thread_id": None,
+    }
+
+    try:
+        import psutil
+
+        process = psutil.Process(os.getpid())
+        parent = process.parent()
+        diagnostics["parent_process_id"] = process.ppid()
+        diagnostics["parent_process_name"] = parent.name() if parent else None
+    except Exception as exc:
+        diagnostics["parent_process_error"] = str(exc)
+
+    try:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        _configure_foreground_window_api(user32, kernel32)
+
+        active_console_session_id = kernel32.WTSGetActiveConsoleSessionId()
+        diagnostics["active_console_session_id"] = int(active_console_session_id)
+
+        session_id = wintypes.DWORD()
+        if kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(session_id)):
+            diagnostics["current_session_id"] = int(session_id.value)
+
+        user32.GetProcessWindowStation.restype = wintypes.HANDLE
+        user32.GetThreadDesktop.argtypes = [wintypes.DWORD]
+        user32.GetThreadDesktop.restype = wintypes.HANDLE
+        kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+        diagnostics["window_station"] = _safe_user_object_name(user32, user32.GetProcessWindowStation())
+        diagnostics["desktop_name"] = _safe_user_object_name(
+            user32,
+            user32.GetThreadDesktop(kernel32.GetCurrentThreadId()),
+        )
+
+        hwnd = user32.GetForegroundWindow()
+        diagnostics["foreground_hwnd"] = int(hwnd or 0)
+        diagnostics["get_foreground_window_null"] = not bool(hwnd)
+        if hwnd:
+            foreground_pid = wintypes.DWORD()
+            thread_id = user32.GetWindowThreadProcessId(hwnd, ctypes.byref(foreground_pid))
+            diagnostics["foreground_process_id"] = int(foreground_pid.value)
+            diagnostics["foreground_thread_id"] = int(thread_id)
+            diagnostics["get_window_thread_process_id_succeeded"] = bool(thread_id and foreground_pid.value)
+    except Exception as exc:
+        diagnostics["foreground_diagnostic_error"] = str(exc)
+
+    return diagnostics
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -554,6 +715,7 @@ def collect_hardware() -> dict:
     All fields are None if collection fails for that field.
     """
     logger.info("Starting hardware collection...")
+    pythoncom_module, com_initialized = _coinitialize_for_wmi()
 
     result: dict = {
         # Identity fields
@@ -722,6 +884,11 @@ def collect_hardware() -> dict:
         result["collection_method"],
         len(result["collection_errors"]),
     )
+    if com_initialized and pythoncom_module is not None:
+        try:
+            pythoncom_module.CoUninitialize()
+        except Exception as exc:
+            logger.debug("pythoncom.CoUninitialize failed after WMI access: %s", exc)
     return result
 
 

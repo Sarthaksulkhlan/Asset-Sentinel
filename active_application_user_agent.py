@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from active_application_monitor import POLL_INTERVAL_SECONDS, _record_signature, collect_active_application_record
+from collect_hardware import collect_foreground_diagnostics
 from database import database_host_for_display, init_db
 from monitoring_agent import TelemetrySpool
 from service_logging import LOG_DIR, configure_logging
@@ -74,6 +75,7 @@ class ActiveApplicationUserAgent:
     def start(self) -> None:
         logger.info("Active application user-session agent starting.")
         logger.info("Database host: %s", database_host_for_display())
+        logger.info("Foreground diagnostics at startup: %s", collect_foreground_diagnostics())
         init_db()
         self._seed_last_signature()
         self._write_status("started")
@@ -168,7 +170,9 @@ class ActiveApplicationUserAgent:
         self.last_no_foreground_log_at = now
         logger.warning(
             "No foreground window visible to this user-session agent. "
-            "No active application event inserted because only real foreground data is accepted."
+            "No active application event inserted because only real foreground data is accepted. "
+            "diagnostics=%s",
+            collect_foreground_diagnostics(),
         )
 
     def _write_status(
@@ -192,6 +196,7 @@ class ActiveApplicationUserAgent:
             "window_title": (record or {}).get("window_title"),
             "timestamp": (record or {}).get("timestamp"),
             "database_host": database_host_for_display(),
+            "foreground_diagnostics": collect_foreground_diagnostics(),
             "error": error,
         }
         STATUS_PATH.write_text(json.dumps(status, indent=2), encoding="utf-8")

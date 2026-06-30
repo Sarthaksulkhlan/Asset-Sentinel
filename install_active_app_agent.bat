@@ -11,7 +11,11 @@ set "AGENT_SCRIPT=%CD%\active_application_user_agent.py"
 set "TASK_CMD=\"%PYTHON_EXE%\" \"%AGENT_SCRIPT%\""
 
 echo Installing Asset Sentinel Active Application user-session agent...
-schtasks.exe /Create /TN "%TASK_NAME%" /SC ONLOGON /TR "%TASK_CMD%" /RL LIMITED /F
+schtasks.exe /Create /TN "%TASK_NAME%" /SC ONLOGON /TR "%TASK_CMD%" /RL LIMITED /IT /F
+if errorlevel 1 (
+  echo Interactive Scheduled Task install failed. Retrying as current-user ONLOGON task...
+  schtasks.exe /Create /TN "%TASK_NAME%" /SC ONLOGON /TR "%TASK_CMD%" /RL LIMITED /F
+)
 if errorlevel 1 goto :per_user_fallback
 
 echo Starting Asset Sentinel Active Application user-session agent...
@@ -25,6 +29,8 @@ exit /b 0
 echo Scheduled Task install failed. Installing current-user auto-start fallback...
 reg.exe add "%RUN_KEY%" /v AssetSentinelActiveApplicationAgent /t REG_SZ /d "%TASK_CMD%" /f
 if errorlevel 1 goto :startup_fallback
+echo Current-user Run key installed. The agent will start in the real desktop at next logon.
+goto :startup_fallback
 
 :startup_fallback
 set "STARTUP_DIR=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
@@ -37,10 +43,8 @@ if not exist "%STARTUP_DIR%" mkdir "%STARTUP_DIR%"
 ) > "%STARTUP_SCRIPT%"
 if errorlevel 1 goto :error
 
-echo Starting user-session agent now...
-call "%~dp0start_active_app_agent.bat"
-
 echo Asset Sentinel Active Application user-session agent installed via Startup launcher.
+echo Sign out and sign back in to start it inside the real interactive desktop.
 exit /b 0
 
 :error
