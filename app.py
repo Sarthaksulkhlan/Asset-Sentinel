@@ -1,13 +1,10 @@
 import os
 import sys
+import logging
 from flask import Flask, g, jsonify, request
 from flask_cors import CORS
 from config import print_startup_environment_diagnostics
-from active_application_monitor import (
-    get_latest_active_applications,
-    start_active_application_monitor,
-    start_login_event_monitor,
-)
+from active_application_monitor import get_latest_active_applications
 
 # Import session tracking modules
 from activity_api import (
@@ -19,6 +16,7 @@ from activity_api import (
 )
 from database import database_host_for_display, init_db
 from storage import get_asset_details, list_alerts, list_assets, normalize_active_application_timestamps
+from startup_health import device_health_response, run_startup_checks, startup_health_response
 from registration import register_admin, submit_early_access
 from telemetry_bootstrap import bootstrap_local_telemetry
 from auth import (
@@ -108,6 +106,19 @@ def get_active_applications():
     Returns the latest active Windows application seen for each monitored host.
     """
     return jsonify(get_latest_active_applications())
+
+
+@app.route("/api/debug/startup-health", methods=["GET"])
+def debug_startup_health():
+    return jsonify(startup_health_response())
+
+
+@app.route("/api/debug/device-health/<path:hostname>", methods=["GET"])
+def debug_device_health(hostname):
+    health = device_health_response(hostname)
+    if health is None:
+        return jsonify({"error": "Device not found", "identifier": hostname}), 404
+    return jsonify(health)
 
 
 @app.route("/api/auth/login", methods=["POST"])
@@ -272,11 +283,7 @@ def sessions_count():
     return jsonify(data), status_code
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
+def initialize_backend_runtime(start_agent: bool = True, exit_on_error: bool = True) -> bool:
     print_startup_environment_diagnostics()
     try:
         init_db()
@@ -288,18 +295,25 @@ if __name__ == "__main__":
         bootstrap_local_telemetry()
     except RuntimeError as exc:
         print(exc)
-        sys.exit(1)
-    if (
-        os.environ.get("ASSET_SENTINEL_EMBEDDED_MONITOR", "").lower() in {"1", "true", "yes"}
-        and os.environ.get("WERKZEUG_RUN_MAIN") in {None, "true"}
-    ):
-        start_active_application_monitor()
-        start_login_event_monitor()
+        logging.getLogger("asset_sentinel.backend").exception("Backend runtime initialization failed: %s", exc)
+        if exit_on_error:
+            sys.exit(1)
+        return False
+    if os.environ.get("WERKZEUG_RUN_MAIN") in {None, "true"}:
+        start_local_agent = (
+            start_agent
+            and os.environ.get("ASSET_SENTINEL_DISABLE_LOCAL_AGENT", "").lower() not in {"1", "true", "yes"}
+        )
+        run_startup_checks(start_agent=start_local_agent)
     else:
-        print("[INFO] Embedded monitor disabled. Use AssetSentinelMonitoringService for endpoint telemetry.")
+        print("[INFO] Flask reloader parent process skipped local telemetry startup.")
+    return True
+
+
+def print_backend_banner(host: str = "0.0.0.0", port: int = 5000) -> None:
     print("=" * 70)
     print("  Asset Sentinel Backend")
-    print("  Running on http://localhost:5000")
+    print(f"  Running on http://{host}:{port}")
     print("=" * 70)
     print("  Hardware Monitoring APIs:")
     print("    GET /api/assets")
@@ -313,4 +327,17 @@ if __name__ == "__main__":
     print("    GET /sessions")
     print("    GET /sessions/count")
     print("=" * 70)
-    app.run(host="0.0.0.0", port=5000, debug=True)
+
+
+def run_backend(host: str = "0.0.0.0", port: int = 5000, debug: bool = True, start_agent: bool = True) -> None:
+    initialize_backend_runtime(start_agent=start_agent, exit_on_error=True)
+    print_backend_banner(host, port)
+    app.run(host=host, port=port, debug=debug, use_reloader=debug)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    run_backend()
