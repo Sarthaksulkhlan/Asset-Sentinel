@@ -159,6 +159,8 @@ const StatusChip = ({ status }: { status: Asset["status"] }) => (
   </span>
 );
 
+const assetIdentity = (asset?: Asset | null) => asset?.deviceId || asset?.hostname || "";
+
 const MiniLineChart = ({ title, icon, data, color = "#38bdf8" }: { title: string; icon: React.ReactNode; data: Array<{ timestamp?: string; value?: string | number }>; color?: string }) => {
   const points = data
     .map((item) => Number(item.value))
@@ -881,7 +883,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
           const latestApplicationEntry = newestApplicationEntry(normalized.application_timeline as Array<Record<string, any>>);
           setSelectedAssetDetail(normalized);
           setSelectedAsset((current) => {
-            if ((current?.deviceId || current?.hostname) !== (selectedAsset.deviceId || selectedAsset.hostname)) return current;
+            if (assetIdentity(current) !== assetIdentity(selectedAsset)) return current;
             const activeApplicationPatch = latestApplicationEntry ? {
               activeApplication: latestApplicationEntry.application || latestApplicationEntry.application_name || mappedAsset.activeApplication,
               activeWindow: latestApplicationEntry.window_title || mappedAsset.activeWindow,
@@ -1962,9 +1964,9 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
 
                       return (
                         <tr 
-                          key={asset.hostname} 
+                          key={assetIdentity(asset)} 
                           onClick={() => handleSelectAsset(asset)}
-                          className={`table-row-hover group transition-all duration-150 cursor-pointer ${selectedAsset?.hostname === asset.hostname ? "bg-[#00d1ff]/10" : ""}`}
+                          className={`table-row-hover group transition-all duration-150 cursor-pointer ${assetIdentity(selectedAsset) === assetIdentity(asset) ? "bg-[#00d1ff]/10" : ""}`}
                           title={`Open complete asset profile for ${asset.hostname}`}
                         >
                           <td className="py-3 px-3 sm:px-4 font-bold text-white">
