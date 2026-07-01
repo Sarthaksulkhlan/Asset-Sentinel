@@ -14,10 +14,14 @@ from models import ActiveApplication, ActiveApplicationHistory, Alert, Asset, Ha
 
 logger = logging.getLogger("asset_sentinel.storage")
 
-REAL_LOGIN_SOURCES = {"windows_interactive_logon", "windows_unlock", "windows_unlock_observed"}
-REAL_LOGIN_EVENT_IDS = {"4624", "4801", "LOCKAPP_UNLOCK"}
+REAL_LOGIN_SOURCES = {
+    "windows_interactive_logon",
+    "windows_unlock",
+    "windows_unlock_observed",
+    "windows_session_observed",
+}
+REAL_LOGIN_EVENT_IDS = {"4624", "4801", "4778", "LOCKAPP_UNLOCK", "SESSION_OBSERVED"}
 NON_COUNTABLE_LOGIN_SOURCES = {
-    "windows_session_reconnect",
     "windows_lock",
     "windows_session_disconnect",
 }
@@ -138,13 +142,35 @@ def _human_age(value: Optional[datetime]) -> Optional[str]:
 
 def _status_from_last_seen(value: Optional[datetime]) -> str:
     if not value:
+        logger.info(
+            "Dashboard status calculation: last_seen=None threshold=%s status=Offline reason=no_heartbeat",
+            Config.HEARTBEAT_TIMEOUT_SECONDS,
+        )
         return "Offline"
     now = datetime.now(value.tzinfo or timezone.utc)
     seconds = (now - value).total_seconds()
     if seconds < -Config.HEARTBEAT_FUTURE_SKEW_SECONDS:
+        logger.info(
+            "Dashboard status calculation: last_seen=%s age_seconds=%s threshold=%s status=Offline reason=future_clock_skew",
+            value.isoformat(),
+            round(seconds, 3),
+            Config.HEARTBEAT_TIMEOUT_SECONDS,
+        )
         return "Offline"
     if seconds <= max(1, Config.HEARTBEAT_TIMEOUT_SECONDS):
+        logger.info(
+            "Dashboard status calculation: last_seen=%s age_seconds=%s threshold=%s status=Online",
+            value.isoformat(),
+            round(seconds, 3),
+            Config.HEARTBEAT_TIMEOUT_SECONDS,
+        )
         return "Online"
+    logger.info(
+        "Dashboard status calculation: last_seen=%s age_seconds=%s threshold=%s status=Offline reason=heartbeat_timeout",
+        value.isoformat(),
+        round(seconds, 3),
+        Config.HEARTBEAT_TIMEOUT_SECONDS,
+    )
     return "Offline"
 
 
@@ -746,6 +772,12 @@ def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any 
                 hostname,
             )
             return
+        previous_last_seen = row.last_seen
+        heartbeat_interval = (
+            round((now - previous_last_seen).total_seconds(), 3)
+            if previous_last_seen
+            else None
+        )
         row.last_seen = now
         row.status = "Online"
         if cpu_usage is not None:
@@ -758,9 +790,12 @@ def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any 
             row.active_process_path = activity.get("process_path") or row.active_process_path
             row.current_website = activity.get("window_title") or row.current_website
         logger.info(
-            "Heartbeat received: hostname=%s last_seen=%s cpu=%s ram=%s active_app=%s",
+            "Heartbeat received: hostname=%s heartbeat_timestamp=%s last_seen=%s interval_seconds=%s timeout_threshold=%s cpu=%s ram=%s active_app=%s",
             row.hostname,
             now.isoformat(),
+            row.last_seen.isoformat() if row.last_seen else None,
+            heartbeat_interval,
+            Config.HEARTBEAT_TIMEOUT_SECONDS,
             cpu_usage,
             ram_usage,
             (activity or {}).get("application_name"),
