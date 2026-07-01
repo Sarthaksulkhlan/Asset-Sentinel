@@ -96,6 +96,10 @@ class AssetSentinelAgent:
         self._thread_targets: Dict[str, Callable[[], None]] = {}
         self._thread_lock = threading.Lock()
         self._last_active_signature_by_host: Dict[str, tuple] = {}
+        self._health_lock = threading.Lock()
+        self._health: Dict[str, Dict[str, Any]] = {}
+        self.device_uid: Optional[str] = None
+        self.hostname = socket.gethostname()
 
     def start(self) -> None:
         logger.info("Asset Sentinel monitoring agent starting.")
@@ -114,6 +118,7 @@ class AssetSentinelAgent:
         self._register_thread("active-application", self._active_application_loop)
         self._register_thread("thread-watchdog", self._thread_watchdog_loop, supervised=False)
         logger.info("Asset Sentinel monitoring agent started.")
+        self.print_startup_health_report()
 
     def run_forever(self) -> None:
         self.start()
@@ -143,6 +148,7 @@ class AssetSentinelAgent:
             self._threads[name] = thread
         thread.start()
         logger.info("Thread started: name=%s ident=%s", name, thread.ident)
+        self._set_health(name, running=True, last_error=None)
 
     def _thread_main(self, name: str, target: Callable[[], None]) -> None:
         pythoncom = None
@@ -157,6 +163,7 @@ class AssetSentinelAgent:
             target()
         except Exception as exc:
             logger.exception("Agent thread crashed: name=%s error=%s", name, exc)
+            self._set_health(name, running=False, last_error=str(exc))
         finally:
             if pythoncom is not None:
                 try:
@@ -183,15 +190,20 @@ class AssetSentinelAgent:
         while not self.stop_event.is_set():
             try:
                 cpu_usage, ram_usage = self._usage_snapshot()
-                update_asset_heartbeat(socket.gethostname(), cpu_usage, ram_usage, None)
+                logger.info("Telemetry before insert: type=heartbeat hostname=%s device_uid=%s", self.hostname, self.device_uid)
+                update_asset_heartbeat(self.hostname, cpu_usage, ram_usage, {"device_uid": self.device_uid} if self.device_uid else None)
                 self._log_heartbeat(cpu_usage, ram_usage, None)
+                logger.info("Telemetry after insert: type=heartbeat hostname=%s device_uid=%s", self.hostname, self.device_uid)
+                self._set_health("heartbeat", running=True, last_success_at=datetime.now(timezone.utc).isoformat(), last_error=None)
             except Exception as exc:
                 logger.exception("Heartbeat polling failed: %s", exc)
+                self._set_health("heartbeat", running=True, last_error=str(exc))
             self._wait(HEARTBEAT_POLL_INTERVAL_SECONDS)
 
     def _login_loop(self) -> None:
         while not self.stop_event.is_set():
             try:
+                logger.info("Telemetry before insert: type=login_activity hostname=%s", self.hostname)
                 record = detect_login()
                 if record:
                     logger.info(
@@ -200,8 +212,11 @@ class AssetSentinelAgent:
                         record.get("hostname"),
                         record.get("login_source"),
                     )
+                    logger.info("Telemetry after insert: type=login_activity hostname=%s record_id=%s", record.get("hostname"), record.get("windows_event_record_id"))
+                self._set_health("login-activity", running=True, last_success_at=datetime.now(timezone.utc).isoformat(), last_error=None)
             except Exception as exc:
                 logger.exception("Login activity polling failed: %s", exc)
+                self._set_health("login-activity", running=True, last_error=str(exc))
             self._wait(LOGIN_POLL_INTERVAL_SECONDS)
 
     def _active_application_loop(self) -> None:
@@ -211,14 +226,27 @@ class AssetSentinelAgent:
                 _record_unlock_fallback_if_needed(record)
                 if record and self._is_new_active_application(record):
                     logger.info(
+                        "Telemetry before insert: type=active_application hostname=%s application=%s window=%s",
+                        record.get("hostname"),
+                        record.get("application_name"),
+                        record.get("window_title"),
+                    )
+                    logger.info(
                         "Foreground application changed: hostname=%s application=%s window=%s",
                         record.get("hostname"),
                         record.get("application_name"),
                         record.get("window_title"),
                     )
                     self._upload_or_spool("active_application", record)
+                    logger.info(
+                        "Telemetry after insert: type=active_application hostname=%s application=%s",
+                        record.get("hostname"),
+                        record.get("application_name"),
+                    )
+                self._set_health("active-application", running=True, last_success_at=datetime.now(timezone.utc).isoformat(), last_error=None)
             except Exception as exc:
                 logger.exception("Active application polling failed: %s", exc)
+                self._set_health("active-application", running=True, last_error=str(exc))
             self._wait(POLL_INTERVAL_SECONDS)
 
     def _thread_watchdog_loop(self) -> None:
@@ -241,7 +269,12 @@ class AssetSentinelAgent:
     def _run_hardware_cycle(self, spool_on_failure: bool) -> None:
         try:
             hardware = collect_hardware()
+            self.hostname = hardware.get("hostname") or self.hostname
+            self.device_uid = resolve_device_uid(hardware)
+            logger.info("Telemetry before insert: type=registration hostname=%s device_uid=%s", self.hostname, self.device_uid)
             self._upload_hardware(hardware)
+            logger.info("Telemetry after insert: type=registration hostname=%s device_uid=%s", self.hostname, self.device_uid)
+            self._set_health("registration", running=True, last_success_at=datetime.now(timezone.utc).isoformat(), last_error=None)
             logger.info(
                 "Hardware inventory uploaded: hostname=%s method=%s errors=%s",
                 hardware.get("hostname"),
@@ -250,6 +283,7 @@ class AssetSentinelAgent:
             )
         except Exception as exc:
             logger.exception("Hardware inventory upload failed: %s", exc)
+            self._set_health("registration", running=False, last_error=str(exc))
             if spool_on_failure:
                 try:
                     fallback_hardware = collect_hardware()
@@ -259,7 +293,9 @@ class AssetSentinelAgent:
 
     def _upload_or_spool(self, event_type: str, payload: Dict[str, Any]) -> None:
         try:
+            logger.info("Telemetry before insert: type=%s hostname=%s", event_type, payload.get("hostname"))
             self._upload_event(event_type, payload)
+            logger.info("Telemetry after insert: type=%s hostname=%s", event_type, payload.get("hostname"))
             logger.info("Telemetry uploaded: type=%s", event_type)
         except Exception as exc:
             logger.exception("Telemetry upload failed: type=%s error=%s", event_type, exc)
@@ -340,6 +376,47 @@ class AssetSentinelAgent:
             ram_usage,
             (record or {}).get("application_name"),
         )
+
+    def _set_health(self, name: str, **updates: Any) -> None:
+        with self._health_lock:
+            current = self._health.setdefault(name, {})
+            current.update(updates)
+            current["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    def health_snapshot(self) -> Dict[str, Any]:
+        with self._thread_lock:
+            threads = {
+                name: {"alive": thread.is_alive(), "ident": thread.ident}
+                for name, thread in self._threads.items()
+            }
+        with self._health_lock:
+            health = {name: dict(value) for name, value in self._health.items()}
+        return {
+            "hostname": self.hostname,
+            "device_uid": self.device_uid,
+            "threads": threads,
+            "health": health,
+            "running": not self.stop_event.is_set(),
+        }
+
+    def print_startup_health_report(self) -> None:
+        snapshot = self.health_snapshot()
+
+        def mark(ok: bool, label: str, reason: Optional[str] = None) -> None:
+            prefix = "[OK]" if ok else "[FAIL]"
+            text = f"{prefix} {label}"
+            if reason:
+                text = f"{text}: {reason}"
+            print(text)
+            logger.info(text)
+
+        mark(True, "Database Connected")
+        mark(bool(self.device_uid), "Device Registered", None if self.device_uid else "device_uid unavailable")
+        mark(snapshot["threads"].get("heartbeat", {}).get("alive", False), "Heartbeat Running")
+        mark(snapshot["threads"].get("login-activity", {}).get("alive", False), "Login Tracker Running")
+        mark(snapshot["threads"].get("active-application", {}).get("alive", False), "Active Application Running")
+        mark(snapshot["threads"].get("login-activity", {}).get("alive", False), "Windows Session Hook Active")
+        mark(snapshot["threads"].get("login-activity", {}).get("alive", False), "Event Log Subscription Active")
 
 
 def main() -> None:
