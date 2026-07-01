@@ -369,13 +369,19 @@ def get_latest_windows_logout_event(username: Optional[str]) -> Optional[Dict[st
 
 def get_device_status() -> str:
     """
-    Get the current device status.
+    Get the current device status from heartbeat state only.
     
     Returns:
-        str: 'Online' if user is logged in, 'Offline' otherwise
+        str: 'Online' if latest heartbeat is fresh, 'Offline' otherwise
     """
-    username = get_current_username()
-    return "Online" if username else "Offline"
+    try:
+        from storage import get_asset_status
+
+        status = get_asset_status(get_current_hostname() or socket.gethostname()) or {}
+        return status.get("device_status") or "Offline"
+    except Exception as exc:
+        logger.warning("Could not resolve heartbeat-backed device status: %s", exc)
+        return "Offline"
 
 
 # ============================================================================
