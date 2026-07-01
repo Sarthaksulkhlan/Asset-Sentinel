@@ -107,17 +107,17 @@ const getThreatLevel = (asset: Asset) => {
   return 12;
 };
 
-const DetailField = ({ label, value, accent = false }: { label: string; value?: React.ReactNode; accent?: boolean }) => (
-  <div className="group flex min-w-0 flex-col gap-1 rounded-lg border border-[#2B3752]/70 bg-[#0F1728]/70 px-3.5 py-3 transition-all duration-200 hover:border-[#38BDF8]/40 hover:bg-[#1B2338]">
+const DetailField = ({ label, value, accent = false, compact = false }: { label: string; value?: React.ReactNode; accent?: boolean; compact?: boolean }) => (
+  <div className={`group flex min-w-0 flex-col gap-1 rounded-lg border border-[#2B3752]/70 bg-[#0F1728]/70 px-3.5 ${compact ? "py-2.5" : "py-3"} transition-all duration-200 hover:border-[#38BDF8]/40 hover:bg-[#1B2338]`}>
     <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8EA0B8]">{label}</span>
     <span className={`${accent ? "text-[#38BDF8]" : "text-[#F8FAFC]"} text-sm font-semibold leading-snug break-words`}>{value ?? "No data"}</span>
   </div>
 );
 
-const DetailSection = ({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) => (
-  <section className="animate-[fadeIn_420ms_ease-out] rounded-2xl border border-[#2B3752] bg-[#141B2D] p-5 shadow-[0_18px_50px_rgba(0,0,0,0.26)] text-[12px]">
-    <div className="mb-5 flex items-center gap-3">
-      <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#38BDF8]/25 bg-[#38BDF8]/10">
+const DetailSection = ({ title, icon, children, compact = false }: { title: string; icon: React.ReactNode; children: React.ReactNode; compact?: boolean }) => (
+  <section className={`animate-[fadeIn_420ms_ease-out] rounded-2xl border border-[#2B3752] bg-[#141B2D] ${compact ? "p-4" : "p-5"} shadow-[0_18px_50px_rgba(0,0,0,0.26)] text-[12px]`}>
+    <div className={`${compact ? "mb-4" : "mb-5"} flex items-center gap-3`}>
+      <div className={`flex ${compact ? "h-9 w-9" : "h-10 w-10"} items-center justify-center rounded-xl border border-[#38BDF8]/25 bg-[#38BDF8]/10`}>
         {icon}
       </div>
       <h3 className="text-xl font-bold tracking-tight text-white sm:text-2xl">{title}</h3>
@@ -2555,43 +2555,43 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
               </div>
 
               <div className="relative z-0 grid grid-cols-1 gap-6 pt-1 xl:grid-cols-2">
-              <DetailSection title="Device Overview" icon={<Laptop className="w-5 h-5 text-sky-300" />}>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <DetailField label="Hostname" value={selectedAsset.hostname} accent />
-                  <DetailField label="Logged-in User" value={selectedAsset.currentUser || selectedAsset.employee} />
-                  <DetailField label="Device Status" value={<StatusChip status={selectedAsset.status} />} />
-                  <DetailField label="Device ID" value={selectedAsset.deviceId} />
-                  <DetailField label="IP Address" value={selectedAsset.ipAddress} accent />
-                  <DetailField label="MAC Address" value={selectedAsset.macAddress} />
-                  <DetailField label="Windows Version" value={selectedAsset.os} />
-                  <DetailField label="CPU" value={selectedAsset.cpuModel} />
-                  <DetailField label="RAM" value={selectedAsset.ram} />
-                  <DetailField label="BIOS Serial" value={selectedAsset.biosSerial} />
-                  <DetailField label="Motherboard Serial" value={selectedAsset.motherboardSerial} />
-                  <DetailField label="UUID" value={selectedAsset.uuid} />
-                  <DetailField label="Last Seen" value={`${selectedAsset.status} • Last seen ${selectedAsset.lastSeenHuman || formatTelemetryTimestamp(selectedAsset.lastSeen)}`} accent />
-                  <DetailField label="Uptime" value={selectedAsset.uptime} />
+              <DetailSection title="Device Overview" icon={<Laptop className="w-5 h-5 text-sky-300" />} compact>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <DetailField label="Hostname" value={selectedAsset.hostname} accent compact />
+                  <DetailField label="Logged-in User" value={selectedAsset.currentUser || selectedAsset.employee} compact />
+                  <DetailField label="Device Status" value={<StatusChip status={selectedAsset.status} />} compact />
+                  <DetailField label="Device ID" value={selectedAsset.deviceId} compact />
+                  <DetailField label="IP Address" value={selectedAsset.ipAddress} accent compact />
+                  <DetailField label="MAC Address" value={selectedAsset.macAddress} compact />
+                  <DetailField label="Windows Version" value={selectedAsset.os} compact />
+                  <DetailField label="CPU" value={selectedAsset.cpuModel} compact />
+                  <DetailField label="RAM" value={selectedAsset.ram} compact />
+                  <DetailField label="BIOS Serial" value={selectedAsset.biosSerial} compact />
+                  <DetailField label="Motherboard Serial" value={selectedAsset.motherboardSerial} compact />
+                  <DetailField label="UUID" value={selectedAsset.uuid} compact />
+                  <DetailField label="Last Seen" value={`${selectedAsset.status} • Last seen ${selectedAsset.lastSeenHuman || formatTelemetryTimestamp(selectedAsset.lastSeen)}`} accent compact />
+                  <DetailField label="Uptime" value={selectedAsset.uptime} compact />
                 </div>
               </DetailSection>
 
-              <DetailSection title="Login Activity" icon={<LogIn className="w-5 h-5 text-emerald-300" />}>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <DetailField label="Current Logged-in User" value={selectedAsset.currentUser || selectedAsset.employee} />
-                  <DetailField label="Current Login Time" value={selectedAsset.lastLogin} />
-                  <DetailField label="Last Logout Time" value={selectedAsset.lastLogout || "No logout recorded"} />
-                  <DetailField label="Total Logins Today" value={selectedAsset.loginsToday ?? 0} />
-                  <DetailField label="Total Logins This Week" value={selectedAsset.loginsThisWeek ?? 0} />
-                  <DetailField label="Current Session Duration" value={selectedAsset.loginDuration} accent />
-                  <DetailField label="Last Successful Login" value={formatTelemetryTimestamp(selectedAsset.lastSuccessfulLogin || selectedAsset.lastLogin)} />
-                  <DetailField label="Last Failed Login" value={formatTelemetryTimestamp(selectedAsset.lastFailedLogin)} />
+              <DetailSection title="Login Activity" icon={<LogIn className="w-5 h-5 text-emerald-300" />} compact>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <DetailField label="Current Logged-in User" value={selectedAsset.currentUser || selectedAsset.employee} compact />
+                  <DetailField label="Current Login Time" value={selectedAsset.lastLogin} compact />
+                  <DetailField label="Last Logout Time" value={selectedAsset.lastLogout || "No logout recorded"} compact />
+                  <DetailField label="Total Logins Today" value={selectedAsset.loginsToday ?? 0} compact />
+                  <DetailField label="Total Logins This Week" value={selectedAsset.loginsThisWeek ?? 0} compact />
+                  <DetailField label="Current Session Duration" value={selectedAsset.loginDuration} accent compact />
+                  <DetailField label="Last Successful Login" value={formatTelemetryTimestamp(selectedAsset.lastSuccessfulLogin || selectedAsset.lastLogin)} compact />
+                  <DetailField label="Last Failed Login" value={formatTelemetryTimestamp(selectedAsset.lastFailedLogin)} compact />
                 </div>
               </DetailSection>
               </div>
 
-              <section className="animate-[fadeIn_520ms_ease-out] rounded-3xl border border-[#38BDF8]/25 bg-[linear-gradient(135deg,#14233A_0%,#141B2D_48%,#0B1220_100%)] p-5 shadow-[0_24px_70px_rgba(8,47,73,0.26)]">
+              <section className="animate-[fadeIn_520ms_ease-out] rounded-3xl border border-[#38BDF8]/55 bg-[linear-gradient(135deg,#14233A_0%,#141B2D_48%,#0B1220_100%)] p-5 shadow-[0_0_0_1px_rgba(56,189,248,0.16),0_28px_90px_rgba(8,47,73,0.42),0_0_45px_rgba(56,189,248,0.12)]">
                 <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[#38BDF8]/30 bg-[#38BDF8]/10">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[#38BDF8]/60 bg-[#38BDF8]/15 shadow-[0_0_24px_rgba(56,189,248,0.28)]">
                       <Activity className="h-5 w-5 text-[#38BDF8]" />
                     </div>
                     <div>
@@ -2599,7 +2599,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                       <p className="text-sm text-[#A8B3C7]">Live foreground activity with newest entries first.</p>
                     </div>
                   </div>
-                  <span className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300">
+                  <span className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-400/45 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-200 shadow-[0_0_20px_rgba(52,211,153,0.16)]">
                     <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-300" />
                     Live Monitoring
                   </span>
@@ -2620,11 +2620,14 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                     {(selectedAssetDetail?.application_timeline || selectedAsset.applicationHistory || []).length ? (
                       (selectedAssetDetail?.application_timeline || selectedAsset.applicationHistory || []).slice(0, 100).map((entry, index) => (
                         <div key={`${entry.timestamp}-${index}`} className="relative grid grid-cols-[26px_92px_1fr] gap-3 pb-5 last:pb-0">
-                          {index < Math.min((selectedAssetDetail?.application_timeline || selectedAsset.applicationHistory || []).length, 100) - 1 ? <span className="absolute left-[9px] top-5 h-full w-px bg-[#2B3752]" /> : null}
-                          <span className="relative mt-1 h-5 w-5 rounded-full border-4 border-[#141B2D] bg-[#38BDF8] shadow-[0_0_18px_rgba(56,189,248,0.45)]" />
+                          {index < Math.min((selectedAssetDetail?.application_timeline || selectedAsset.applicationHistory || []).length, 100) - 1 ? <span className="absolute left-[9px] top-5 h-full w-px bg-gradient-to-b from-[#38BDF8]/70 via-[#2B3752] to-[#2B3752]/20" /> : null}
+                          <span className="relative mt-1 h-5 w-5 rounded-full border-4 border-[#141B2D] bg-[#38BDF8] shadow-[0_0_22px_rgba(56,189,248,0.62)] after:absolute after:inset-[-7px] after:rounded-full after:border after:border-[#38BDF8]/20" />
                           <span className="pt-1 text-[11px] font-semibold text-[#8EA0B8]">{formatTelemetryTimestamp(entry.timestamp).split(",").pop()?.trim() || "Now"}</span>
-                          <div className="rounded-xl border border-[#2B3752] bg-[#0F1728]/80 p-3 transition-all hover:bg-[#1B2338]">
-                            <p className="font-semibold text-white">{entry.application || entry.application_name || entry.window_title || entry.process_path || "Application changed"} opened</p>
+                          <div className="rounded-xl border border-[#38BDF8]/20 bg-[#0F1728]/85 p-3 shadow-[0_10px_28px_rgba(2,8,23,0.2)] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#38BDF8]/45 hover:bg-[#1B2338] hover:shadow-[0_14px_34px_rgba(56,189,248,0.14)]">
+                            <p className="flex flex-wrap items-center gap-2 font-semibold text-white">
+                              <span>{entry.application || entry.application_name || entry.window_title || entry.process_path || "Application changed"} opened</span>
+                              {index === 0 ? <span className="rounded-full border border-[#38BDF8]/35 bg-[#38BDF8]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#7DD3FC]">Newest</span> : null}
+                            </p>
                             <p className="mt-1 truncate text-[11px] text-[#8EA0B8]">{entry.window_title || entry.process_path || "Foreground application event"}</p>
                           </div>
                         </div>
