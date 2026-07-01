@@ -375,6 +375,12 @@ def upsert_asset(record: Dict[str, Any]) -> None:
         merge_duplicate_assets(session)
 
 
+def ensure_asset_registered(record: Dict[str, Any]) -> str:
+    device_uid = resolve_device_uid(record)
+    upsert_asset(record)
+    return device_uid
+
+
 def append_asset(record: Dict[str, Any]) -> None:
     upsert_asset(record)
 
@@ -563,6 +569,14 @@ def replace_sessions(records: Iterable[Dict[str, Any]]) -> None:
 
 
 def append_session(record: Dict[str, Any]) -> None:
+    logger.info(
+        "Telemetry before insert: type=%s hostname=%s username=%s event_id=%s record_id=%s",
+        record.get("event_type") or "LOGIN",
+        record.get("hostname"),
+        record.get("username"),
+        record.get("windows_event_id"),
+        record.get("windows_event_record_id"),
+    )
     with get_db_session() as session:
         event_record_id = record.get("windows_event_record_id")
         if event_record_id:
@@ -591,6 +605,7 @@ def append_session(record: Dict[str, Any]) -> None:
             )
             return
         session.add(_build_session_record(record))
+        session.flush()
         logger.info(
             "%s detected and inserted: hostname=%s username=%s event_id=%s record_id=%s",
             record.get("event_type") or "LOGIN",
@@ -671,6 +686,14 @@ def append_active_application(record: Dict[str, Any]) -> None:
     application_name = record.get("application_name")
     executable_name = record.get("executable_name")
     window_title = record.get("window_title")
+    logger.info(
+        "Telemetry before insert: type=active_application hostname=%s username=%s application=%s window=%s timestamp=%s",
+        hostname,
+        username,
+        application_name,
+        window_title,
+        record.get("timestamp"),
+    )
     with get_db_session() as session:
         latest = session.execute(
             select(ActiveApplicationHistory)
@@ -755,6 +778,13 @@ def normalize_active_application_timestamps() -> int:
 
 def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any = None, activity: Optional[Dict[str, Any]] = None) -> None:
     now = datetime.now(timezone.utc)
+    logger.info(
+        "Telemetry before insert: type=heartbeat hostname=%s device_uid=%s cpu=%s ram=%s",
+        hostname,
+        (activity or {}).get("device_uid"),
+        cpu_usage,
+        ram_usage,
+    )
     with get_db_session() as session:
         lookup_record = {"hostname": hostname, **(activity or {})}
         row = _find_asset_row(session, lookup_record, lookup_record.get("device_uid") or "")
@@ -766,12 +796,13 @@ def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any 
                 .limit(1)
             ).scalar_one_or_none()
         if row is None:
-            logger.warning(
-                "Heartbeat skipped because hostname=%s is not present in PostgreSQL assets. "
-                "Startup telemetry bootstrap should create it first.",
-                hostname,
+            logger.warning("Heartbeat auto-registering missing asset for hostname=%s.", hostname)
+            row = Asset(
+                device_uid=resolve_device_uid(lookup_record),
+                hostname=hostname or lookup_record.get("hostname") or "Unknown",
+                collected_at=now,
             )
-            return
+            session.add(row)
         previous_last_seen = row.last_seen
         heartbeat_interval = (
             round((now - previous_last_seen).total_seconds(), 3)
@@ -789,6 +820,7 @@ def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any 
             row.active_window_title = activity.get("window_title") or row.active_window_title
             row.active_process_path = activity.get("process_path") or row.active_process_path
             row.current_website = activity.get("window_title") or row.current_website
+        session.flush()
         logger.info(
             "Heartbeat received: hostname=%s heartbeat_timestamp=%s last_seen=%s interval_seconds=%s timeout_threshold=%s cpu=%s ram=%s active_app=%s",
             row.hostname,
@@ -799,6 +831,12 @@ def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any 
             cpu_usage,
             ram_usage,
             (activity or {}).get("application_name"),
+        )
+        logger.info(
+            "Telemetry after insert: type=heartbeat hostname=%s device_uid=%s last_seen=%s",
+            row.hostname,
+            row.device_uid,
+            row.last_seen.isoformat() if row.last_seen else None,
         )
 
 
@@ -1031,6 +1069,57 @@ def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
             summary.get("logins_this_week"),
         )
         return result
+
+
+def get_device_health(identifier: str) -> Optional[Dict[str, Any]]:
+    if not identifier:
+        return None
+    with get_db_session() as session:
+        asset_row = _find_asset_by_public_identifier(session, identifier)
+        if asset_row is None:
+            return None
+        asset = serialize_asset(asset_row)
+        hostname = asset_row.hostname
+        latest_session = session.execute(
+            select(SessionRecord)
+            .where(SessionRecord.hostname == hostname)
+            .order_by(SessionRecord.recorded_at.desc(), SessionRecord.id.desc())
+            .limit(5)
+        ).scalars().all()
+        latest_application = session.execute(
+            select(ActiveApplicationHistory)
+            .where(ActiveApplicationHistory.hostname == hostname)
+            .order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc())
+            .limit(5)
+        ).scalars().all()
+        latest_alerts = session.execute(
+            select(Alert)
+            .where(Alert.hostname == hostname)
+            .order_by(Alert.timestamp.desc(), Alert.id.desc())
+            .limit(5)
+        ).scalars().all()
+        return {
+            "registration": {
+                "registered": True,
+                "hostname": asset_row.hostname,
+                "device_uid": asset_row.device_uid,
+                "collection_method": asset_row.collection_method,
+                "collected_at": _iso(asset_row.collected_at),
+            },
+            "last_heartbeat": {
+                "last_seen": asset.get("last_seen"),
+                "last_seen_human": asset.get("last_seen_human"),
+                "status": asset.get("status"),
+                "heartbeat_timeout_seconds": Config.HEARTBEAT_TIMEOUT_SECONDS,
+                "cpu_usage": asset.get("cpu_usage"),
+                "ram_usage": asset.get("ram_usage"),
+            },
+            "latest_telemetry": {
+                "sessions": [serialize_session(row) for row in latest_session],
+                "active_applications": [serialize_active_application_history(row) for row in latest_application],
+                "alerts": [serialize_alert(row) for row in latest_alerts],
+            },
+        }
 
 
 def _find_asset_row(session, record: Dict[str, Any], device_uid: str) -> Optional[Asset]:
