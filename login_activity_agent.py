@@ -5,8 +5,10 @@ import signal
 import threading
 
 from database import database_host_for_display, init_db
+from collect_hardware import collect_hardware
 from login_tracker import detect_login
 from service_logging import configure_logging
+from storage import resolve_device_uid, upsert_asset
 
 
 logger = logging.getLogger("asset_sentinel.login_activity_agent")
@@ -20,8 +22,17 @@ def run(stop_event: threading.Event) -> None:
         database_host_for_display(),
     )
     init_db()
+    try:
+        hardware = collect_hardware()
+        device_uid = resolve_device_uid(hardware)
+        logger.info("Telemetry before insert: type=registration hostname=%s device_uid=%s", hardware.get("hostname"), device_uid)
+        upsert_asset(hardware)
+        logger.info("Telemetry after insert: type=registration hostname=%s device_uid=%s", hardware.get("hostname"), device_uid)
+    except Exception as exc:
+        logger.exception("Login activity agent registration failed; login tracker will continue: %s", exc)
     while not stop_event.is_set():
         try:
+            logger.info("Telemetry before insert: type=login_activity")
             record = detect_login()
             if record:
                 logger.info(
@@ -32,6 +43,7 @@ def run(stop_event: threading.Event) -> None:
                     record.get("windows_event_id"),
                     record.get("windows_event_record_id"),
                 )
+                logger.info("Telemetry after insert: type=login_activity hostname=%s record_id=%s", record.get("hostname"), record.get("windows_event_record_id"))
         except Exception as exc:
             logger.exception("Login activity polling failed and will retry: %s", exc)
         stop_event.wait(LOGIN_POLL_INTERVAL_SECONDS)

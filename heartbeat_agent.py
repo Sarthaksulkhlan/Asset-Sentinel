@@ -9,7 +9,8 @@ from typing import Any
 
 from database import database_host_for_display, init_db
 from service_logging import configure_logging
-from storage import update_asset_heartbeat
+from collect_hardware import collect_hardware
+from storage import resolve_device_uid, upsert_asset, update_asset_heartbeat
 
 
 logger = logging.getLogger("asset_sentinel.heartbeat_agent")
@@ -29,10 +30,20 @@ def run(stop_event: threading.Event) -> None:
     hostname = socket.gethostname()
     logger.info("Heartbeat agent starting: hostname=%s database_host=%s", hostname, database_host_for_display())
     init_db()
+    device_uid = None
+    try:
+        hardware = collect_hardware()
+        hostname = hardware.get("hostname") or hostname
+        device_uid = resolve_device_uid(hardware)
+        logger.info("Telemetry before insert: type=registration hostname=%s device_uid=%s", hostname, device_uid)
+        upsert_asset(hardware)
+        logger.info("Telemetry after insert: type=registration hostname=%s device_uid=%s", hostname, device_uid)
+    except Exception as exc:
+        logger.exception("Heartbeat agent registration failed; heartbeat will auto-register fallback asset: %s", exc)
     while not stop_event.is_set():
         try:
             cpu_usage, ram_usage = _usage_snapshot()
-            update_asset_heartbeat(hostname, cpu_usage, ram_usage, None)
+            update_asset_heartbeat(hostname, cpu_usage, ram_usage, {"device_uid": device_uid} if device_uid else None)
             logger.info(
                 "Heartbeat sent: hostname=%s interval_seconds=%s cpu=%s ram=%s",
                 hostname,

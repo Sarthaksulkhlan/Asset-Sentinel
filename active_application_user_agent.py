@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from active_application_monitor import POLL_INTERVAL_SECONDS, _record_signature, collect_active_application_record
-from collect_hardware import collect_foreground_diagnostics
+from collect_hardware import collect_foreground_diagnostics, collect_hardware
 from database import database_host_for_display, init_db
 from monitoring_agent import TelemetrySpool
 from service_logging import LOG_DIR, configure_logging
-from storage import append_active_application, get_latest_active_application_for_host
+from storage import append_active_application, get_latest_active_application_for_host, resolve_device_uid, upsert_asset
 
 
 logger = logging.getLogger("asset_sentinel.active_application_user_agent")
@@ -77,6 +77,14 @@ class ActiveApplicationUserAgent:
         logger.info("Database host: %s", database_host_for_display())
         logger.info("Foreground diagnostics at startup: %s", collect_foreground_diagnostics())
         init_db()
+        try:
+            hardware = collect_hardware()
+            device_uid = resolve_device_uid(hardware)
+            logger.info("Telemetry before insert: type=registration hostname=%s device_uid=%s", hardware.get("hostname"), device_uid)
+            upsert_asset(hardware)
+            logger.info("Telemetry after insert: type=registration hostname=%s device_uid=%s", hardware.get("hostname"), device_uid)
+        except Exception as exc:
+            logger.exception("Active application user-session registration failed; monitor will continue: %s", exc)
         self._seed_last_signature()
         self._write_status("started")
         logger.info("Active application user-session agent started.")
@@ -123,6 +131,12 @@ class ActiveApplicationUserAgent:
             return
 
         logger.info(
+            "Telemetry before insert: type=active_application hostname=%s application=%s window=%s",
+            hostname,
+            record.get("application_name"),
+            record.get("window_title"),
+        )
+        logger.info(
             "Foreground application changed: hostname=%s application=%s window=%s",
             hostname,
             record.get("application_name"),
@@ -131,6 +145,7 @@ class ActiveApplicationUserAgent:
         try:
             append_active_application(record)
             self.last_signature_by_host[hostname] = signature
+            logger.info("Telemetry after insert: type=active_application hostname=%s application=%s", hostname, record.get("application_name"))
             self._write_status("running", record=record, foreground_visible=True, inserted=True)
         except Exception as exc:
             logger.exception("Application event insert failed, spooling: %s", exc)
