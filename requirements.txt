@@ -6,3 +6,4 @@ PyJWT>=2.8
 bcrypt>=4.1
 pywin32; platform_system == "Windows"
 WMI; platform_system == "Windows"
+pyinstaller; platform_system == "Windows"
