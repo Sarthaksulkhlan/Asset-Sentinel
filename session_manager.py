@@ -247,7 +247,7 @@ def _read_latest_windows_security_event(
     if not normalized_user:
         return None
 
-    server = "localhost"
+    server = None
     log_name = "Security"
     flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
@@ -255,7 +255,12 @@ def _read_latest_windows_security_event(
     try:
         handle = win32evtlog.OpenEventLog(server, log_name)
     except Exception as exc:
-        logger.warning(f"Could not open Windows Security event log: {exc}")
+        logger.warning(
+            "Could not open Windows Security event log for event_ids=%s: %s. "
+            "Login tracker will use non-admin observed-session fallback if available.",
+            sorted(event_ids),
+            exc,
+        )
         return None
 
     try:
@@ -272,11 +277,31 @@ def _read_latest_windows_security_event(
 
                 generated_at = _event_time_to_utc(event.TimeGenerated)
                 if generated_at < cutoff:
+                    logger.info(
+                        "Windows login event rejected: event_id=%s record_id=%s reason=older_than_cutoff timestamp=%s",
+                        event_id,
+                        event.RecordNumber,
+                        generated_at.isoformat(),
+                    )
                     return None
 
                 inserts = [str(value) for value in (event.StringInserts or [])]
                 lowered = [_normalize_windows_username(value) for value in inserts]
+                logger.info(
+                    "Windows login event received: event_id=%s record_id=%s timestamp=%s user_match=%s inserts=%s",
+                    event_id,
+                    event.RecordNumber,
+                    generated_at.isoformat(),
+                    normalized_user in lowered,
+                    inserts,
+                )
                 if normalized_user not in lowered:
+                    logger.info(
+                        "Windows login event rejected: event_id=%s record_id=%s reason=username_not_matched expected=%s",
+                        event_id,
+                        event.RecordNumber,
+                        normalized_user,
+                    )
                     continue
 
                 login_source = "windows_unlock" if event_id == 4801 else "windows_interactive_logon"
@@ -284,9 +309,15 @@ def _read_latest_windows_security_event(
                 if event_id == 4624 and len(inserts) > 8:
                     logon_type = inserts[8]
                     if interactive_logons_only and logon_type != "2":
+                        logger.info(
+                            "Windows login event rejected: event_id=%s record_id=%s reason=non_interactive_logon_type logon_type=%s",
+                            event_id,
+                            event.RecordNumber,
+                            logon_type,
+                        )
                         continue
                 elif event_id == 4778:
-                    login_source = "windows_session_reconnect"
+                    login_source = "windows_unlock"
                 elif event_id == 4634:
                     login_source = "windows_logoff"
                 elif event_id == 4647:
@@ -296,6 +327,13 @@ def _read_latest_windows_security_event(
                 elif event_id == 4800:
                     login_source = "windows_lock"
 
+                logger.info(
+                    "Windows login event accepted: event_id=%s record_id=%s source=%s logon_type=%s",
+                    event_id,
+                    event.RecordNumber,
+                    login_source,
+                    logon_type,
+                )
                 return {
                     "event_id": str(event_id),
                     "event_record_id": str(event.RecordNumber),
@@ -321,7 +359,7 @@ def get_latest_windows_login_event(username: Optional[str]) -> Optional[Dict[str
     Security 4624 logon type 2 is a full interactive login, and 4801 is
     workstation unlock after a successful user authentication.
     """
-    return _read_latest_windows_security_event(username, {4624, 4801}, True)
+    return _read_latest_windows_security_event(username, {4624, 4801, 4778}, True)
 
 
 def get_latest_windows_logout_event(username: Optional[str]) -> Optional[Dict[str, Any]]:

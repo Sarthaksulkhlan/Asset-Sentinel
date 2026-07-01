@@ -26,6 +26,7 @@ Requires: session_manager, pywin32 (for Session ID)
 
 import json
 import logging
+import socket
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
@@ -34,14 +35,20 @@ from storage import (
     append_alert,
     append_session,
     has_session_event_signature,
+    list_active_applications_history,
     list_alerts,
     list_sessions,
     replace_sessions,
     touch_active_session,
 )
 
-COUNTABLE_LOGIN_SOURCES = {"windows_interactive_logon", "windows_unlock", "windows_unlock_observed"}
-COUNTABLE_LOGIN_EVENT_IDS = {"4624", "4801", "LOCKAPP_UNLOCK"}
+COUNTABLE_LOGIN_SOURCES = {
+    "windows_interactive_logon",
+    "windows_unlock",
+    "windows_unlock_observed",
+    "windows_session_observed",
+}
+COUNTABLE_LOGIN_EVENT_IDS = {"4624", "4801", "4778", "LOCKAPP_UNLOCK", "SESSION_OBSERVED"}
 
 # ============================================================================
 # Logging Setup
@@ -52,6 +59,8 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("login_tracker")
+_last_lockapp_history_checked_at: Optional[datetime] = None
+_pending_lockapp_event: Optional[Dict[str, Any]] = None
 
 
 # ============================================================================
@@ -177,6 +186,194 @@ def _format_duration(start_value: Optional[str], end_value: Optional[str]) -> st
     return f"{hours:02d}:{minutes:02d}:{remaining_seconds:02d}"
 
 
+def _current_boot_token() -> str:
+    try:
+        import psutil
+
+        return datetime.fromtimestamp(psutil.boot_time(), timezone.utc).strftime("%Y%m%d%H%M")
+    except Exception:
+        return datetime.now(timezone.utc).strftime("%Y%m%d")
+
+
+def _observed_session_record_id(session_info: Dict[str, Any]) -> str:
+    return (
+        f"session-observed:{session_info.get('hostname') or socket.gethostname()}:"
+        f"{session_info.get('username')}:{session_info.get('session_id')}:{_current_boot_token()}"
+    )
+
+
+def _is_lock_app_event(record: Dict[str, Any]) -> bool:
+    values = [
+        record.get("application_name"),
+        record.get("application"),
+        record.get("executable_name"),
+        record.get("window_title"),
+        record.get("process_path"),
+    ]
+    return any("lockapp" in str(value or "").lower() for value in values)
+
+
+def _record_observed_session_login(session_info: Dict[str, Any], reason: str) -> Optional[Dict[str, Any]]:
+    record_id = _observed_session_record_id(session_info)
+    hostname = session_info.get("hostname") or socket.gethostname()
+    username = session_info.get("username")
+    session_id = session_info.get("session_id")
+    for session in reversed(load_sessions()):
+        if session.get("event_type") != "LOGIN" or not session.get("active"):
+            continue
+        if (
+            session.get("hostname") == hostname
+            and session.get("username") == username
+            and session.get("session_id") == session_id
+            and (
+                session.get("login_source") in COUNTABLE_LOGIN_SOURCES
+                or str(session.get("windows_event_id") or "") in COUNTABLE_LOGIN_EVENT_IDS
+            )
+        ):
+            logger.info(
+                "Observed Windows session rejected: reason=active_countable_login_exists host=%s user=%s session=%s",
+                hostname,
+                username,
+                session_id,
+            )
+            return None
+    if has_session_event_signature(hostname, record_id):
+        logger.info(
+            "Observed Windows session rejected: reason=duplicate host=%s user=%s session=%s record_id=%s",
+            hostname,
+            session_info.get("username"),
+            session_info.get("session_id"),
+            record_id,
+        )
+        return None
+
+    logger.info(
+        "Observed Windows session accepted as real login boundary: reason=%s host=%s user=%s session=%s record_id=%s",
+        reason,
+        hostname,
+        session_info.get("username"),
+        session_info.get("session_id"),
+        record_id,
+    )
+    return record_login({
+        **session_info,
+        "login_source": "windows_session_observed",
+        "windows_event_id": "SESSION_OBSERVED",
+        "windows_event_record_id": record_id,
+        "login_timestamp": session_info.get("collection_timestamp") or datetime.now(timezone.utc).isoformat(),
+    })
+
+
+def _record_lockapp_unlocks_from_history(
+    current_session: Dict[str, Any],
+    last_session: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    global _last_lockapp_history_checked_at, _pending_lockapp_event
+
+    hostname = current_session.get("hostname") or socket.gethostname()
+    username = current_session.get("username")
+    latest_session_timestamp = None
+    if last_session:
+        latest_session_timestamp = (
+            _parse_iso_timestamp(last_session.get("recorded_at"))
+            or _parse_iso_timestamp(last_session.get("login_timestamp"))
+            or _parse_iso_timestamp(last_session.get("logout_timestamp"))
+        )
+    try:
+        history = [
+            record for record in list_active_applications_history()
+            if (record.get("hostname") or hostname) == hostname
+        ]
+    except Exception as exc:
+        logger.warning("Could not inspect active application history for LockApp unlock fallback: %s", exc)
+        return None
+
+    history = list(reversed(history))
+    if _last_lockapp_history_checked_at is None and _pending_lockapp_event is None:
+        seeded_at = None
+        for record in history:
+            parsed_timestamp = _parse_iso_timestamp(record.get("timestamp"))
+            if latest_session_timestamp and parsed_timestamp and parsed_timestamp <= latest_session_timestamp:
+                continue
+            if parsed_timestamp and (seeded_at is None or parsed_timestamp > seeded_at):
+                seeded_at = parsed_timestamp
+        if seeded_at:
+            _last_lockapp_history_checked_at = seeded_at
+            logger.info(
+                "Login fallback history cursor initialized: host=%s newest_seen=%s",
+                hostname,
+                seeded_at.isoformat(),
+            )
+            return None
+
+    latest_recorded: Optional[Dict[str, Any]] = None
+    lock_event: Optional[Dict[str, Any]] = _pending_lockapp_event
+    newest_seen = _last_lockapp_history_checked_at
+
+    for record in history:
+        timestamp = record.get("timestamp")
+        parsed_timestamp = _parse_iso_timestamp(timestamp)
+        if latest_session_timestamp and parsed_timestamp and parsed_timestamp <= latest_session_timestamp:
+            continue
+        if _last_lockapp_history_checked_at and parsed_timestamp and parsed_timestamp <= _last_lockapp_history_checked_at:
+            continue
+        if parsed_timestamp and (newest_seen is None or parsed_timestamp > newest_seen):
+            newest_seen = parsed_timestamp
+        application = record.get("application_name") or record.get("application")
+        window_title = record.get("window_title")
+        logger.info(
+            "Observed active application event for login fallback: host=%s application=%s window=%s timestamp=%s",
+            hostname,
+            application,
+            window_title,
+            timestamp,
+        )
+
+        if _is_lock_app_event(record):
+            lock_event = record
+            _pending_lockapp_event = record
+            logger.info("LockApp event accepted as lock boundary: timestamp=%s", timestamp)
+            continue
+
+        if not lock_event:
+            logger.info(
+                "Active application event rejected for unlock fallback: reason=no_prior_lockapp application=%s timestamp=%s",
+                application,
+                timestamp,
+            )
+            continue
+
+        unlock_timestamp = timestamp or datetime.now(timezone.utc).isoformat()
+        lock_timestamp = lock_event.get("timestamp") or unlock_timestamp
+        record_id = f"lockapp-unlock:{hostname}:{username}:{lock_timestamp}:{unlock_timestamp}"
+        if has_session_event_signature(hostname, record_id):
+            logger.info("LockApp unlock rejected: reason=duplicate record_id=%s", record_id)
+            lock_event = None
+            continue
+
+        logger.info(
+            "LockApp unlock accepted as real login boundary: host=%s user=%s lock_timestamp=%s unlock_timestamp=%s record_id=%s",
+            hostname,
+            username,
+            lock_timestamp,
+            unlock_timestamp,
+            record_id,
+        )
+        latest_recorded = record_login({
+            **current_session,
+            "login_timestamp": unlock_timestamp,
+            "login_source": "windows_unlock_observed",
+            "windows_event_id": "LOCKAPP_UNLOCK",
+            "windows_event_record_id": record_id,
+        })
+        lock_event = None
+        _pending_lockapp_event = None
+
+    if newest_seen:
+        _last_lockapp_history_checked_at = newest_seen
+    return latest_recorded
+
+
 def close_active_sessions(
     sessions: List[Dict[str, Any]],
     current_session: Dict[str, Any],
@@ -295,6 +492,10 @@ def detect_login() -> Optional[Dict[str, Any]]:
         save_sessions(updated_sessions)
         return None
 
+    lockapp_login = _record_lockapp_unlocks_from_history(current_session, last_session)
+    if lockapp_login:
+        return lockapp_login
+
     if logout_event_record_id and not has_session_event_signature(current_session.get("hostname"), logout_event_record_id):
         sessions = load_sessions()
         before_count = len(sessions)
@@ -315,8 +516,10 @@ def detect_login() -> Optional[Dict[str, Any]]:
                 current_event_record_id,
             )
             return record_login(current_session)
-        logger.info("First run detected - waiting for a real Windows interactive login event")
-        return None
+        logger.info(
+            "First run detected without Security log event - using observed interactive Windows session if unique"
+        )
+        return _record_observed_session_login(current_session, "first_run_without_security_event")
     
     # Check if user or session changed (indicates logout/login)
     last_user = last_session.get("username")
@@ -326,8 +529,12 @@ def detect_login() -> Optional[Dict[str, Any]]:
     current_hostname = current_session.get("hostname")
 
     if current_hostname and current_hostname != last_hostname:
-        logger.info(f"Login detected: hostname changed from {last_hostname} to {current_hostname}")
-        return record_login(current_session)
+        logger.info(
+            "Hostname changed from %s to %s; using observed interactive session fallback",
+            last_hostname,
+            current_hostname,
+        )
+        return _record_observed_session_login(current_session, "hostname_changed")
 
     if current_event_record_id and current_event_record_id != last_event_record_id:
         if not has_session_event_signature(current_session.get("hostname"), current_event_record_id):
@@ -340,13 +547,18 @@ def detect_login() -> Optional[Dict[str, Any]]:
     
     # Different username = new login
     if current_user != last_user:
-        logger.info("User changed but no countable Windows interactive logon event was available; not recording login.")
-        return None
+        logger.info("User changed without Security log event; using observed interactive session fallback.")
+        return _record_observed_session_login(current_session, "user_changed_without_security_event")
     
     # Different session ID with same user = new login
     if current_session_id != last_session_id and current_user == last_user:
-        logger.info("Session ID changed without a countable Windows interactive logon event; not recording login.")
-        return None
+        logger.info("Session ID changed without Security log event; using observed interactive session fallback.")
+        return _record_observed_session_login(current_session, "session_changed_without_security_event")
+
+    if current_session.get("login_source") == "session_poll":
+        observed = _record_observed_session_login(current_session, "security_event_unavailable")
+        if observed:
+            return observed
     
     # No login detected
     touch_active_session(
