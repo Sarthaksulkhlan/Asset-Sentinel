@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from config import Config
@@ -75,4 +76,43 @@ def init_db():
         Base.metadata.create_all(bind=engine)
     except OperationalError as exc:
         raise RuntimeError(_database_connection_error_message()) from exc
+
+
+REQUIRED_TABLES = {
+    "assets",
+    "sessions",
+    "alerts",
+    "active_applications",
+    "active_application_history",
+    "hardware_changes",
+    "users",
+    "refresh_tokens",
+    "admin_users",
+    "early_access_requests",
+}
+
+
+def verify_database_health() -> dict:
+    report = {
+        "connected": False,
+        "schema_ok": False,
+        "required_tables_ok": False,
+        "missing_tables": [],
+        "error": None,
+    }
+    try:
+        assert_neon_postgresql_url()
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        report["connected"] = True
+        init_db()
+        inspector = inspect(engine)
+        existing_tables = set(inspector.get_table_names())
+        missing = sorted(REQUIRED_TABLES - existing_tables)
+        report["missing_tables"] = missing
+        report["required_tables_ok"] = not missing
+        report["schema_ok"] = not missing
+    except Exception as exc:
+        report["error"] = str(exc)
+    return report
 
