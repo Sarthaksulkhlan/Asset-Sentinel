@@ -159,21 +159,18 @@ The database design is intended to preserve these existing response shapes:
 
 The frontend should continue to work without modification once the Flask storage layer is moved to PostgreSQL.
 
-## Windows Monitoring Service
+## Windows Backend Service
 
-Asset Sentinel separates runtime responsibilities:
+Asset Sentinel/NEXIS can run the same backend started by `python app.py` as a Windows Service:
 
 ```text
-Windows Endpoint
+Windows PC
   AssetSentinelMonitoringService
-    -> monitoring_agent.py
-    -> Windows/WMI/Event Log/foreground window telemetry
+    -> app.py Flask backend API
+    -> startup health checks
+    -> supervised monitoring_agent.py workers
+    -> heartbeat, login, active application, hardware telemetry
     -> ASSET_SENTINEL_DATABASE_URL
-    -> Neon PostgreSQL
-
-API Server
-  app.py
-    -> Flask authenticated API
     -> Neon PostgreSQL
 
 React Dashboard
@@ -182,7 +179,7 @@ React Dashboard
     -> live fleet, login, heartbeat, hardware and active app views
 ```
 
-The React frontend and dashboard are not Windows Services. Only the endpoint monitoring agent is installed as a Windows Service.
+The Windows Service starts automatically on boot, runs without a terminal, writes to `logs/service.log`, and is configured to restart after first, second, and subsequent failures.
 
 ### Install
 
@@ -192,7 +189,30 @@ Run Command Prompt or PowerShell as Administrator:
 install_service.bat
 ```
 
-The installer registers `AssetSentinelMonitoringService`, sets Automatic Delayed Start, configures restart-on-failure recovery, and starts the service.
+The installer registers `AssetSentinelMonitoringService`, sets Automatic Delayed Start, configures restart-on-failure recovery, and starts the backend service.
+It also attempts to install/start the Active Application user-session helper so foreground-window telemetry resumes after user logon.
+
+Before installing on a new PC:
+
+```text
+1. Clone the repository.
+2. Configure .env with ASSET_SENTINEL_DATABASE_URL and required secrets.
+3. Install dependencies: pip install -r requirements.txt
+4. Run install_service.bat as Administrator.
+```
+
+The service startup verifies:
+
+```text
+.env exists
+Database connection successful
+Neon connection successful
+Heartbeat thread started
+Login tracker started
+Active Application Monitor started
+Scheduler started
+API server started
+```
 
 Active Application Timeline requires a user-session helper because Windows Services cannot read the foreground window from the interactive desktop. Install it once for each monitored Windows user:
 
@@ -207,6 +227,7 @@ This registers `active_application_user_agent.py` at user logon when Task Schedu
 ```bat
 start_service.bat
 stop_service.bat
+restart_service.bat
 start_active_app_agent.bat
 stop_active_app_agent.bat
 ```
@@ -223,6 +244,7 @@ uninstall_active_app_agent.bat
 ### Debug the Agent Without Installing
 
 ```powershell
+python app.py
 python monitoring_agent.py --console
 ```
 
@@ -249,6 +271,13 @@ sc.exe qc AssetSentinelMonitoringService
 sc.exe qfailure AssetSentinelMonitoringService
 ```
 
+Verify the API and startup health:
+
+```powershell
+Invoke-RestMethod http://localhost:5000/api/debug/startup-health
+Invoke-RestMethod http://localhost:5000/api/debug/device-health/<hostname-or-device_id>
+```
+
 Confirm Neon receives records:
 
 ```sql
@@ -259,10 +288,26 @@ select username, hostname, event_type, recorded_at from sessions order by record
 
 ### Production Notes
 
-`app.py` no longer starts endpoint monitoring by default. For legacy local development only, set:
+`python app.py` remains the local development entrypoint and starts the same backend runtime. For production Windows boot startup, use `install_service.bat`.
+
+To disable local telemetry workers for a special API-only deployment, set:
 
 ```powershell
-$env:ASSET_SENTINEL_EMBEDDED_MONITOR="1"
+$env:ASSET_SENTINEL_DISABLE_LOCAL_AGENT="true"
 ```
 
-Production deployments should run the Flask API and `AssetSentinelMonitoringService` separately.
+### PyInstaller Preparation
+
+A PyInstaller spec is included for a future packaged service installer:
+
+```powershell
+pyinstaller nexis_agent.spec
+```
+
+This generates:
+
+```text
+dist/NEXIS Agent.exe
+```
+
+Place a configured `.env` beside `NEXIS Agent.exe`, then run the executable as Administrator. When launched manually, the packaged executable installs and starts `AssetSentinelMonitoringService`. When launched by Windows Service Control Manager, the same executable runs the backend service.
