@@ -214,13 +214,13 @@ Scheduler started
 API server started
 ```
 
-Active Application Timeline requires a user-session helper because Windows Services cannot read the foreground window from the interactive desktop. Install it once for each monitored Windows user:
+Active Application Timeline requires a user-session helper because Windows Services cannot read the foreground window from the interactive desktop. Install it once from each monitored Windows user account:
 
 ```bat
 install_active_app_agent.bat
 ```
 
-This registers `active_application_user_agent.py` at user logon when Task Scheduler permissions are available, or falls back to a current-user Startup launcher. It records only real foreground-window events; if Windows does not expose a foreground window, no application event is inserted.
+This removes stale Active Application Scheduled Tasks, Startup-folder VBS files, Startup shortcuts, and old HKCU Run values, then creates one startup mechanism: an HKCU Run value named `AssetSentinelActiveApplicationAgent`. The Run value starts `launch_active_app_agent.ps1`, which resolves the real Python interpreter at logon and supervises `active_application_user_agent.py`. It records only real foreground-window events; if Windows does not expose a foreground window, no application event is inserted.
 
 ### Start and Stop
 
@@ -256,6 +256,7 @@ Runtime logs are written to:
 logs/service.log
 logs/agent.log
 logs/error.log
+logs/active_application_launcher.log
 logs/telemetry_spool.jsonl
 ```
 

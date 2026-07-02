@@ -22,9 +22,13 @@ from storage import append_active_application, get_latest_active_application_for
 logger = logging.getLogger("asset_sentinel.active_application_user_agent")
 NO_FOREGROUND_LOG_INTERVAL_SECONDS = 30
 SPOOL_RETRY_INTERVAL_SECONDS = 15
+STARTUP_RETRY_INTERVAL_SECONDS = 15
+TOP_LEVEL_RESTART_INTERVAL_SECONDS = 10
 STATUS_PATH = LOG_DIR / "active_application_user_agent_status.json"
 PID_PATH = LOG_DIR / "active_application_user_agent.pid"
 STOP_PATH = LOG_DIR / "active_application_user_agent.stop"
+LOCK_PATH = LOG_DIR / "active_application_user_agent.lock"
+_LOCK_FILE = None
 
 
 def _pid_is_running(pid: int) -> bool:
@@ -42,24 +46,52 @@ def _pid_is_running(pid: int) -> bool:
 
 
 def _acquire_single_instance() -> None:
+    global _LOCK_FILE
+
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        import msvcrt
+
+        _LOCK_FILE = LOCK_PATH.open("a+b")
+        _LOCK_FILE.seek(0)
+        _LOCK_FILE.write(b"0")
+        _LOCK_FILE.flush()
+        _LOCK_FILE.seek(0)
+        msvcrt.locking(_LOCK_FILE.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError as exc:
+        raise SystemExit("Active application user agent is already running; lock is held.") from exc
+    except ImportError:
+        _LOCK_FILE = None
+
     if PID_PATH.exists():
         try:
             existing_pid = int(PID_PATH.read_text(encoding="utf-8").strip() or "0")
         except ValueError:
             existing_pid = 0
-        if _pid_is_running(existing_pid):
-            raise SystemExit(f"Active application user agent is already running as PID {existing_pid}.")
+        if existing_pid:
+            logger.info("Replacing stale active application PID file. previous_pid=%s", existing_pid)
         PID_PATH.unlink(missing_ok=True)
     PID_PATH.write_text(str(os.getpid()), encoding="utf-8")
     STOP_PATH.unlink(missing_ok=True)
 
     def cleanup() -> None:
+        global _LOCK_FILE
         try:
             if PID_PATH.exists() and PID_PATH.read_text(encoding="utf-8").strip() == str(os.getpid()):
                 PID_PATH.unlink()
         except Exception:
             pass
+        if _LOCK_FILE is not None:
+            try:
+                import msvcrt
+
+                _LOCK_FILE.seek(0)
+                msvcrt.locking(_LOCK_FILE.fileno(), msvcrt.LK_UNLCK, 1)
+                _LOCK_FILE.close()
+            except Exception:
+                pass
+            _LOCK_FILE = None
+        logger.info("Active application user-session agent process shutdown cleanup completed.")
 
     atexit.register(cleanup)
 
@@ -72,11 +104,16 @@ class ActiveApplicationUserAgent:
         self.last_no_foreground_log_at = 0.0
         self.last_spool_flush_at = 0.0
 
-    def start(self) -> None:
+    def start(self) -> bool:
         logger.info("Active application user-session agent starting.")
         logger.info("Database host: %s", database_host_for_display())
         logger.info("Foreground diagnostics at startup: %s", collect_foreground_diagnostics())
-        init_db()
+        try:
+            init_db()
+        except Exception as exc:
+            logger.exception("Active application user-session startup database initialization failed; retrying: %s", exc)
+            self._write_status("startup_retry", error=str(exc))
+            return False
         try:
             hardware = collect_hardware()
             device_uid = resolve_device_uid(hardware)
@@ -88,9 +125,18 @@ class ActiveApplicationUserAgent:
         self._seed_last_signature()
         self._write_status("started")
         logger.info("Active application user-session agent started.")
+        return True
 
     def run_forever(self) -> None:
-        self.start()
+        while not self.stop_event.is_set():
+            if STOP_PATH.exists():
+                logger.info("Stop file detected before startup, stopping active application user-session agent.")
+                self.stop_event.set()
+                break
+            if self.start():
+                break
+            self.stop_event.wait(STARTUP_RETRY_INTERVAL_SECONDS)
+
         while not self.stop_event.is_set():
             if STOP_PATH.exists():
                 logger.info("Stop file detected, stopping active application user-session agent.")
@@ -106,7 +152,11 @@ class ActiveApplicationUserAgent:
 
     def _seed_last_signature(self) -> None:
         hostname = socket.gethostname()
-        latest = get_latest_active_application_for_host(hostname)
+        try:
+            latest = get_latest_active_application_for_host(hostname)
+        except Exception as exc:
+            logger.exception("Could not seed latest active application signature; monitor will continue: %s", exc)
+            return
         if latest:
             self.last_signature_by_host[hostname] = _record_signature(latest)
             logger.info(
@@ -214,7 +264,10 @@ class ActiveApplicationUserAgent:
             "foreground_diagnostics": collect_foreground_diagnostics(),
             "error": error,
         }
-        STATUS_PATH.write_text(json.dumps(status, indent=2), encoding="utf-8")
+        try:
+            STATUS_PATH.write_text(json.dumps(status, indent=2), encoding="utf-8")
+        except Exception as exc:
+            logger.exception("Could not write active application user-session status file: %s", exc)
 
 
 def main() -> None:
@@ -223,7 +276,14 @@ def main() -> None:
     args = parser.parse_args()
 
     configure_logging("agent", console=args.console)
-    _acquire_single_instance()
+    try:
+        _acquire_single_instance()
+    except SystemExit as exc:
+        logger.error("Active application user-session agent did not start: %s", exc)
+        raise
+    except Exception as exc:
+        logger.exception("Active application user-session single-instance guard failed: %s", exc)
+        raise
     stop_event = threading.Event()
 
     def request_stop(signum, _frame):
@@ -232,7 +292,14 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
-    ActiveApplicationUserAgent(stop_event=stop_event).run_forever()
+    while not stop_event.is_set():
+        try:
+            ActiveApplicationUserAgent(stop_event=stop_event).run_forever()
+            break
+        except Exception as exc:
+            logger.exception("Active application user-session agent crashed at top level; restarting: %s", exc)
+            if stop_event.wait(TOP_LEVEL_RESTART_INTERVAL_SECONDS):
+                break
 
 
 if __name__ == "__main__":
