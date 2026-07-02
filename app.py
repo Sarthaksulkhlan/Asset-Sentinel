@@ -15,6 +15,7 @@ from activity_api import (
     get_sessions_count,
 )
 from database import database_host_for_display, init_db
+from service_logging import configure_logging, has_asset_sentinel_file_logging
 from storage import get_asset_details, list_alerts, list_assets, normalize_active_application_timestamps
 from startup_health import device_health_response, run_startup_checks, startup_health_response
 from registration import register_admin, submit_early_access
@@ -284,6 +285,8 @@ def sessions_count():
 
 
 def initialize_backend_runtime(start_agent: bool = True, exit_on_error: bool = True) -> bool:
+    if not has_asset_sentinel_file_logging():
+        configure_logging("app", console=True)
     print_startup_environment_diagnostics()
     try:
         init_db()

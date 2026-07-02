@@ -8,12 +8,21 @@ ROOT_DIR = Path(__file__).resolve().parent
 LOG_DIR = ROOT_DIR / "logs"
 SERVICE_LOG = LOG_DIR / "service.log"
 AGENT_LOG = LOG_DIR / "agent.log"
+APP_LOG = LOG_DIR / "app.log"
 ERROR_LOG = LOG_DIR / "error.log"
 
 
 def ensure_log_dir() -> Path:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     return LOG_DIR
+
+
+def has_asset_sentinel_file_logging() -> bool:
+    for handler in logging.getLogger().handlers:
+        filename = getattr(handler, "baseFilename", None)
+        if filename and Path(filename).resolve().parent == LOG_DIR.resolve():
+            return True
+    return False
 
 
 def configure_logging(component: str = "agent", console: bool = False) -> logging.Logger:
@@ -26,7 +35,12 @@ def configure_logging(component: str = "agent", console: bool = False) -> loggin
         "%(asctime)s [%(name)s] [%(levelname)s] %(message)s"
     )
 
-    component_log = SERVICE_LOG if component == "service" else AGENT_LOG
+    component_logs = {
+        "service": SERVICE_LOG,
+        "app": APP_LOG,
+        "agent": AGENT_LOG,
+    }
+    component_log = component_logs.get(component, AGENT_LOG)
     component_handler = RotatingFileHandler(
         component_log,
         maxBytes=5 * 1024 * 1024,
