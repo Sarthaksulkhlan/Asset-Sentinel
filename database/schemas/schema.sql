@@ -106,6 +106,63 @@ CREATE TABLE IF NOT EXISTS active_application_history (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS application_usage_segments (
+    id BIGSERIAL PRIMARY KEY,
+    device_id VARCHAR(255) NOT NULL,
+    hostname VARCHAR(255) NOT NULL,
+    username VARCHAR(255),
+    application_name VARCHAR(512) NOT NULL,
+    window_title TEXT,
+    process_path TEXT,
+    start_time TIMESTAMPTZ NOT NULL,
+    end_time TIMESTAMPTZ NOT NULL,
+    active_duration INTEGER NOT NULL DEFAULT 0,
+    idle_duration INTEGER NOT NULL DEFAULT 0,
+    date TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_application_usage_segments_identity
+        UNIQUE (device_id, application_name, start_time, end_time)
+);
+
+CREATE TABLE IF NOT EXISTS application_usage_daily (
+    id BIGSERIAL PRIMARY KEY,
+    date TIMESTAMPTZ NOT NULL,
+    hostname VARCHAR(255) NOT NULL,
+    username VARCHAR(255),
+    application_name VARCHAR(512) NOT NULL,
+    window_title TEXT,
+    first_seen TIMESTAMPTZ NOT NULL,
+    last_seen TIMESTAMPTZ NOT NULL,
+    total_foreground_seconds INTEGER NOT NULL DEFAULT 0,
+    active_seconds INTEGER NOT NULL DEFAULT 0,
+    idle_seconds INTEGER NOT NULL DEFAULT 0,
+    locked_seconds INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_application_usage_daily_app
+        UNIQUE (date, hostname, username, application_name, window_title)
+);
+
+CREATE TABLE IF NOT EXISTS activity_sessions (
+    id BIGSERIAL PRIMARY KEY,
+    hostname VARCHAR(255) NOT NULL,
+    username VARCHAR(255),
+    app_name VARCHAR(512) NOT NULL,
+    window_title TEXT,
+    start_time TIMESTAMPTZ NOT NULL,
+    end_time TIMESTAMPTZ NOT NULL,
+    total_seconds INTEGER NOT NULL DEFAULT 0,
+    active_seconds INTEGER NOT NULL DEFAULT 0,
+    idle_seconds INTEGER NOT NULL DEFAULT 0,
+    locked_seconds INTEGER NOT NULL DEFAULT 0,
+    created_date TIMESTAMPTZ NOT NULL,
+    last_state VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_activity_sessions_last_state
+        CHECK (last_state IN ('ACTIVE', 'IDLE', 'LOCKED'))
+);
+
 CREATE TABLE IF NOT EXISTS hardware_changes (
     id BIGSERIAL PRIMARY KEY,
     hostname VARCHAR(255) NOT NULL,
@@ -260,6 +317,23 @@ CREATE INDEX IF NOT EXISTS idx_active_application_history_hostname_timestamp
     ON active_application_history (hostname, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_active_application_history_username_timestamp
     ON active_application_history (username, timestamp DESC);
+
+CREATE INDEX IF NOT EXISTS idx_application_usage_segments_device_date
+    ON application_usage_segments (device_id, date);
+CREATE INDEX IF NOT EXISTS idx_application_usage_segments_hostname_start
+    ON application_usage_segments (hostname, start_time DESC);
+CREATE INDEX IF NOT EXISTS idx_application_usage_segments_application
+    ON application_usage_segments (application_name);
+CREATE INDEX IF NOT EXISTS idx_application_usage_daily_host_date
+    ON application_usage_daily (hostname, date);
+CREATE INDEX IF NOT EXISTS idx_application_usage_daily_app
+    ON application_usage_daily (application_name);
+CREATE INDEX IF NOT EXISTS idx_activity_sessions_host_created_date
+    ON activity_sessions (hostname, created_date);
+CREATE INDEX IF NOT EXISTS idx_activity_sessions_host_end
+    ON activity_sessions (hostname, end_time DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_sessions_app
+    ON activity_sessions (app_name);
 
 CREATE INDEX IF NOT EXISTS idx_hardware_changes_hostname_detected_at
     ON hardware_changes (hostname, detected_at DESC);
