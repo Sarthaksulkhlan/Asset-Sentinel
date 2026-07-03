@@ -682,6 +682,230 @@ def list_active_applications_history() -> List[Dict[str, Any]]:
         return [serialize_active_application_history(row) for row in rows]
 
 
+def _latest_asset_device_id(session, hostname: str) -> str:
+    row = session.execute(
+        select(Asset)
+        .where(Asset.hostname == hostname)
+        .order_by(Asset.collected_at.desc(), Asset.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if not row:
+        return hostname
+    return row.device_uid or row.composite_id or str(row.uuid or "") or row.hostname
+
+
+def _event_idle_seconds(record: Dict[str, Any], duration_seconds: int) -> int:
+    raw_idle = record.get("user_idle_seconds")
+    threshold = int(record.get("idle_threshold_seconds") or DEFAULT_IDLE_THRESHOLD_SECONDS)
+    try:
+        idle_seconds = int(raw_idle)
+    except (TypeError, ValueError):
+        return 0
+    if idle_seconds < threshold:
+        return 0
+    return max(0, min(duration_seconds, idle_seconds))
+
+
+def _usage_day_start(value: datetime) -> datetime:
+    return value.astimezone(Config.DISPLAY_TZINFO).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+
+
+def _increment_daily_usage(
+    session,
+    *,
+    hostname: str,
+    username: Optional[str],
+    application_name: str,
+    window_title: Optional[str],
+    start_time: datetime,
+    end_time: datetime,
+    foreground_seconds: int,
+    active_seconds: int,
+    idle_seconds: int,
+    locked_seconds: int = 0,
+) -> None:
+    if foreground_seconds <= 0:
+        return
+    day = _usage_day_start(start_time)
+    aggregate_username = username or "Unknown"
+    row = session.execute(
+        select(ApplicationUsageDaily)
+        .where(
+            ApplicationUsageDaily.date == day,
+            ApplicationUsageDaily.hostname == hostname,
+            ApplicationUsageDaily.username == aggregate_username,
+            ApplicationUsageDaily.application_name == application_name,
+            ApplicationUsageDaily.window_title == window_title,
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if row is None:
+        session.add(ApplicationUsageDaily(
+            date=day,
+            hostname=hostname,
+            username=aggregate_username,
+            application_name=application_name,
+            window_title=window_title,
+            first_seen=start_time,
+            last_seen=end_time,
+            total_foreground_seconds=foreground_seconds,
+            active_seconds=active_seconds,
+            idle_seconds=idle_seconds,
+            locked_seconds=locked_seconds,
+        ))
+        return
+    row.first_seen = min(_parse_required_datetime(row.first_seen), start_time)
+    row.last_seen = max(_parse_required_datetime(row.last_seen), end_time)
+    row.total_foreground_seconds = int(row.total_foreground_seconds or 0) + foreground_seconds
+    row.active_seconds = int(row.active_seconds or 0) + active_seconds
+    row.idle_seconds = int(row.idle_seconds or 0) + idle_seconds
+    row.locked_seconds = int(row.locked_seconds or 0) + locked_seconds
+
+
+def _record_usage_segment(session, previous: ActiveApplicationHistory, end_time: datetime, current_record: Dict[str, Any]) -> None:
+    start_time = _parse_required_datetime(previous.timestamp)
+    end_time = _parse_required_datetime(end_time)
+    if end_time <= start_time:
+        return
+    duration_seconds = int((end_time - start_time).total_seconds())
+    idle_seconds = _event_idle_seconds(current_record, duration_seconds)
+    active_seconds = max(0, duration_seconds - idle_seconds)
+    device_id = _latest_asset_device_id(session, previous.hostname)
+    app_name = previous.application or previous.window_title or previous.process_path or "Unknown"
+    exists = session.execute(
+        select(ApplicationUsageSegment.id)
+        .where(
+            ApplicationUsageSegment.device_id == device_id,
+            ApplicationUsageSegment.application_name == app_name,
+            ApplicationUsageSegment.start_time == start_time,
+            ApplicationUsageSegment.end_time == end_time,
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if exists:
+        return
+    session.add(ApplicationUsageSegment(
+        device_id=device_id,
+        hostname=previous.hostname,
+        username=previous.username,
+        application_name=app_name,
+        window_title=previous.window_title,
+        process_path=previous.process_path,
+        start_time=start_time,
+        end_time=end_time,
+        active_duration=active_seconds,
+        idle_duration=idle_seconds,
+        date=start_time.replace(hour=0, minute=0, second=0, microsecond=0),
+    ))
+
+
+def _activity_state_from_record(record: Dict[str, Any]) -> str:
+    if record.get("windows_locked"):
+        return "LOCKED"
+    if record.get("is_user_idle"):
+        return "IDLE"
+    return "ACTIVE"
+
+
+def _same_activity_interval(row: ActivitySession, record: Dict[str, Any], created_date: datetime) -> bool:
+    return (
+        row.hostname == (record.get("hostname") or "Unknown")
+        and (row.username or "Unknown") == (record.get("username") or "Unknown")
+        and row.app_name == (record.get("application_name") or record.get("application") or "Unknown")
+        and (row.window_title or "") == (record.get("window_title") or "")
+        and _parse_required_datetime(row.created_date) == created_date
+    )
+
+
+def _apply_activity_delta(row: ActivitySession, seconds: int, state: str, threshold: int) -> None:
+    seconds = max(0, int(seconds))
+    if seconds <= 0:
+        row.last_state = state
+        return
+    row.total_seconds = int(row.total_seconds or 0) + seconds
+    if state == "LOCKED":
+        row.locked_seconds = int(row.locked_seconds or 0) + seconds
+    elif state == "IDLE":
+        row.idle_seconds = int(row.idle_seconds or 0) + seconds
+    else:
+        row.active_seconds = int(row.active_seconds or 0) + seconds
+    row.last_state = state
+
+
+def record_activity_sample(record: Dict[str, Any]) -> None:
+    sample_time = _parse_datetime(record.get("timestamp")) or datetime.now(timezone.utc)
+    hostname = record.get("hostname") or "Unknown"
+    username = record.get("username") or "Unknown"
+    app_name = record.get("application_name") or record.get("application") or "Unknown"
+    window_title = record.get("window_title") or "Unknown"
+    state = _activity_state_from_record(record)
+    threshold = int(record.get("idle_threshold_seconds") or DEFAULT_IDLE_THRESHOLD_SECONDS)
+    created_date = _usage_day_start(sample_time)
+
+    with get_db_session() as session:
+        latest = session.execute(
+            select(ActivitySession)
+            .where(ActivitySession.hostname == hostname)
+            .order_by(ActivitySession.end_time.desc(), ActivitySession.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+        if latest and _same_activity_interval(latest, record, created_date):
+            latest_end = _parse_required_datetime(latest.end_time)
+            delta = max(0, int((sample_time - latest_end).total_seconds()))
+            _apply_activity_delta(latest, delta, state, threshold)
+            latest.end_time = max(latest_end, sample_time)
+            _increment_daily_usage(
+                session,
+                hostname=latest.hostname,
+                username=latest.username,
+                application_name=latest.app_name,
+                window_title=latest.window_title,
+                start_time=latest_end,
+                end_time=sample_time,
+                foreground_seconds=delta,
+                active_seconds=delta if state == "ACTIVE" else 0,
+                idle_seconds=delta if state == "IDLE" else 0,
+                locked_seconds=delta if state == "LOCKED" else 0,
+            )
+            return
+
+        if latest:
+            latest_end = _parse_required_datetime(latest.end_time)
+            gap = max(0, int((sample_time - latest_end).total_seconds()))
+            if gap:
+                _apply_activity_delta(latest, gap, latest.last_state or "ACTIVE", threshold)
+                latest.end_time = sample_time
+                _increment_daily_usage(
+                    session,
+                    hostname=latest.hostname,
+                    username=latest.username,
+                    application_name=latest.app_name,
+                    window_title=latest.window_title,
+                    start_time=latest_end,
+                    end_time=sample_time,
+                    foreground_seconds=gap,
+                    active_seconds=gap if latest.last_state == "ACTIVE" else 0,
+                    idle_seconds=gap if latest.last_state == "IDLE" else 0,
+                    locked_seconds=gap if latest.last_state == "LOCKED" else 0,
+                )
+
+        session.add(ActivitySession(
+            hostname=hostname,
+            username=username,
+            app_name=app_name,
+            window_title=window_title,
+            start_time=sample_time,
+            end_time=sample_time,
+            total_seconds=0,
+            active_seconds=0,
+            idle_seconds=0,
+            locked_seconds=0,
+            created_date=created_date,
+            last_state=state,
+        ))
+
+
 def append_active_application(record: Dict[str, Any]) -> None:
     event_timestamp = _parse_datetime(record.get("timestamp")) or datetime.now(timezone.utc)
     hostname = record.get("hostname") or "Unknown"
@@ -709,6 +933,7 @@ def append_active_application(record: Dict[str, Any]) -> None:
             and latest.application == application_name
             and latest.window_title == window_title
             and latest.process_path == (record.get("process_path") or record.get("active_process_path") or executable_name)
+            and not record.get("activity_state_changed")
         ):
             logger.info(
                 "Application event skipped as duplicate: hostname=%s application=%s window=%s",
@@ -717,6 +942,8 @@ def append_active_application(record: Dict[str, Any]) -> None:
                 window_title,
             )
             return
+        if latest:
+            _record_usage_segment(session, latest, event_timestamp, record)
         row = ActiveApplication(
             hostname=hostname,
             username=username,
