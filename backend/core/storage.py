@@ -1,5 +1,7 @@
 import hashlib
 import logging
+import ctypes
+import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional
@@ -9,7 +11,7 @@ from sqlalchemy import delete, desc, func, or_, select, text
 
 from database import get_db_session
 from config import Config
-from models import ActiveApplication, ActiveApplicationHistory, Alert, Asset, HardwareChange, SessionRecord
+from models import ActiveApplication, ActiveApplicationHistory, ActivitySession, Alert, ApplicationUsageDaily, ApplicationUsageSegment, Asset, HardwareChange, SessionRecord
 
 
 logger = logging.getLogger("asset_sentinel.storage")
@@ -25,6 +27,7 @@ NON_COUNTABLE_LOGIN_SOURCES = {
     "windows_lock",
     "windows_session_disconnect",
 }
+DEFAULT_IDLE_THRESHOLD_SECONDS = int(os.environ.get("IDLE_THRESHOLD_SECONDS") or os.environ.get("ASSET_SENTINEL_IDLE_THRESHOLD_SECONDS", "300"))
 
 
 def _parse_datetime(value: Any) -> Optional[datetime]:
