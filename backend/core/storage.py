@@ -1161,6 +1161,328 @@ def _timeline_event(timestamp: Any, event_type: str, description: str, severity:
     }
 
 
+def _countable_login_times(sessions: Iterable[SessionRecord]) -> List[datetime]:
+    login_times: List[datetime] = []
+    for row in sessions:
+        if row.event_type != "LOGIN" or not _is_countable_login(row):
+            continue
+        stamp = row.login_timestamp or row.recorded_at
+        if stamp:
+            login_times.append(_parse_required_datetime(stamp))
+    return sorted(login_times)
+
+
+def _latest_session_start(sessions: Iterable[SessionRecord]) -> Optional[datetime]:
+    login_times = _countable_login_times(sessions)
+    return login_times[-1] if login_times else None
+
+
+class LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+
+def _local_user_idle_seconds() -> Optional[int]:
+    try:
+        info = LASTINPUTINFO()
+        info.cbSize = ctypes.sizeof(info)
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+            return None
+        tick_count = ctypes.windll.kernel32.GetTickCount()
+        return max(0, int((tick_count - info.dwTime) / 1000))
+    except Exception:
+        return None
+
+
+def _period_start(period: str, session_start: Optional[datetime], now: datetime) -> datetime:
+    local_now = now.astimezone(Config.DISPLAY_TZINFO)
+    today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    if period == "current_session":
+        return session_start or today_start
+    if period == "yesterday":
+        return today_start - timedelta(days=1)
+    if period == "last_2_days":
+        return today_start - timedelta(days=1)
+    return today_start
+
+
+def _period_bounds(period: str, sessions: Iterable[SessionRecord], now: Optional[datetime] = None) -> tuple[datetime, datetime]:
+    now = now or datetime.now(timezone.utc)
+    local_now = now.astimezone(Config.DISPLAY_TZINFO)
+    today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    yesterday_start = today_start - timedelta(days=1)
+    if period == "current_session":
+        fallback_start = _latest_session_start(sessions) or today_start
+        return fallback_start, now
+    if period == "yesterday":
+        raw_start, raw_end = yesterday_start, today_start
+    elif period == "last_2_days":
+        raw_start, raw_end = yesterday_start, now
+    else:
+        raw_start, raw_end = today_start, now
+
+    return raw_start, raw_end
+
+
+def _period_end(period: str, now: datetime) -> datetime:
+    local_now = now.astimezone(Config.DISPLAY_TZINFO)
+    today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    if period == "yesterday":
+        return today_start
+    return now
+
+
+def _new_usage_bucket(app_name: str, window_title: Optional[str] = None, process_path: Optional[str] = None) -> Dict[str, Any]:
+    return {
+        "label": app_name,
+        "application_name": app_name,
+        "value": 0,
+        "total_duration_seconds": 0,
+        "active_duration_seconds": 0,
+        "productive_duration_seconds": 0,
+        "idle_duration_seconds": 0,
+        "locked_duration_seconds": 0,
+        "percentage_of_session": 0,
+        "window_title": window_title,
+        "process_path": process_path,
+        "last_seen_at": None,
+    }
+
+
+def _add_usage_duration(
+    usage: Dict[str, Dict[str, Any]],
+    app_name: str,
+    foreground_seconds: int,
+    idle_seconds: int,
+    seen_at: datetime,
+    locked_seconds: int = 0,
+    window_title: Optional[str] = None,
+    process_path: Optional[str] = None,
+) -> None:
+    foreground_seconds = max(0, int(foreground_seconds))
+    locked_seconds = max(0, min(foreground_seconds, int(locked_seconds)))
+    idle_seconds = max(0, min(foreground_seconds - locked_seconds, int(idle_seconds)))
+    active_seconds = max(0, foreground_seconds - idle_seconds - locked_seconds)
+    if foreground_seconds <= 0:
+        return
+    bucket = usage.setdefault(app_name, _new_usage_bucket(app_name, window_title, process_path))
+    bucket["value"] += foreground_seconds
+    bucket["total_duration_seconds"] += foreground_seconds
+    bucket["active_duration_seconds"] += active_seconds
+    bucket["productive_duration_seconds"] += active_seconds
+    bucket["idle_duration_seconds"] += idle_seconds
+    bucket["locked_duration_seconds"] += locked_seconds
+    bucket["last_seen_at"] = _iso(seen_at)
+    if window_title:
+        bucket["window_title"] = window_title
+    if process_path:
+        bucket["process_path"] = process_path
+
+
+def _locked_intervals(sessions: Iterable[SessionRecord], window_start: datetime, window_end: datetime) -> List[tuple[datetime, datetime]]:
+    events = []
+    for row in sessions:
+        stamp = _parse_datetime(row.login_timestamp or row.logout_timestamp or row.recorded_at)
+        if not stamp:
+            continue
+        source = row.login_source or ""
+        if source in {"windows_lock", "windows_session_disconnect"} or row.event_type == "LOGOUT":
+            events.append(("lock", stamp))
+        elif row.event_type == "LOGIN" and _is_countable_login(row):
+            events.append(("unlock", stamp))
+    events.sort(key=lambda item: item[1])
+
+    intervals: List[tuple[datetime, datetime]] = []
+    locked_at: Optional[datetime] = None
+    for event_type, stamp in events:
+        if event_type == "lock":
+            locked_at = stamp
+        elif event_type == "unlock" and locked_at:
+            start = max(locked_at, window_start)
+            end = min(stamp, window_end)
+            if end > start:
+                intervals.append((start, end))
+            locked_at = None
+    if locked_at:
+        start = max(locked_at, window_start)
+        if window_end > start:
+            intervals.append((start, window_end))
+    return intervals
+
+
+def _overlap_seconds(start: datetime, end: datetime, intervals: Iterable[tuple[datetime, datetime]]) -> int:
+    total = 0
+    for locked_start, locked_end in intervals:
+        overlap_start = max(start, locked_start)
+        overlap_end = min(end, locked_end)
+        if overlap_end > overlap_start:
+            total += int((overlap_end - overlap_start).total_seconds())
+    return total
+
+
+def _application_usage_analytics(
+    app_history: Iterable[ActiveApplicationHistory],
+    session_start: Optional[datetime],
+    activity_sessions: Optional[Iterable[ActivitySession]] = None,
+    segments: Optional[Iterable[ApplicationUsageSegment]] = None,
+    daily_usage: Optional[Iterable[ApplicationUsageDaily]] = None,
+    period: str = "current_session",
+    period_start_override: Optional[datetime] = None,
+    period_end_override: Optional[datetime] = None,
+    locked_intervals: Optional[Iterable[tuple[datetime, datetime]]] = None,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    now = now or datetime.now(timezone.utc)
+    started_at = period_start_override or _period_start(period, session_start, now)
+    ended_at = period_end_override or _period_end(period, now)
+    session_duration = max(0, int((ended_at - started_at).total_seconds()))
+    usage: Dict[str, Dict[str, Any]] = {}
+    locked_intervals = list(locked_intervals or [])
+    segment_keys = set()
+    use_daily_usage = period != "current_session"
+
+    for row in activity_sessions or []:
+        start = _parse_datetime(row.start_time)
+        end = _parse_datetime(row.end_time)
+        if not start or not end or end <= started_at or start >= ended_at:
+            continue
+        clipped_start = max(start, started_at)
+        clipped_end = min(end, ended_at)
+        clipped_seconds = max(0, int((clipped_end - clipped_start).total_seconds()))
+        original_seconds = max(1, int((end - start).total_seconds()))
+        ratio = clipped_seconds / original_seconds
+        _add_usage_duration(
+            usage,
+            row.app_name or "Unknown",
+            clipped_seconds,
+            int((row.idle_seconds or 0) * ratio),
+            clipped_start,
+            locked_seconds=int((row.locked_seconds or 0) * ratio),
+            window_title=row.window_title,
+        )
+
+    has_activity_sessions = bool(usage)
+
+    for row in daily_usage or []:
+        if not use_daily_usage or has_activity_sessions:
+            continue
+        day = _parse_datetime(row.date)
+        if not day or day < _usage_day_start(started_at) or day > _usage_day_start(ended_at):
+            continue
+        app_name = row.application_name or "Unknown"
+        foreground = int(row.total_foreground_seconds or 0)
+        locked = int(row.locked_seconds or 0)
+        idle = int(row.idle_seconds or 0)
+        _add_usage_duration(
+            usage,
+            app_name,
+            foreground,
+            idle,
+            _parse_datetime(row.last_seen) or started_at,
+            locked_seconds=locked,
+            window_title=row.window_title,
+        )
+
+    has_daily_usage = bool(usage)
+
+    for segment in segments or []:
+        if has_daily_usage:
+            continue
+        start = _parse_datetime(segment.start_time)
+        end = _parse_datetime(segment.end_time)
+        if not start or not end or end <= started_at or start >= ended_at:
+            continue
+        segment_keys.add((segment.application_name or "Unknown", int(start.timestamp()), int(end.timestamp())))
+        clipped_start = max(start, started_at)
+        clipped_end = min(end, ended_at)
+        clipped_seconds = max(0, int((clipped_end - clipped_start).total_seconds()))
+        original_seconds = max(1, int((end - start).total_seconds()))
+        ratio = clipped_seconds / original_seconds
+        locked_seconds = _overlap_seconds(clipped_start, clipped_end, locked_intervals)
+        idle_seconds = min(clipped_seconds - locked_seconds, int((segment.idle_duration or 0) * ratio))
+        _add_usage_duration(
+            usage,
+            segment.application_name or "Unknown",
+            clipped_seconds,
+            idle_seconds,
+            clipped_start,
+            locked_seconds=locked_seconds,
+            window_title=segment.window_title,
+            process_path=segment.process_path,
+        )
+
+    events = []
+    for row in app_history:
+        stamp = _parse_datetime(row.timestamp)
+        if not stamp:
+            continue
+        app_name = row.application or row.window_title or row.process_path or "Unknown"
+        events.append({
+            "application_name": app_name,
+            "window_title": row.window_title,
+            "process_path": row.process_path,
+            "timestamp": stamp,
+        })
+
+    events.sort(key=lambda item: item["timestamp"])
+    for index, event in enumerate(events):
+        raw_start = event["timestamp"]
+        raw_end = events[index + 1]["timestamp"] if index + 1 < len(events) else ended_at
+        if raw_end <= started_at or raw_start >= ended_at:
+            continue
+        start = max(raw_start, started_at)
+        end = min(raw_end, ended_at)
+        seconds = max(0, int((end - start).total_seconds()))
+        if seconds <= 0:
+            continue
+        app_name = event["application_name"]
+        interval_key = (app_name, int(raw_start.timestamp()), int(raw_end.timestamp()))
+        is_live_interval = index + 1 >= len(events)
+        if interval_key in segment_keys or (has_daily_usage and not is_live_interval):
+            continue
+        live_idle_seconds = _local_user_idle_seconds() if index + 1 >= len(events) and ended_at == now else None
+        locked_seconds = _overlap_seconds(start, end, locked_intervals)
+        idle_seconds = 0
+        if live_idle_seconds is not None and live_idle_seconds >= DEFAULT_IDLE_THRESHOLD_SECONDS:
+            idle_seconds = min(seconds - locked_seconds, live_idle_seconds)
+        _add_usage_duration(
+            usage,
+            app_name,
+            seconds,
+            idle_seconds,
+            event["timestamp"],
+            locked_seconds=locked_seconds,
+            window_title=event.get("window_title"),
+            process_path=event.get("process_path"),
+        )
+
+    denominator = max(session_duration, sum(item["total_duration_seconds"] for item in usage.values()), 1)
+    items = sorted(usage.values(), key=lambda item: item["total_duration_seconds"], reverse=True)
+    for item in items:
+        item["percentage_of_session"] = round((item["total_duration_seconds"] / denominator) * 100, 2)
+    total_foreground = sum(item["total_duration_seconds"] for item in usage.values())
+    active_seconds = sum(item["active_duration_seconds"] for item in usage.values())
+    idle_seconds = sum(item["idle_duration_seconds"] for item in usage.values())
+    locked_seconds = max(
+        sum(item["locked_duration_seconds"] for item in usage.values()),
+        _overlap_seconds(started_at, ended_at, locked_intervals),
+    )
+    unclassified_seconds = max(0, session_duration - active_seconds - idle_seconds - locked_seconds)
+    idle_seconds += unclassified_seconds
+    productivity_percentage = round((active_seconds / max(session_duration, 1)) * 100, 2)
+
+    return {
+        "items": items[:10],
+        "session_started_at": _iso(started_at),
+        "last_updated_at": _iso(ended_at),
+        "total_session_duration_seconds": session_duration,
+        "total_foreground_duration_seconds": total_foreground,
+        "active_working_seconds": active_seconds,
+        "idle_seconds": idle_seconds,
+        "locked_seconds": locked_seconds,
+        "productivity_percentage": productivity_percentage,
+    }
+
+
 def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
     if not hostname:
         return None
