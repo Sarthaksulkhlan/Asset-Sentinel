@@ -42,6 +42,7 @@ from storage import (
     append_alert,
     append_session,
     normalize_active_application_timestamps,
+    record_activity_sample,
     resolve_device_uid,
     update_asset_heartbeat,
     upsert_asset,
@@ -116,6 +117,7 @@ class AssetSentinelAgent:
         self._health: Dict[str, Dict[str, Any]] = {}
         self.device_uid: Optional[str] = None
         self.hostname = socket.gethostname()
+        self._last_activity_state_by_host: Dict[str, str] = {}
 
     def start(self) -> None:
         logger.info("Asset Sentinel monitoring agent starting.")
@@ -240,6 +242,11 @@ class AssetSentinelAgent:
             try:
                 record = collect_active_application_record()
                 _record_unlock_fallback_if_needed(record)
+                if record:
+                    try:
+                        record_activity_sample(record)
+                    except Exception as sample_exc:
+                        logger.exception("Activity session sample failed and will continue: %s", sample_exc)
                 if record and self._is_new_active_application(record):
                     logger.info(
                         "Telemetry before insert: type=active_application hostname=%s application=%s window=%s",
@@ -372,9 +379,18 @@ class AssetSentinelAgent:
     def _is_new_active_application(self, record: Dict[str, Any]) -> bool:
         hostname = record.get("hostname") or socket.gethostname()
         signature = _record_signature(record)
-        if self._last_active_signature_by_host.get(hostname) == signature:
+        activity_state = "idle" if record.get("is_user_idle") else "active"
+        if (
+            self._last_active_signature_by_host.get(hostname) == signature
+            and self._last_activity_state_by_host.get(hostname) == activity_state
+        ):
             return False
+        record["activity_state_changed"] = bool(
+            self._last_active_signature_by_host.get(hostname) == signature
+            and self._last_activity_state_by_host.get(hostname) != activity_state
+        )
         self._last_active_signature_by_host[hostname] = signature
+        self._last_activity_state_by_host[hostname] = activity_state
         return True
 
     def _usage_snapshot(self) -> tuple:
