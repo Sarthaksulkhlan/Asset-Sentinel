@@ -84,11 +84,14 @@ REQUIRED_TABLES = {
     "alerts",
     "active_applications",
     "active_application_history",
+    "application_usage_daily",
+    "application_usage_segments",
     "hardware_changes",
     "users",
     "refresh_tokens",
     "admin_users",
     "early_access_requests",
+    "activity_sessions",
 }
 
 
