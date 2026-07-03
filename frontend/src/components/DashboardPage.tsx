@@ -1326,26 +1326,75 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   };
 
   // Client-side CSV generator report function
-  const handleExportCSVReport = () => {
-    const csvHeader = "Hostname,Status,Employee,IP Address,OS,Memory RAM,BIOS Serial,Last Login,Location,CPU Model,Compliance Secured\n";
-    const csvRows = assets.map((a: Asset) => {
-      const values = [
-        a.hostname,
-        a.status,
-        a.employee,
-        a.ipAddress,
-        a.os,
-        a.ram,
-        a.biosSerial,
-        a.lastLogin,
-        a.location,
-        a.cpuModel,
-        a.complianceStatus ? "Yes" : "No",
-      ];
-      return values.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',');
-    }).join("\n");
+  const handleExportCSVReport = async () => {
+    const quote = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const rows: string[][] = [["Section", "Hostname", "Field", "Value", "Extra"]];
+    const detailResults = await Promise.all(assets.map(async (asset) => {
+      try {
+        const response = await apiFetch(`/api/assets/${encodeURIComponent(asset.deviceId || asset.hostname)}/details`);
+        if (!response.ok) throw new Error("detail unavailable");
+        return { asset, detail: await response.json() };
+      } catch {
+        return { asset, detail: null };
+      }
+    }));
 
-    const blob = new Blob([csvHeader + csvRows], { type: "text/csv;charset=utf-8;" });
+    detailResults.forEach(({ asset, detail }) => {
+      const analytics = detail?.charts?.application_usage_periods?.today || {
+        items: detail?.charts?.application_usage || [],
+        summary: detail?.charts?.application_usage_summary || {},
+      };
+      const summary = analytics.summary || {};
+      const sessions = Array.isArray(detail?.sessions) ? detail.sessions : [];
+      const alerts = Array.isArray(detail?.alerts) ? detail.alerts : [];
+      const hardwareChanges = Array.isArray(detail?.hardware_changes) ? detail.hardware_changes : [];
+
+      [
+        ["Device Information", "hostname", asset.hostname],
+        ["Device Information", "employee id", asset.employee],
+        ["Device Information", "IP", asset.ipAddress],
+        ["Device Information", "OS", asset.os],
+        ["Device Information", "RAM", asset.ram],
+        ["Device Information", "CPU", asset.cpuModel],
+        ["Device Information", "BIOS serial", asset.biosSerial],
+        ["Device Information", "motherboard serial", asset.motherboardSerial],
+        ["Device Information", "UUID", asset.uuid],
+        ["Device Information", "MAC address", asset.macAddress],
+      ].forEach(([section, field, value]) => rows.push([section, asset.hostname, field, value || "No data", ""]));
+
+      const loginEvents = sessions.filter((session: any) => session.event_type === "LOGIN");
+      rows.push(["Login Analytics", asset.hostname, "first login", loginEvents.at(-1)?.login_timestamp || asset.lastLogin || "No data", ""]);
+      rows.push(["Login Analytics", asset.hostname, "last login", loginEvents[0]?.login_timestamp || asset.lastLogin || "No data", ""]);
+      sessions.slice(0, 20).forEach((session: any) => {
+        rows.push(["Login Analytics", asset.hostname, "login history", session.event_type || "SESSION", `${session.username || ""} ${session.login_timestamp || session.recorded_at || ""}`]);
+      });
+
+      (analytics.items || []).slice(0, 20).forEach((item: any) => {
+        rows.push([
+          "Application Analytics",
+          asset.hostname,
+          item.application_name || item.label || "Unknown",
+          `foreground=${formatUsageDuration(item.total_duration_seconds || item.value || 0)}`,
+          `productive=${formatUsageDuration(item.active_duration_seconds || item.productive_duration_seconds || 0)} idle=${formatUsageDuration(item.idle_duration_seconds || 0)} locked=${formatUsageDuration(item.locked_duration_seconds || 0)}`,
+        ]);
+      });
+
+      rows.push(["Productivity", asset.hostname, "total online time", formatUsageDuration(summary.total_session_duration_seconds || 0), "Today"]);
+      rows.push(["Productivity", asset.hostname, "active time", formatUsageDuration(summary.active_working_seconds || 0), "Today"]);
+      rows.push(["Productivity", asset.hostname, "idle time", formatUsageDuration(summary.idle_seconds || 0), "Today"]);
+      rows.push(["Productivity", asset.hostname, "locked time", formatUsageDuration(summary.locked_seconds || 0), "Today"]);
+      rows.push(["Productivity", asset.hostname, "productivity percentage", `${Number(summary.productivity_percentage || 0).toFixed(2)}%`, "Today"]);
+
+      hardwareChanges.slice(0, 20).forEach((change: any) => {
+        rows.push(["Security", asset.hostname, "hardware change alert", change.change_type || "Hardware Change", change.detected_at || ""]);
+      });
+      alerts.filter((alert: any) => String(alert.severity || "").toUpperCase() === "CRITICAL").slice(0, 20).forEach((alert: any) => {
+        rows.push(["Security", asset.hostname, "critical alert", alert.alert_type || "Alert", alert.timestamp || ""]);
+      });
+    });
+
+    const csvBody = rows.map((row) => row.map(quote).join(",")).join("\n");
+    const blob = new Blob([csvBody], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
