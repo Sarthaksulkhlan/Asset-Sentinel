@@ -81,6 +81,32 @@ const formatSessionDurationSince = (value?: string | null) => {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
 };
 
+const formatUsageDuration = (seconds?: number | null) => {
+  const totalSeconds = Math.max(0, Math.floor(Number(seconds) || 0));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m`;
+  return `${totalSeconds}s`;
+};
+
+type UsagePeriod = "current_session" | "today" | "yesterday" | "last_2_days";
+
+const usagePeriodLabels: Record<UsagePeriod, string> = {
+  current_session: "Current Session",
+  today: "Today",
+  yesterday: "Yesterday",
+  last_2_days: "Last 2 Days",
+};
+
+const appAccentClasses = [
+  "from-[#38BDF8] to-[#2563EB] text-sky-100",
+  "from-[#22C55E] to-[#15803D] text-emerald-100",
+  "from-[#F59E0B] to-[#B45309] text-amber-50",
+  "from-[#A78BFA] to-[#6D28D9] text-violet-50",
+  "from-[#FB7185] to-[#BE123C] text-rose-50",
+];
+
 const telemetryTimeMs = (value?: string | null) => {
   if (!value) return 0;
   const parsed = new Date(value);
@@ -108,19 +134,19 @@ const getThreatLevel = (asset: Asset) => {
 };
 
 const DetailField = ({ label, value, accent = false, compact = false }: { label: string; value?: React.ReactNode; accent?: boolean; compact?: boolean }) => (
-  <div className={`group flex min-w-0 flex-col gap-1 rounded-lg border border-[#2B3752]/70 bg-[#0F1728]/70 px-3.5 ${compact ? "py-2.5" : "py-3"} transition-all duration-200 hover:border-[#38BDF8]/40 hover:bg-[#1B2338]`}>
-    <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8EA0B8]">{label}</span>
+  <div className={`group flex min-w-0 flex-col gap-1 rounded-lg border border-[#2B3752]/70 bg-[#0F1728]/70 ${compact ? "px-3 py-2" : "px-3.5 py-3"} transition-all duration-200 hover:border-[#38BDF8]/40 hover:bg-[#1B2338]`}>
+    <span className={`${compact ? "text-[9px]" : "text-[10px]"} font-semibold uppercase tracking-[0.16em] text-[#8EA0B8]`}>{label}</span>
     <span className={`${accent ? "text-[#38BDF8]" : "text-[#F8FAFC]"} text-sm font-semibold leading-snug break-words`}>{value ?? "No data"}</span>
   </div>
 );
 
 const DetailSection = ({ title, icon, children, compact = false }: { title: string; icon: React.ReactNode; children: React.ReactNode; compact?: boolean }) => (
-  <section className={`animate-[fadeIn_420ms_ease-out] rounded-2xl border border-[#2B3752] bg-[#141B2D] ${compact ? "p-4" : "p-5"} shadow-[0_18px_50px_rgba(0,0,0,0.26)] text-[12px]`}>
-    <div className={`${compact ? "mb-4" : "mb-5"} flex items-center gap-3`}>
-      <div className={`flex ${compact ? "h-9 w-9" : "h-10 w-10"} items-center justify-center rounded-xl border border-[#38BDF8]/25 bg-[#38BDF8]/10`}>
+  <section className={`animate-[fadeIn_420ms_ease-out] rounded-2xl border border-[#2B3752] bg-[#141B2D] ${compact ? "p-3.5" : "p-5"} shadow-[0_18px_50px_rgba(0,0,0,0.26)] text-[12px]`}>
+    <div className={`${compact ? "mb-3" : "mb-5"} flex items-center gap-3`}>
+      <div className={`flex ${compact ? "h-8 w-8" : "h-10 w-10"} items-center justify-center rounded-xl border border-[#38BDF8]/25 bg-[#38BDF8]/10`}>
         {icon}
       </div>
-      <h3 className="text-xl font-bold tracking-tight text-white sm:text-2xl">{title}</h3>
+      <h3 className={`${compact ? "text-lg sm:text-xl" : "text-xl sm:text-2xl"} font-bold tracking-tight text-white`}>{title}</h3>
     </div>
     {children}
   </section>
@@ -216,27 +242,183 @@ const MiniBarChart = ({ title, icon, data, colorClass = "bg-sky-400" }: { title:
   );
 };
 
-const MiniDonutChart = ({ title, icon, data }: { title: string; icon: React.ReactNode; data: Array<{ label: string; value: number }> }) => {
-  const hasData = data.length > 0;
+const ApplicationUsageAnalytics = ({
+  detail,
+  selectedPeriod,
+  onPeriodChange,
+}: {
+  detail: AssetDetailPayload | null;
+  selectedPeriod: UsagePeriod;
+  onPeriodChange: (period: UsagePeriod) => void;
+}) => {
+  const periodPayload = detail?.charts.application_usage_periods?.[selectedPeriod];
+  const usage = periodPayload?.items || detail?.charts.application_usage || [];
+  const summary = periodPayload?.summary || detail?.charts.application_usage_summary || {};
+  const totalSeconds = summary.total_session_duration_seconds || Math.max(...usage.map((item) => item.total_duration_seconds || item.value || 0), 0);
+  const maxSeconds = Math.max(...usage.map((item) => item.total_duration_seconds || item.value || 0), 1);
+
   return (
-    <div className="min-h-[156px] rounded-xl border border-[#2B3752] bg-[#0F1728] p-4 transition-all duration-200 hover:bg-[#1B2338]">
-      <div className="mb-3 flex items-center gap-2 text-[#d6e3ec] text-xs font-semibold">{icon}{title}</div>
-      <div className="flex items-center gap-4">
-        <div
-          className={`h-20 w-20 rounded-full ${hasData ? "bg-[conic-gradient(#38BDF8_0_42%,#22C55E_42%_68%,#F59E0B_68%_82%,#2B3752_82%_100%)]" : "bg-[#1B2338]"} p-3`}
-        >
-          <div className="h-full w-full rounded-full bg-[#0F1728]" />
+    <section className="animate-[fadeIn_520ms_ease-out] rounded-2xl border border-[#2B3752] bg-[#141B2D] p-5 shadow-[0_18px_50px_rgba(0,0,0,0.26)]">
+      <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#38BDF8]/25 bg-[#38BDF8]/10">
+            <BarChart3 className="h-5 w-5 text-sky-300" />
+          </div>
+          <div>
+            <h3 className="text-xl font-bold tracking-tight text-white sm:text-2xl">Application Usage</h3>
+            <p className="text-sm text-[#A8B3C7]">{usagePeriodLabels[selectedPeriod]} foreground, productive, and idle application time.</p>
+          </div>
         </div>
-        <div className="min-w-0 flex-1 space-y-2 text-[11px]">
-          {(hasData ? data.slice(0, 3) : [{ label: "No database events", value: 0 }]).map((item) => (
-            <div key={`${title}-${item.label}`} className="flex items-center justify-between gap-2">
-              <span className="truncate text-[#9fb0bd]">{item.label}</span>
-              <span className="font-semibold text-[#d6e3ec]">{item.value}</span>
-            </div>
-          ))}
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:min-w-[520px]">
+          <DetailField label="Total Session" value={formatUsageDuration(totalSeconds)} accent compact />
+          <DetailField label="Login Start" value={formatTelemetryTimestamp(summary.session_started_at)} compact />
+          <DetailField label="Last Updated" value={formatTelemetryTimestamp(summary.last_updated_at)} compact />
         </div>
       </div>
-    </div>
+      <div className="mb-5 flex flex-wrap gap-2">
+        {(Object.keys(usagePeriodLabels) as UsagePeriod[]).map((period) => (
+          <button
+            key={period}
+            onClick={() => onPeriodChange(period)}
+            className={`rounded-lg border px-3 py-2 text-xs font-bold transition-colors ${
+              selectedPeriod === period
+                ? "border-[#38BDF8]/55 bg-[#38BDF8]/15 text-[#7DD3FC]"
+                : "border-[#2B3752] bg-[#0F1728] text-[#A8B3C7] hover:border-[#38BDF8]/35 hover:text-white"
+            }`}
+          >
+            {usagePeriodLabels[period]}
+          </button>
+        ))}
+      </div>
+
+      {usage.length ? (
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+          {usage.slice(0, 8).map((item, index) => {
+            const seconds = item.total_duration_seconds || item.value || 0;
+            const percent = Number.isFinite(item.percentage_of_session)
+              ? Math.max(0, Math.min(100, item.percentage_of_session || 0))
+              : Math.max(0, Math.min(100, (seconds / maxSeconds) * 100));
+            const width = Math.max(5, percent);
+            const appName = item.application_name || item.label || "Unknown";
+            return (
+              <div key={`${appName}-${index}`} className="rounded-2xl border border-[#2B3752] bg-[linear-gradient(145deg,#0F1728_0%,#101827_58%,#0B1220_100%)] p-4 shadow-[0_16px_44px_rgba(2,8,23,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#38BDF8]/40 hover:shadow-[0_18px_54px_rgba(56,189,248,0.12)]">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${appAccentClasses[index % appAccentClasses.length]} text-sm font-black shadow-[0_0_20px_rgba(56,189,248,0.16)]`}>
+                      {appName.slice(0, 1).toUpperCase()}
+                    </span>
+                    <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-white">{appName}</p>
+                    <p className="mt-1 truncate text-[11px] text-[#8EA0B8]">{item.window_title || item.process_path || "Foreground window activity"}</p>
+                    </div>
+                  </div>
+                  <span className="shrink-0 rounded-full border border-[#38BDF8]/30 bg-[#38BDF8]/10 px-2.5 py-1 text-xs font-bold text-[#7DD3FC]">
+                    {formatUsageDuration(seconds)}
+                  </span>
+                </div>
+                <div className="h-3 overflow-hidden rounded-full bg-[#243044]">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-[#38BDF8] via-[#22C55E] to-[#FACC15] shadow-[0_0_18px_rgba(56,189,248,0.28)]"
+                    style={{ width: `${width}%` }}
+                  />
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
+                  <span className="rounded-lg bg-white/[0.03] px-2 py-1 text-[#A8B3C7]">Open <b className="text-white">{formatUsageDuration(seconds)}</b></span>
+                  <span className="rounded-lg bg-emerald-500/10 px-2 py-1 text-emerald-200">Active <b>{formatUsageDuration(item.active_duration_seconds || item.productive_duration_seconds || 0)}</b></span>
+                  <span className="rounded-lg bg-amber-500/10 px-2 py-1 text-amber-200">Idle <b>{formatUsageDuration(item.idle_duration_seconds || 0)}</b></span>
+                </div>
+                <div className="mt-2 flex justify-end text-[11px] text-[#8EA0B8]">
+                  <span>{percent.toFixed(percent >= 10 ? 0 : 1)}% of session</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-[#2B3752] bg-[#0F1728]/70 p-5 text-sm text-[#8EA0B8]">
+          No application duration data is available yet. Usage appears after foreground application changes are recorded.
+        </div>
+      )}
+    </section>
+  );
+};
+
+const ProductivityInsights = ({ detail, selectedPeriod }: { detail: AssetDetailPayload | null; selectedPeriod: UsagePeriod }) => {
+  const periodPayload = detail?.charts.application_usage_periods?.[selectedPeriod];
+  const summary = periodPayload?.summary || detail?.charts.application_usage_summary || {};
+  const totalSeconds = summary.total_session_duration_seconds || 0;
+  const activeSeconds = summary.active_working_seconds || 0;
+  const idleSeconds = summary.idle_seconds || 0;
+  const lockedSeconds = summary.locked_seconds || 0;
+  const productivity = Math.max(0, Math.min(100, summary.productivity_percentage || 0));
+
+  return (
+    <section id="productivity-insights-section" className="animate-[fadeIn_520ms_ease-out] rounded-3xl border border-violet-300/30 bg-[radial-gradient(circle_at_top_right,rgba(167,139,250,0.18),transparent_34%),linear-gradient(135deg,#151126_0%,#111827_52%,#071B16_100%)] p-5 shadow-[0_0_0_1px_rgba(167,139,250,0.08),0_24px_70px_rgba(20,184,166,0.12),0_0_46px_rgba(167,139,250,0.14)]">
+      <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-center gap-3">
+        <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-violet-300/45 bg-violet-400/12 shadow-[0_0_28px_rgba(167,139,250,0.26)]">
+          <Zap className="h-5 w-5 text-violet-200" />
+        </div>
+        <div>
+          <h3 className="text-xl font-bold tracking-tight text-white sm:text-2xl">Productivity Insights</h3>
+          <p className="text-sm text-violet-100/70">{usagePeriodLabels[selectedPeriod]} active work versus idle and locked time.</p>
+        </div>
+        </div>
+        <div className="flex h-28 w-28 shrink-0 items-center justify-center rounded-full border border-emerald-300/40 bg-emerald-300/10 shadow-[inset_0_0_24px_rgba(52,211,153,0.12),0_0_34px_rgba(167,139,250,0.22)]">
+          <div className="text-center">
+            <div className="text-3xl font-black text-emerald-100">{productivity.toFixed(productivity >= 10 ? 0 : 1)}%</div>
+            <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-violet-200/70">Score</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[0.85fr_1.15fr]">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-violet-300/20 bg-white/[0.04] p-4 backdrop-blur">
+            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-violet-200/60">Total Device Time</div>
+            <div className="mt-2 text-2xl font-black text-violet-100">{formatUsageDuration(totalSeconds)}</div>
+          </div>
+          <div className="rounded-xl border border-emerald-300/20 bg-white/[0.04] p-4 backdrop-blur">
+            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/60">Productivity</div>
+            <div className="mt-2 text-2xl font-black text-emerald-100">{productivity.toFixed(productivity >= 10 ? 0 : 1)}%</div>
+          </div>
+          <div className="rounded-xl border border-violet-300/20 bg-white/[0.04] p-4 backdrop-blur">
+            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-violet-200/60">Idle</div>
+            <div className="mt-2 text-2xl font-black text-violet-100">{formatUsageDuration(idleSeconds)}</div>
+          </div>
+          <div className="rounded-xl border border-slate-300/20 bg-white/[0.04] p-4 backdrop-blur">
+            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-200/60">Locked</div>
+            <div className="mt-2 text-2xl font-black text-slate-100">{formatUsageDuration(lockedSeconds)}</div>
+          </div>
+        </div>
+        <div className="rounded-xl border border-violet-300/20 bg-white/[0.04] p-4 backdrop-blur">
+          <div className="mb-4 flex items-center justify-between text-xs font-semibold text-violet-100/75">
+            <span>Active vs Idle</span>
+            <span>{formatUsageDuration(activeSeconds)} active / {formatUsageDuration(idleSeconds)} idle / {formatUsageDuration(lockedSeconds)} locked</span>
+          </div>
+          <div className="space-y-3">
+            <div>
+              <div className="mb-1 flex justify-between text-[11px] text-emerald-100/75"><span>Active Work</span><span>{formatUsageDuration(activeSeconds)}</span></div>
+              <div className="h-3 overflow-hidden rounded-full bg-emerald-950/40">
+                <div className="h-full rounded-full bg-gradient-to-r from-emerald-300 via-teal-300 to-violet-300 shadow-[0_0_18px_rgba(52,211,153,0.34)]" style={{ width: `${Math.max(3, productivity)}%` }} />
+              </div>
+            </div>
+            <div>
+              <div className="mb-1 flex justify-between text-[11px] text-violet-100/70"><span>Idle</span><span>{formatUsageDuration(idleSeconds)}</span></div>
+              <div className="h-3 overflow-hidden rounded-full bg-violet-950/40">
+                <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-slate-500" style={{ width: `${Math.max(3, Math.min(100, (idleSeconds / Math.max(totalSeconds, 1)) * 100))}%` }} />
+              </div>
+            </div>
+            <div>
+              <div className="mb-1 flex justify-between text-[11px] text-slate-100/70"><span>Locked</span><span>{formatUsageDuration(lockedSeconds)}</span></div>
+              <div className="h-3 overflow-hidden rounded-full bg-slate-900/60">
+                <div className="h-full rounded-full bg-gradient-to-r from-slate-400 to-slate-600" style={{ width: `${Math.max(3, Math.min(100, (lockedSeconds / Math.max(totalSeconds, 1)) * 100))}%` }} />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 };
 
@@ -287,6 +469,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   const [assets, setAssets] = useState<Asset[]>(() => isDemoMode ? INITIAL_ASSETS : []);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [selectedAssetDetail, setSelectedAssetDetail] = useState<AssetDetailPayload | null>(null);
+  const [selectedUsagePeriod, setSelectedUsagePeriod] = useState<UsagePeriod>("today");
   const [assetDetailLoading, setAssetDetailLoading] = useState(false);
   const [isCriticalAlertsOpen, setIsCriticalAlertsOpen] = useState(false);
   const [selectedCriticalAlert, setSelectedCriticalAlert] = useState<BackendAlertRecord | null>(null);
@@ -406,6 +589,14 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   };
 
   const handleOpenAnalyticsPanel = () => {
+    setIsAnalyticsOpen(true);
+  };
+
+  const handleViewProductivity = () => {
+    if (selectedAsset) {
+      scrollToSection("productivity-insights-section");
+      return;
+    }
     setIsAnalyticsOpen(true);
   };
 
@@ -876,6 +1067,8 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
             ram_usage_history: payload.charts?.ram_usage_history || [],
             login_frequency: payload.charts?.login_frequency || [],
             application_usage: payload.charts?.application_usage || [],
+            application_usage_summary: payload.charts?.application_usage_summary || {},
+            application_usage_periods: payload.charts?.application_usage_periods || {},
             alert_trend: payload.charts?.alert_trend || [],
           }
         };
@@ -1845,6 +2038,14 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                 <p className="text-xs text-[#bbc9cf] font-light mt-0.5">Compact fleet view. Click any device row for the complete endpoint profile.</p>
               </div>
               <div className="flex w-full sm:w-auto items-center gap-2">
+                <button
+                  onClick={handleViewProductivity}
+                  title="Open productivity analytics"
+                  className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-violet-400/35 bg-violet-500/10 px-3 py-2 text-xs font-bold text-violet-100 shadow-[0_0_18px_rgba(167,139,250,0.12)] transition-all hover:-translate-y-0.5 hover:border-emerald-300/40 hover:bg-emerald-500/10 hover:text-emerald-100"
+                >
+                  <Zap className="h-4 w-4 text-emerald-300" />
+                  <span className="hidden lg:inline">Productivity Insights</span>
+                </button>
                 
                 {/* Functional search block */}
                 <div className="relative w-full sm:w-64">
@@ -2493,7 +2694,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
               onScroll={(event) => {
                 if (!isDemoMode) writeDashboardState({ detailScrollTop: event.currentTarget.scrollTop });
               }}
-              className="w-full max-w-7xl bg-[#0B1220] border-l border-[#2B3752] h-full overflow-y-auto p-4 sm:p-6 md:p-8 flex flex-col gap-7 shadow-2xl relative select-text font-sans"
+              className="w-full max-w-7xl bg-[#0B1220] border-l border-[#2B3752] h-full overflow-y-auto p-4 sm:p-6 md:p-8 flex flex-col gap-5 shadow-2xl relative select-text font-sans"
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
             >
               
@@ -2556,9 +2757,9 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                 </div>
               </div>
 
-              <div className="relative z-0 grid grid-cols-1 gap-6 pt-1 xl:grid-cols-2">
+              <div className="relative z-0 grid grid-cols-1 gap-4 pt-1 xl:grid-cols-2">
               <DetailSection title="Device Overview" icon={<Laptop className="w-5 h-5 text-sky-300" />} compact>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                   <DetailField label="Hostname" value={selectedAsset.hostname} accent compact />
                   <DetailField label="Logged-in User" value={selectedAsset.currentUser || selectedAsset.employee} compact />
                   <DetailField label="Device Status" value={<StatusChip status={selectedAsset.status} />} compact />
@@ -2577,7 +2778,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
               </DetailSection>
 
               <DetailSection title="Login Activity" icon={<LogIn className="w-5 h-5 text-emerald-300" />} compact>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                   <DetailField label="Current Logged-in User" value={selectedAsset.currentUser || selectedAsset.employee} compact />
                   <DetailField label="Current Login Time" value={selectedAsset.lastLogin} compact />
                   <DetailField label="Last Logout Time" value={selectedAsset.lastLogout || "No logout recorded"} compact />
@@ -2641,6 +2842,10 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                 </div>
               </section>
 
+              <ApplicationUsageAnalytics detail={selectedAssetDetail} selectedPeriod={selectedUsagePeriod} onPeriodChange={setSelectedUsagePeriod} />
+
+              <ProductivityInsights detail={selectedAssetDetail} selectedPeriod={selectedUsagePeriod} />
+
               <DetailSection title="System Metrics" icon={<Gauge className="w-5 h-5 text-sky-300" />}>
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 select-none">
                   {[
@@ -2699,7 +2904,6 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                   <MiniLineChart title="CPU Usage History" icon={<Cpu className="w-4 h-4 text-sky-300" />} data={selectedAssetDetail?.charts.cpu_usage_history || []} color="#38bdf8" />
                   <MiniLineChart title="RAM Usage History" icon={<MemoryStick className="w-4 h-4 text-emerald-300" />} data={selectedAssetDetail?.charts.ram_usage_history || []} color="#34d399" />
                   <MiniBarChart title="Login Frequency" icon={<User className="w-4 h-4 text-blue-300" />} data={selectedAssetDetail?.charts.login_frequency || []} colorClass="bg-blue-400" />
-                  <MiniDonutChart title="Application Usage" icon={<Activity className="w-4 h-4 text-sky-300" />} data={selectedAssetDetail?.charts.application_usage || []} />
                   <div className="lg:col-span-2">
                     <MiniBarChart title="Alert Trend" icon={<AlertCircle className="w-4 h-4 text-red-300" />} data={selectedAssetDetail?.charts.alert_trend || []} colorClass="bg-red-400" />
                   </div>
