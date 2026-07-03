@@ -4,6 +4,7 @@ import socket
 import sys
 import threading
 import time
+import ctypes
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -36,6 +37,7 @@ from storage import (
 
 POLL_INTERVAL_SECONDS = 2
 LOGIN_POLL_INTERVAL_SECONDS = 5
+IDLE_THRESHOLD_SECONDS = int(os.environ.get("IDLE_THRESHOLD_SECONDS") or os.environ.get("ASSET_SENTINEL_IDLE_THRESHOLD_SECONDS", "300"))
 logger = logging.getLogger("asset_sentinel.active_application_monitor")
 
 _monitor_lock = threading.Lock()
@@ -45,6 +47,23 @@ _last_signature_by_host: Dict[str, tuple] = {}
 _lock_screen_observed = False
 _last_lock_fallback_at = 0.0
 _last_unlock_fallback_at = 0.0
+
+
+class LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+
+def get_user_idle_seconds() -> Optional[int]:
+    try:
+        info = LASTINPUTINFO()
+        info.cbSize = ctypes.sizeof(info)
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+            return None
+        tick_count = ctypes.windll.kernel32.GetTickCount()
+        return max(0, int((tick_count - info.dwTime) / 1000))
+    except Exception as exc:
+        logger.debug("Could not read Windows last input time: %s", exc)
+        return None
 
 
 def _read_activity_history() -> List[Dict[str, Any]]:
@@ -84,6 +103,7 @@ def collect_active_application_record() -> Optional[Dict[str, Any]]:
     application_name = executable_name.rsplit(".", 1)[0] if executable_name else "Unknown"
     timestamp = datetime.now().astimezone().isoformat()
     process_path = activity.get("active_process_path")
+    idle_seconds = get_user_idle_seconds()
 
     return {
         "hostname": socket.gethostname(),
@@ -93,6 +113,10 @@ def collect_active_application_record() -> Optional[Dict[str, Any]]:
         "window_title": window_title or "Unknown",
         "process_path": process_path,
         "timestamp": timestamp,
+        "user_idle_seconds": idle_seconds,
+        "idle_threshold_seconds": IDLE_THRESHOLD_SECONDS,
+        "is_user_idle": bool(idle_seconds is not None and idle_seconds >= IDLE_THRESHOLD_SECONDS),
+        "windows_locked": bool("lockapp" in (executable_name or "").lower() or "lock screen" in (window_title or "").lower()),
     }
 
 
