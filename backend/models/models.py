@@ -6,6 +6,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     Text,
     UniqueConstraint,
@@ -179,6 +180,83 @@ class ActiveApplicationHistory(Base):
     __table_args__ = (
         Index("idx_active_application_history_hostname_timestamp", "hostname", timestamp.desc()),
         Index("idx_active_application_history_username_timestamp", "username", timestamp.desc()),
+    )
+
+
+class ApplicationUsageSegment(Base):
+    __tablename__ = "application_usage_segments"
+
+    id = Column(BigInteger, primary_key=True)
+    device_id = Column(String(255), nullable=False)
+    hostname = Column(String(255), nullable=False)
+    username = Column(String(255))
+    application_name = Column(String(512), nullable=False)
+    window_title = Column(Text)
+    process_path = Column(Text)
+    start_time = Column(DateTime(timezone=True), nullable=False)
+    end_time = Column(DateTime(timezone=True), nullable=False)
+    active_duration = Column(Integer, nullable=False, default=0)
+    idle_duration = Column(Integer, nullable=False, default=0)
+    date = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("device_id", "application_name", "start_time", "end_time", name="uq_application_usage_segments_identity"),
+        Index("idx_application_usage_segments_device_date", "device_id", "date"),
+        Index("idx_application_usage_segments_hostname_start", "hostname", start_time.desc()),
+        Index("idx_application_usage_segments_application", "application_name"),
+    )
+
+
+class ApplicationUsageDaily(Base):
+    __tablename__ = "application_usage_daily"
+
+    id = Column(BigInteger, primary_key=True)
+    date = Column(DateTime(timezone=True), nullable=False)
+    hostname = Column(String(255), nullable=False)
+    username = Column(String(255))
+    application_name = Column(String(512), nullable=False)
+    window_title = Column(Text)
+    first_seen = Column(DateTime(timezone=True), nullable=False)
+    last_seen = Column(DateTime(timezone=True), nullable=False)
+    total_foreground_seconds = Column(Integer, nullable=False, default=0)
+    active_seconds = Column(Integer, nullable=False, default=0)
+    idle_seconds = Column(Integer, nullable=False, default=0)
+    locked_seconds = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("date", "hostname", "username", "application_name", "window_title", name="uq_application_usage_daily_app"),
+        Index("idx_application_usage_daily_host_date", "hostname", "date"),
+        Index("idx_application_usage_daily_app", "application_name"),
+    )
+
+
+class ActivitySession(Base):
+    __tablename__ = "activity_sessions"
+
+    id = Column(BigInteger, primary_key=True)
+    hostname = Column(String(255), nullable=False)
+    username = Column(String(255))
+    app_name = Column(String(512), nullable=False)
+    window_title = Column(Text)
+    start_time = Column(DateTime(timezone=True), nullable=False)
+    end_time = Column(DateTime(timezone=True), nullable=False)
+    total_seconds = Column(Integer, nullable=False, default=0)
+    active_seconds = Column(Integer, nullable=False, default=0)
+    idle_seconds = Column(Integer, nullable=False, default=0)
+    locked_seconds = Column(Integer, nullable=False, default=0)
+    created_date = Column(DateTime(timezone=True), nullable=False)
+    last_state = Column(String(20), nullable=False, default="ACTIVE")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint("last_state IN ('ACTIVE', 'IDLE', 'LOCKED')", name="chk_activity_sessions_last_state"),
+        Index("idx_activity_sessions_host_created_date", "hostname", "created_date"),
+        Index("idx_activity_sessions_host_end", "hostname", end_time.desc()),
+        Index("idx_activity_sessions_app", "app_name"),
     )
 
 
