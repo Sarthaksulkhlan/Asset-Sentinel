@@ -1,3 +1,29 @@
+export interface ApplicationUsageItem {
+  label: string;
+  value: number;
+  application_name?: string;
+  total_duration_seconds?: number;
+  active_duration_seconds?: number;
+  productive_duration_seconds?: number;
+  idle_duration_seconds?: number;
+  locked_duration_seconds?: number;
+  percentage_of_session?: number;
+  window_title?: string;
+  process_path?: string;
+  last_seen_at?: string;
+}
+
+export interface ApplicationUsageSummary {
+  total_session_duration_seconds?: number;
+  total_foreground_duration_seconds?: number;
+  active_working_seconds?: number;
+  idle_seconds?: number;
+  locked_seconds?: number;
+  productivity_percentage?: number;
+  session_started_at?: string;
+  last_updated_at?: string;
+}
+
 export interface Asset {
   hostname: string;
   status: 'Online' | 'Idle' | 'Overload' | 'Offline';
@@ -87,7 +113,12 @@ export interface AssetDetailPayload {
     cpu_usage_history: Array<{ timestamp?: string; value?: number | string }>;
     ram_usage_history: Array<{ timestamp?: string; value?: number | string }>;
     login_frequency: Array<{ label: string; value: number }>;
-    application_usage: Array<{ label: string; value: number }>;
+    application_usage: ApplicationUsageItem[];
+    application_usage_summary?: ApplicationUsageSummary;
+    application_usage_periods?: Record<string, {
+      items: ApplicationUsageItem[];
+      summary: ApplicationUsageSummary;
+    }>;
     alert_trend: Array<{ label: string; value: number }>;
   };
 }
