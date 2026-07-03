@@ -32,7 +32,7 @@ from collect_hardware import collect_foreground_diagnostics, collect_hardware
 from database import database_host_for_display, init_db
 from monitoring_agent import TelemetrySpool
 from service_logging import LOG_DIR, configure_logging
-from storage import append_active_application, get_latest_active_application_for_host, resolve_device_uid, upsert_asset
+from storage import append_active_application, get_latest_active_application_for_host, record_activity_sample, resolve_device_uid, upsert_asset
 
 
 logger = logging.getLogger("asset_sentinel.active_application_user_agent")
@@ -117,6 +117,7 @@ class ActiveApplicationUserAgent:
         self.stop_event = stop_event or threading.Event()
         self.spool = TelemetrySpool(LOG_DIR / "active_application_spool.jsonl")
         self.last_signature_by_host: Dict[str, tuple] = {}
+        self.last_activity_state_by_host: Dict[str, str] = {}
         self.last_no_foreground_log_at = 0.0
         self.last_spool_flush_at = 0.0
 
@@ -191,10 +192,18 @@ class ActiveApplicationUserAgent:
             return
 
         hostname = record.get("hostname") or socket.gethostname()
+        try:
+            record_activity_sample(record)
+        except Exception as exc:
+            logger.exception("Activity session sample failed and will continue: %s", exc)
         signature = _record_signature(record)
-        if self.last_signature_by_host.get(hostname) == signature:
+        activity_state = "idle" if record.get("is_user_idle") else "active"
+        same_foreground = self.last_signature_by_host.get(hostname) == signature
+        same_activity_state = self.last_activity_state_by_host.get(hostname) == activity_state
+        if same_foreground and same_activity_state:
             self._write_status("running", record=record, foreground_visible=True, inserted=False)
             return
+        record["activity_state_changed"] = bool(same_foreground and not same_activity_state)
 
         logger.info(
             "Telemetry before insert: type=active_application hostname=%s application=%s window=%s",
@@ -211,6 +220,7 @@ class ActiveApplicationUserAgent:
         try:
             append_active_application(record)
             self.last_signature_by_host[hostname] = signature
+            self.last_activity_state_by_host[hostname] = activity_state
             logger.info("Telemetry after insert: type=active_application hostname=%s application=%s", hostname, record.get("application_name"))
             self._write_status("running", record=record, foreground_visible=True, inserted=True)
         except Exception as exc:
