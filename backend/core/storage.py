@@ -1500,6 +1500,12 @@ def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
             .order_by(SessionRecord.recorded_at.desc(), SessionRecord.id.desc())
             .limit(100)
         ).scalars().all()
+        sessions_for_usage = session.execute(
+            select(SessionRecord)
+            .where(SessionRecord.hostname == hostname)
+            .order_by(SessionRecord.recorded_at.desc(), SessionRecord.id.desc())
+            .limit(2000)
+        ).scalars().all()
         alerts = session.execute(
             select(Alert)
             .where(Alert.hostname == hostname)
@@ -1511,6 +1517,30 @@ def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
             .where(ActiveApplicationHistory.hostname == hostname)
             .order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc())
             .limit(100)
+        ).scalars().all()
+        app_history_for_usage = session.execute(
+            select(ActiveApplicationHistory)
+            .where(ActiveApplicationHistory.hostname == hostname)
+            .order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc())
+            .limit(2000)
+        ).scalars().all()
+        usage_segments = session.execute(
+            select(ApplicationUsageSegment)
+            .where(ApplicationUsageSegment.hostname == hostname)
+            .order_by(ApplicationUsageSegment.start_time.desc(), ApplicationUsageSegment.id.desc())
+            .limit(5000)
+        ).scalars().all()
+        daily_usage = session.execute(
+            select(ApplicationUsageDaily)
+            .where(ApplicationUsageDaily.hostname == hostname)
+            .order_by(ApplicationUsageDaily.date.desc(), ApplicationUsageDaily.last_seen.desc(), ApplicationUsageDaily.id.desc())
+            .limit(1000)
+        ).scalars().all()
+        activity_session_rows = session.execute(
+            select(ActivitySession)
+            .where(ActivitySession.hostname == hostname)
+            .order_by(ActivitySession.created_date.desc(), ActivitySession.end_time.desc(), ActivitySession.id.desc())
+            .limit(5000)
         ).scalars().all()
         hardware_changes = session.execute(
             select(HardwareChange)
@@ -1556,10 +1586,22 @@ def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
 
         timeline.sort(key=lambda item: _parse_datetime(item.get("timestamp")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
 
-        application_usage: Dict[str, int] = {}
-        for row in app_history:
-            name = row.application or "Unknown"
-            application_usage[name] = application_usage.get(name, 0) + 1
+        session_start = _latest_session_start(sessions_for_usage)
+        usage_periods = {}
+        for period in ("current_session", "today", "yesterday", "last_2_days"):
+            period_start, period_end = _period_bounds(period, sessions_for_usage)
+            usage_periods[period] = _application_usage_analytics(
+                app_history_for_usage,
+                session_start,
+                activity_session_rows,
+                usage_segments,
+                daily_usage,
+                period,
+                period_start,
+                period_end,
+                _locked_intervals(sessions_for_usage, period_start, period_end),
+            )
+        usage_analytics = usage_periods["today"]
 
         alert_trend: Dict[str, int] = {}
         for row in alerts:
@@ -1607,7 +1649,33 @@ def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
                 "cpu_usage_history": cpu_history,
                 "ram_usage_history": ram_history,
                 "login_frequency": [{"label": key, "value": value} for key, value in sorted(login_frequency.items())],
-                "application_usage": [{"label": key, "value": value} for key, value in sorted(application_usage.items(), key=lambda item: item[1], reverse=True)[:10]],
+                "application_usage": usage_analytics["items"],
+                "application_usage_summary": {
+                    "total_session_duration_seconds": usage_analytics["total_session_duration_seconds"],
+                    "session_started_at": usage_analytics["session_started_at"],
+                    "last_updated_at": usage_analytics["last_updated_at"],
+                    "total_foreground_duration_seconds": usage_analytics["total_foreground_duration_seconds"],
+                    "active_working_seconds": usage_analytics["active_working_seconds"],
+                    "idle_seconds": usage_analytics["idle_seconds"],
+                    "locked_seconds": usage_analytics["locked_seconds"],
+                    "productivity_percentage": usage_analytics["productivity_percentage"],
+                },
+                "application_usage_periods": {
+                    key: {
+                        "items": value["items"],
+                        "summary": {
+                            "total_session_duration_seconds": value["total_session_duration_seconds"],
+                            "session_started_at": value["session_started_at"],
+                            "last_updated_at": value["last_updated_at"],
+                            "total_foreground_duration_seconds": value["total_foreground_duration_seconds"],
+                            "active_working_seconds": value["active_working_seconds"],
+                            "idle_seconds": value["idle_seconds"],
+                            "locked_seconds": value["locked_seconds"],
+                            "productivity_percentage": value["productivity_percentage"],
+                        },
+                    }
+                    for key, value in usage_periods.items()
+                },
                 "alert_trend": [{"label": key, "value": value} for key, value in sorted(alert_trend.items())],
             },
         }
