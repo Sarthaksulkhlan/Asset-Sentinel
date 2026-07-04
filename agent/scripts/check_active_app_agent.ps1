@@ -122,3 +122,12 @@ try {
 }
 
 Write-Check "Python resolver returns a real executable" ((-not [string]::IsNullOrWhiteSpace($resolvedPython)) -and (Test-Path -LiteralPath $resolvedPython -PathType Leaf)) $resolvedPython
+
+$launcherPid = Get-PidFromFile $LauncherPidFile
+$launcherProcess = Get-ProcessInfo $launcherPid
+Write-Check "Launcher PID file exists" ($null -ne $launcherPid) $LauncherPidFile
+Write-Check "Launcher process is running" ($null -ne $launcherProcess) "PID: $launcherPid"
+if ($launcherProcess) {
+    Write-Check "Launcher process runs in an interactive session" ([int]$launcherProcess.SessionId -gt 0) "SessionId: $($launcherProcess.SessionId)"
+    Write-Check "Launcher command uses the expected script path" (Test-ContainsPath $launcherProcess.CommandLine $LauncherScript) $launcherProcess.CommandLine
+}
