@@ -26,8 +26,7 @@ if errorlevel 1 goto :error
 call :validate_launcher
 if errorlevel 1 goto :validation_error
 
-set "RUN_CMD=powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""%LAUNCHER_SCRIPT%"""
-reg.exe add "%RUN_KEY%" /v "%RUN_VALUE%" /t REG_SZ /d "%RUN_CMD%" /f >nul
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $quote=[char]34; $cmd='powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ' + $quote + $env:LAUNCHER_SCRIPT + $quote; $targets=New-Object System.Collections.Generic.List[string]; $targets.Add('HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'); try { $consoleUser=(Get-CimInstance Win32_ComputerSystem).UserName; if ($consoleUser) { $sid=([System.Security.Principal.NTAccount]$consoleUser).Translate([System.Security.Principal.SecurityIdentifier]).Value; $targets.Add('Registry::HKEY_USERS\' + $sid + '\Software\Microsoft\Windows\CurrentVersion\Run') } } catch { }; try { Get-ChildItem -Path 'Registry::HKEY_USERS' | Where-Object { $_.PSChildName -match '^S-1-5-21-' -and $_.PSChildName -notmatch '_Classes$' } | ForEach-Object { $targets.Add('Registry::HKEY_USERS\' + $_.PSChildName + '\Software\Microsoft\Windows\CurrentVersion\Run') } } catch { }; foreach ($key in ($targets | Select-Object -Unique)) { if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }; New-ItemProperty -Path $key -Name $env:RUN_VALUE -Value $cmd -PropertyType String -Force | Out-Null }"
 if errorlevel 1 goto :error
 
 echo Starting Active Application launcher...
