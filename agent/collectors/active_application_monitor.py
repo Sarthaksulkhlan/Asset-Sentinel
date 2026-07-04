@@ -37,7 +37,7 @@ from storage import (
 
 POLL_INTERVAL_SECONDS = 2
 LOGIN_POLL_INTERVAL_SECONDS = 5
-IDLE_THRESHOLD_SECONDS = int(os.environ.get("IDLE_THRESHOLD_SECONDS") or os.environ.get("ASSET_SENTINEL_IDLE_THRESHOLD_SECONDS", "300"))
+IDLE_THRESHOLD_SECONDS = int(os.environ.get("IDLE_THRESHOLD_SECONDS") or os.environ.get("ASSET_SENTINEL_IDLE_THRESHOLD_SECONDS", "60"))
 logger = logging.getLogger("asset_sentinel.active_application_monitor")
 
 _monitor_lock = threading.Lock()
@@ -224,7 +224,7 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
         "login_timestamp": timestamp,
         "logout_timestamp": None,
         "session_duration": "Active",
-        "active": True,
+        "active": False,
         "device_status": None,
         "last_seen": timestamp,
         "login_source": "windows_unlock_observed",
@@ -246,7 +246,7 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
         timestamp,
     )
     logger.info(
-        "Login detected from LockApp fallback: user=%s host=%s record_id=%s",
+        "Unlock detected from LockApp fallback without starting a new work session: user=%s host=%s record_id=%s",
         session_info.get("username"),
         session_info.get("hostname"),
         synthetic_record_id,
