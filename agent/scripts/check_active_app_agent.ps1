@@ -34,3 +34,17 @@ function Write-Check {
         Write-Host "       $Detail"
     }
 }
+
+function Normalize-Path {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    try {
+        return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path.Trim('"'))).TrimEnd('\')
+    } catch {
+        return $Path.Trim('"').TrimEnd('\')
+    }
+}
