@@ -94,3 +94,16 @@ function Get-ProcessInfo {
         return $null
     }
 }
+
+Write-Host "Asset Sentinel Active Application Agent status"
+Write-Host "--------------------------------------------"
+
+$runCommand = $null
+try {
+    $runCommand = (Get-ItemProperty -Path $RunKey -Name $RunValue -ErrorAction Stop).$RunValue
+} catch {
+    $runCommand = $null
+}
+
+Write-Check "HKCU Run startup registration exists" (-not [string]::IsNullOrWhiteSpace($runCommand)) $RunValue
+Write-Check "HKCU Run command uses the expected launcher script" ($runCommand -eq $ExpectedRunCommand) "Actual: $runCommand"
