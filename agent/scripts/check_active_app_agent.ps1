@@ -48,3 +48,16 @@ function Normalize-Path {
         return $Path.Trim('"').TrimEnd('\')
     }
 }
+
+function Test-ContainsPath {
+    param(
+        [string]$CommandLine,
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine) -or [string]::IsNullOrWhiteSpace($Path)) {
+        return $false
+    }
+
+    return $CommandLine.IndexOf($Path, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+}
