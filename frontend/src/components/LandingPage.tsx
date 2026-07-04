@@ -270,7 +270,7 @@ const LiveDashboardPreview = React.memo(function LiveDashboardPreview() {
   const [activeApps, setActiveApps] = useState<string[]>([]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setTick((current) => current + 1), 1800);
+    const timer = window.setInterval(() => setTick((current) => current + 1), 3000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -360,13 +360,13 @@ const LiveDashboardPreview = React.memo(function LiveDashboardPreview() {
       <div className="relative mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="rounded-lg border border-red-400/20 bg-red-950/10 p-3 overflow-hidden">
           <span className="font-mono text-[9px] text-red-300 uppercase tracking-widest">Hardware Alert Queue</span>
-          <div key={`alert-${tick}`} className="mt-2 rounded-md border border-red-400/25 bg-red-400/10 px-3 py-2 text-[10px] font-mono text-red-200 hero-slide-in">
+          <div className="mt-2 rounded-md border border-red-400/25 bg-red-400/10 px-3 py-2 text-[10px] font-mono text-red-200">
             {alertLabels[tick % alertLabels.length]}
           </div>
         </div>
         <div className="rounded-lg border border-[#00d1ff]/20 bg-[#00d1ff]/5 p-3 overflow-hidden">
           <span className="font-mono text-[9px] text-[#00d1ff] uppercase tracking-widest">Active Application Timeline</span>
-          <div key={`timeline-${tick}`} className="mt-2 flex items-center justify-between rounded-md border border-white/10 bg-[#070b10]/80 px-3 py-2 text-[10px] font-mono text-[#dae3ee] hero-slide-in">
+          <div className="mt-2 flex items-center justify-between rounded-md border border-white/10 bg-[#070b10]/80 px-3 py-2 text-[10px] font-mono text-[#dae3ee]">
             <span>{timeline[tick % timeline.length]}</span>
             <span className="text-emerald-300">recorded</span>
           </div>
