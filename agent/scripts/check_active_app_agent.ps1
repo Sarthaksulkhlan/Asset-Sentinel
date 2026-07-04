@@ -143,3 +143,21 @@ if ($agentProcess) {
     Write-Check "Agent command uses the expected collector script path" (Test-ContainsPath $agentProcess.CommandLine $AgentScript) $agentProcess.CommandLine
     Write-Check "Agent process runs in an interactive session" ([int]$agentProcess.SessionId -gt 0) "SessionId: $($agentProcess.SessionId)"
 }
+
+if (Test-Path -LiteralPath $StatusFile -PathType Leaf) {
+    Write-Host ""
+    Write-Host "Status file:"
+    Get-Content -LiteralPath $StatusFile -Raw
+} else {
+    Write-Host "Status file: missing"
+}
+
+if ($Failures -gt 0) {
+    Write-Host ""
+    Write-Host "Active Application agent validation failed: $Failures issue(s)."
+    exit 1
+}
+
+Write-Host ""
+Write-Host "Active Application agent validation succeeded."
+exit 0
