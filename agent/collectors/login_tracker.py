@@ -61,11 +61,17 @@ from storage import (
 
 COUNTABLE_LOGIN_SOURCES = {
     "windows_interactive_logon",
-    "windows_unlock",
-    "windows_unlock_observed",
     "windows_session_observed",
 }
-COUNTABLE_LOGIN_EVENT_IDS = {"4624", "4801", "4778", "LOCKAPP_UNLOCK", "SESSION_OBSERVED"}
+COUNTABLE_LOGIN_EVENT_IDS = {"4624", "SESSION_OBSERVED"}
+SESSION_STATE_SOURCES = {
+    "windows_lock",
+    "windows_lock_observed",
+    "windows_unlock",
+    "windows_unlock_observed",
+    "windows_session_disconnect",
+    "windows_session_reconnect",
+}
 
 # ============================================================================
 # Logging Setup
@@ -181,6 +187,22 @@ def get_last_recorded_session() -> Optional[Dict[str, Any]]:
     if not sessions:
         return None
     return sessions[-1]
+
+
+def _is_countable_login_record(session: Dict[str, Any]) -> bool:
+    if session.get("event_type") != "LOGIN":
+        return False
+    return (
+        session.get("login_source") in COUNTABLE_LOGIN_SOURCES
+        or str(session.get("windows_event_id") or "") in COUNTABLE_LOGIN_EVENT_IDS
+    )
+
+
+def get_last_countable_login_session() -> Optional[Dict[str, Any]]:
+    for session in reversed(load_sessions()):
+        if _is_countable_login_record(session):
+            return session
+    return None
 
 
 def _parse_iso_timestamp(value: Optional[str]) -> Optional[datetime]:
@@ -369,26 +391,60 @@ def _record_lockapp_unlocks_from_history(
             continue
 
         logger.info(
-            "LockApp unlock accepted as real login boundary: host=%s user=%s lock_timestamp=%s unlock_timestamp=%s record_id=%s",
+            "LockApp unlock accepted as session-state boundary: host=%s user=%s lock_timestamp=%s unlock_timestamp=%s record_id=%s",
             hostname,
             username,
             lock_timestamp,
             unlock_timestamp,
             record_id,
         )
-        latest_recorded = record_login({
-            **current_session,
-            "login_timestamp": unlock_timestamp,
-            "login_source": "windows_unlock_observed",
-            "windows_event_id": "LOCKAPP_UNLOCK",
-            "windows_event_record_id": record_id,
-        })
+        latest_recorded = record_session_state_event(
+            current_session,
+            "UNLOCK",
+            unlock_timestamp,
+            "windows_unlock_observed",
+            "LOCKAPP_UNLOCK",
+            record_id,
+        )
         lock_event = None
         _pending_lockapp_event = None
 
     if newest_seen:
         _last_lockapp_history_checked_at = newest_seen
     return latest_recorded
+
+
+def record_session_state_event(
+    session_info: Dict[str, Any],
+    state: str,
+    timestamp: str,
+    source: str,
+    event_id: str,
+    record_id: Optional[str],
+) -> Dict[str, Any]:
+    hostname = session_info.get("hostname") or socket.gethostname()
+    if record_id and has_session_event_signature(hostname, record_id):
+        return {}
+    event_type = "LOGOUT" if state == "LOCK" else "LOGIN"
+    record = {
+        "event_type": event_type,
+        "username": session_info.get("username"),
+        "hostname": hostname,
+        "ip_address": session_info.get("ip_address"),
+        "session_id": session_info.get("session_id"),
+        "login_timestamp": timestamp if event_type == "LOGIN" else session_info.get("login_timestamp"),
+        "logout_timestamp": timestamp if event_type == "LOGOUT" else None,
+        "session_duration": state.title(),
+        "active": False,
+        "device_status": None,
+        "last_seen": timestamp,
+        "login_source": source,
+        "windows_event_id": event_id,
+        "windows_event_record_id": record_id,
+        "recorded_at": timestamp,
+    }
+    append_session(record)
+    return record
 
 
 def close_active_sessions(
@@ -488,6 +544,7 @@ def detect_login() -> Optional[Dict[str, Any]]:
     """
     current_session = get_current_session_info()
     last_session = get_last_recorded_session()
+    last_countable_session = get_last_countable_login_session()
     current_user = current_session.get("username")
     current_session_id = current_session.get("session_id")
     current_event_record_id = current_session.get("windows_event_record_id")
@@ -513,7 +570,31 @@ def detect_login() -> Optional[Dict[str, Any]]:
     if lockapp_login:
         return lockapp_login
 
-    if logout_event_record_id and not has_session_event_signature(current_session.get("hostname"), logout_event_record_id):
+    unlock_event_record_id = current_session.get("latest_unlock_event_record_id")
+    if unlock_event_record_id and not has_session_event_signature(current_session.get("hostname"), unlock_event_record_id):
+        record_session_state_event(
+            current_session,
+            "UNLOCK",
+            current_session.get("latest_unlock_timestamp") or datetime.now(timezone.utc).isoformat(),
+            "windows_unlock" if current_session.get("latest_unlock_event_id") == "4801" else "windows_session_reconnect",
+            current_session.get("latest_unlock_event_id") or "4801",
+            unlock_event_record_id,
+        )
+
+    if (
+        logout_event_record_id
+        and current_session.get("latest_logout_event_id") in {"4800", "4779"}
+        and not has_session_event_signature(current_session.get("hostname"), logout_event_record_id)
+    ):
+        record_session_state_event(
+            current_session,
+            "LOCK",
+            logout_timestamp,
+            "windows_lock" if current_session.get("latest_logout_event_id") == "4800" else "windows_session_disconnect",
+            current_session.get("latest_logout_event_id") or "4800",
+            logout_event_record_id,
+        )
+    elif logout_event_record_id and not has_session_event_signature(current_session.get("hostname"), logout_event_record_id):
         sessions = load_sessions()
         before_count = len(sessions)
         updated_sessions = close_active_sessions(sessions, current_session, logout_timestamp)
@@ -525,7 +606,9 @@ def detect_login() -> Optional[Dict[str, Any]]:
             save_sessions(updated_sessions)
     
     # First run - no previous session
-    if last_session is None:
+    comparison_session = last_countable_session or last_session
+
+    if comparison_session is None:
         if current_event_record_id and current_session.get("login_source") in COUNTABLE_LOGIN_SOURCES:
             logger.info(
                 "First run detected with real Windows login event %s record %s",
@@ -539,10 +622,10 @@ def detect_login() -> Optional[Dict[str, Any]]:
         return _record_observed_session_login(current_session, "first_run_without_security_event")
     
     # Check if user or session changed (indicates logout/login)
-    last_user = last_session.get("username")
-    last_session_id = last_session.get("session_id")
-    last_event_record_id = last_session.get("windows_event_record_id")
-    last_hostname = last_session.get("hostname")
+    last_user = comparison_session.get("username")
+    last_session_id = comparison_session.get("session_id")
+    last_event_record_id = comparison_session.get("windows_event_record_id")
+    last_hostname = comparison_session.get("hostname")
     current_hostname = current_session.get("hostname")
 
     if current_hostname and current_hostname != last_hostname:
@@ -554,7 +637,10 @@ def detect_login() -> Optional[Dict[str, Any]]:
         return _record_observed_session_login(current_session, "hostname_changed")
 
     if current_event_record_id and current_event_record_id != last_event_record_id:
-        if not has_session_event_signature(current_session.get("hostname"), current_event_record_id):
+        if (
+            current_session.get("login_source") not in SESSION_STATE_SOURCES
+            and not has_session_event_signature(current_session.get("hostname"), current_event_record_id)
+        ):
             logger.info(
                 "Login detected from Windows event %s record %s",
                 current_session.get("windows_event_id"),
