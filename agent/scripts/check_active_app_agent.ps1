@@ -107,3 +107,9 @@ try {
 
 Write-Check "HKCU Run startup registration exists" (-not [string]::IsNullOrWhiteSpace($runCommand)) $RunValue
 Write-Check "HKCU Run command uses the expected launcher script" ($runCommand -eq $ExpectedRunCommand) "Actual: $runCommand"
+
+schtasks.exe /Query /TN $RunValue *> $null
+Write-Check "No stale scheduled task startup remains" ($LASTEXITCODE -ne 0) "Task name: $RunValue"
+
+Write-Check "No stale Startup folder VBS remains" (-not (Test-Path -LiteralPath $StartupScript)) $StartupScript
+Write-Check "No stale Startup folder shortcut remains" (-not (Test-Path -LiteralPath $StartupShortcut)) $StartupShortcut
