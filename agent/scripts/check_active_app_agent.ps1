@@ -61,3 +61,22 @@ function Test-ContainsPath {
 
     return $CommandLine.IndexOf($Path, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
 }
+
+function Get-PidFromFile {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $null
+    }
+
+    try {
+        $text = (Get-Content -LiteralPath $Path -Raw).Trim()
+        if ($text) {
+            return [int]$text
+        }
+    } catch {
+        return $null
+    }
+
+    return $null
+}
