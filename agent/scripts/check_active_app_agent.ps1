@@ -113,3 +113,12 @@ Write-Check "No stale scheduled task startup remains" ($LASTEXITCODE -ne 0) "Tas
 
 Write-Check "No stale Startup folder VBS remains" (-not (Test-Path -LiteralPath $StartupScript)) $StartupScript
 Write-Check "No stale Startup folder shortcut remains" (-not (Test-Path -LiteralPath $StartupShortcut)) $StartupShortcut
+
+$resolvedPython = $null
+try {
+    $resolvedPython = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ResolverScript | Select-Object -First 1)
+} catch {
+    $resolvedPython = $null
+}
+
+Write-Check "Python resolver returns a real executable" ((-not [string]::IsNullOrWhiteSpace($resolvedPython)) -and (Test-Path -LiteralPath $resolvedPython -PathType Leaf)) $resolvedPython
