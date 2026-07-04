@@ -80,3 +80,17 @@ function Get-PidFromFile {
 
     return $null
 }
+
+function Get-ProcessInfo {
+    param([Nullable[int]]$ProcessId)
+
+    if (-not $ProcessId) {
+        return $null
+    }
+
+    try {
+        return Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId"
+    } catch {
+        return $null
+    }
+}
