@@ -18,16 +18,20 @@ logger = logging.getLogger("asset_sentinel.storage")
 
 REAL_LOGIN_SOURCES = {
     "windows_interactive_logon",
-    "windows_unlock",
-    "windows_unlock_observed",
     "windows_session_observed",
 }
-REAL_LOGIN_EVENT_IDS = {"4624", "4801", "4778", "LOCKAPP_UNLOCK", "SESSION_OBSERVED"}
+REAL_LOGIN_EVENT_IDS = {"4624", "SESSION_OBSERVED"}
 NON_COUNTABLE_LOGIN_SOURCES = {
     "windows_lock",
+    "windows_lock_observed",
     "windows_session_disconnect",
+    "windows_unlock",
+    "windows_unlock_observed",
+    "windows_session_reconnect",
 }
-DEFAULT_IDLE_THRESHOLD_SECONDS = int(os.environ.get("IDLE_THRESHOLD_SECONDS") or os.environ.get("ASSET_SENTINEL_IDLE_THRESHOLD_SECONDS", "300"))
+SESSION_STATE_SOURCES = NON_COUNTABLE_LOGIN_SOURCES | {"windows_logoff", "windows_user_logoff"}
+SESSION_STATE_EVENT_IDS = {"4800", "4801", "4779", "4778", "LOCKAPP_LOCK", "LOCKAPP_UNLOCK"}
+DEFAULT_IDLE_THRESHOLD_SECONDS = int(os.environ.get("IDLE_THRESHOLD_SECONDS") or os.environ.get("ASSET_SENTINEL_IDLE_THRESHOLD_SECONDS", "60"))
 
 
 def _parse_datetime(value: Any) -> Optional[datetime]:
@@ -540,7 +544,7 @@ def _is_countable_login(row: SessionRecord) -> bool:
         return True
     if str(row.windows_event_id or "") in REAL_LOGIN_EVENT_IDS:
         return True
-    return True
+    return False
 
 
 def _activity_summary(session, hostname: str) -> Dict[str, Any]:
@@ -596,9 +600,13 @@ def append_session(record: Dict[str, Any]) -> None:
                     event_record_id,
                 )
                 return
+        source = record.get("login_source")
+        event_id = str(record.get("windows_event_id") or "")
         if record.get("event_type") == "LOGIN" and (
             record.get("login_source") not in REAL_LOGIN_SOURCES
-            and str(record.get("windows_event_id") or "") not in REAL_LOGIN_EVENT_IDS
+            and event_id not in REAL_LOGIN_EVENT_IDS
+            and source not in SESSION_STATE_SOURCES
+            and event_id not in SESSION_STATE_EVENT_IDS
         ):
             logger.info(
                 "Skipping non-login session event: host=%s source=%s event=%s",
@@ -703,7 +711,7 @@ def _event_idle_seconds(record: Dict[str, Any], duration_seconds: int) -> int:
         return 0
     if idle_seconds < threshold:
         return 0
-    return max(0, min(duration_seconds, idle_seconds))
+    return max(0, min(duration_seconds, idle_seconds - threshold))
 
 
 def _usage_day_start(value: datetime) -> datetime:
@@ -1200,27 +1208,109 @@ def _period_start(period: str, session_start: Optional[datetime], now: datetime)
         return session_start or today_start
     if period == "yesterday":
         return today_start - timedelta(days=1)
-    if period == "last_2_days":
-        return today_start - timedelta(days=1)
+    if period == "last_4_days":
+        return today_start - timedelta(days=3)
     return today_start
 
 
-def _period_bounds(period: str, sessions: Iterable[SessionRecord], now: Optional[datetime] = None) -> tuple[datetime, datetime]:
+def _event_time_candidates(
+    sessions: Iterable[SessionRecord],
+    app_history: Optional[Iterable[ActiveApplicationHistory]] = None,
+    activity_sessions: Optional[Iterable[ActivitySession]] = None,
+    asset_last_seen: Any = None,
+) -> List[datetime]:
+    candidates: List[datetime] = []
+    for row in sessions:
+        for stamp in (row.login_timestamp, row.logout_timestamp, row.last_seen, row.recorded_at):
+            parsed = _parse_datetime(stamp)
+            if parsed:
+                candidates.append(parsed)
+    for row in app_history or []:
+        parsed = _parse_datetime(row.timestamp)
+        if parsed:
+            candidates.append(parsed)
+    for row in activity_sessions or []:
+        for stamp in (row.start_time, row.end_time):
+            parsed = _parse_datetime(stamp)
+            if parsed:
+                candidates.append(parsed)
+    parsed_last_seen = _parse_datetime(asset_last_seen)
+    if parsed_last_seen:
+        candidates.append(parsed_last_seen)
+    return candidates
+
+
+def _local_day_bounds(local_day) -> tuple[datetime, datetime]:
+    start = datetime.combine(local_day, datetime.min.time(), tzinfo=Config.DISPLAY_TZINFO)
+    end = start + timedelta(days=1)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def _login_times_for_local_day(sessions: Iterable[SessionRecord], local_day) -> List[datetime]:
+    login_times = []
+    for row in sessions:
+        if not _is_countable_login(row):
+            continue
+        stamp = _parse_datetime(row.login_timestamp or row.recorded_at)
+        if stamp and stamp.astimezone(Config.DISPLAY_TZINFO).date() == local_day:
+            login_times.append(stamp)
+    return sorted(login_times)
+
+
+def _session_window_for_local_days(
+    local_days,
+    sessions: Iterable[SessionRecord],
+    app_history: Optional[Iterable[ActiveApplicationHistory]] = None,
+    activity_sessions: Optional[Iterable[ActivitySession]] = None,
+    asset_last_seen: Any = None,
+    now: Optional[datetime] = None,
+) -> tuple[datetime, datetime]:
+    now = now or datetime.now(timezone.utc)
+    session_rows = list(sessions)
+    activity_rows = list(activity_sessions or [])
+    app_rows = list(app_history or [])
+    days = sorted(local_days)
+    day_starts = [_local_day_bounds(day)[0] for day in days]
+    day_ends = [_local_day_bounds(day)[1] for day in days]
+    raw_start, raw_end = min(day_starts), min(max(day_ends), now)
+
+    login_times = []
+    for day in days:
+        login_times.extend(_login_times_for_local_day(session_rows, day))
+
+    candidates = [
+        stamp
+        for stamp in _event_time_candidates(session_rows, app_rows, activity_rows, asset_last_seen)
+        if raw_start <= stamp <= raw_end
+    ]
+    started_at = min(login_times) if login_times else (min(candidates) if candidates else raw_start)
+    ended_at = max(candidates) if candidates else started_at
+    if ended_at < started_at:
+        ended_at = started_at
+    return started_at, min(ended_at, now)
+
+
+def _period_bounds(
+    period: str,
+    sessions: Iterable[SessionRecord],
+    now: Optional[datetime] = None,
+    app_history: Optional[Iterable[ActiveApplicationHistory]] = None,
+    activity_sessions: Optional[Iterable[ActivitySession]] = None,
+    asset_last_seen: Any = None,
+) -> tuple[datetime, datetime]:
     now = now or datetime.now(timezone.utc)
     local_now = now.astimezone(Config.DISPLAY_TZINFO)
-    today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-    yesterday_start = today_start - timedelta(days=1)
+    today = local_now.date()
     if period == "current_session":
-        fallback_start = _latest_session_start(sessions) or today_start
+        fallback_start = _latest_session_start(sessions) or _session_window_for_local_days(
+            [today], sessions, app_history, activity_sessions, asset_last_seen, now
+        )[0]
         return fallback_start, now
     if period == "yesterday":
-        raw_start, raw_end = yesterday_start, today_start
-    elif period == "last_2_days":
-        raw_start, raw_end = yesterday_start, now
-    else:
-        raw_start, raw_end = today_start, now
-
-    return raw_start, raw_end
+        return _session_window_for_local_days([today - timedelta(days=1)], sessions, app_history, activity_sessions, asset_last_seen, now)
+    if period == "last_4_days":
+        return _session_window_for_local_days([today - timedelta(days=offset) for offset in range(3, -1, -1)], sessions, app_history, activity_sessions, asset_last_seen, now)
+    return _session_window_for_local_days([today], sessions, app_history, activity_sessions, asset_last_seen, now)
 
 
 def _period_end(period: str, now: datetime) -> datetime:
@@ -1285,8 +1375,11 @@ def _locked_intervals(sessions: Iterable[SessionRecord], window_start: datetime,
         if not stamp:
             continue
         source = row.login_source or ""
-        if source in {"windows_lock", "windows_session_disconnect"} or row.event_type == "LOGOUT":
+        event_id = str(row.windows_event_id or "")
+        if source in {"windows_lock", "windows_lock_observed", "windows_session_disconnect"} or event_id in {"4800", "4779", "LOCKAPP_LOCK"}:
             events.append(("lock", stamp))
+        elif source in {"windows_unlock", "windows_unlock_observed", "windows_session_reconnect"} or event_id in {"4801", "4778", "LOCKAPP_UNLOCK"}:
+            events.append(("unlock", stamp))
         elif row.event_type == "LOGIN" and _is_countable_login(row):
             events.append(("unlock", stamp))
     events.sort(key=lambda item: item[1])
@@ -1443,7 +1536,7 @@ def _application_usage_analytics(
         locked_seconds = _overlap_seconds(start, end, locked_intervals)
         idle_seconds = 0
         if live_idle_seconds is not None and live_idle_seconds >= DEFAULT_IDLE_THRESHOLD_SECONDS:
-            idle_seconds = min(seconds - locked_seconds, live_idle_seconds)
+            idle_seconds = min(seconds - locked_seconds, live_idle_seconds - DEFAULT_IDLE_THRESHOLD_SECONDS)
         _add_usage_duration(
             usage,
             app_name,
@@ -1466,8 +1559,15 @@ def _application_usage_analytics(
         sum(item["locked_duration_seconds"] for item in usage.values()),
         _overlap_seconds(started_at, ended_at, locked_intervals),
     )
-    unclassified_seconds = max(0, session_duration - active_seconds - idle_seconds - locked_seconds)
-    idle_seconds += unclassified_seconds
+    locked_seconds = min(session_duration, locked_seconds)
+    missing_seconds = max(0, session_duration - active_seconds - idle_seconds - locked_seconds)
+    active_seconds += missing_seconds
+    if active_seconds + idle_seconds + locked_seconds > session_duration:
+        overflow = active_seconds + idle_seconds + locked_seconds - session_duration
+        idle_reduction = min(idle_seconds, overflow)
+        idle_seconds -= idle_reduction
+        overflow -= idle_reduction
+        active_seconds = max(0, active_seconds - overflow)
     productivity_percentage = round((active_seconds / max(session_duration, 1)) * 100, 2)
 
     return {
@@ -1588,8 +1688,14 @@ def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
 
         session_start = _latest_session_start(sessions_for_usage)
         usage_periods = {}
-        for period in ("current_session", "today", "yesterday", "last_2_days"):
-            period_start, period_end = _period_bounds(period, sessions_for_usage)
+        for period in ("current_session", "today", "yesterday", "last_4_days"):
+            period_start, period_end = _period_bounds(
+                period,
+                sessions_for_usage,
+                app_history=app_history_for_usage,
+                activity_sessions=activity_session_rows,
+                asset_last_seen=asset_row.last_seen,
+            )
             usage_periods[period] = _application_usage_analytics(
                 app_history_for_usage,
                 session_start,
