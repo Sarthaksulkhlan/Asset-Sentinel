@@ -21,3 +21,17 @@ dist/
 build/
 frontend/node_modules/
 frontend/dist/
+
+# Local build and generated artifacts
+*.tmp
+*.temp
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Personal/local documentation
+complete_system_flow.md
+COMPLETE_SYSTEM_FLOW.md
+docs/complete_system_flow.md
+docs/COMPLETE_SYSTEM_FLOW.md
