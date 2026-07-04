@@ -127,7 +127,7 @@ try {
         Write-LauncherLog "Starting agent. python=$pythonExe script=$AgentScript"
         $process = Start-Process `
             -FilePath $pythonExe `
-            -ArgumentList @($AgentScript) `
+            -ArgumentList @("`"$AgentScript`"") `
             -WorkingDirectory $RepoDir `
             -WindowStyle Hidden `
             -RedirectStandardOutput $StdoutLog `
