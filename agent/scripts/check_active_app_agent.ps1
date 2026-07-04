@@ -131,3 +131,15 @@ if ($launcherProcess) {
     Write-Check "Launcher process runs in an interactive session" ([int]$launcherProcess.SessionId -gt 0) "SessionId: $($launcherProcess.SessionId)"
     Write-Check "Launcher command uses the expected script path" (Test-ContainsPath $launcherProcess.CommandLine $LauncherScript) $launcherProcess.CommandLine
 }
+
+$agentPid = Get-PidFromFile $AgentPidFile
+$agentProcess = Get-ProcessInfo $agentPid
+Write-Check "Agent PID file exists" ($null -ne $agentPid) $AgentPidFile
+Write-Check "Agent process is running" ($null -ne $agentProcess) "PID: $agentPid"
+if ($agentProcess) {
+    $actualPython = Normalize-Path $agentProcess.ExecutablePath
+    $expectedPython = Normalize-Path $resolvedPython
+    Write-Check "Agent uses the resolved Python executable" ($actualPython -eq $expectedPython) "Expected: $expectedPython; Actual: $actualPython"
+    Write-Check "Agent command uses the expected collector script path" (Test-ContainsPath $agentProcess.CommandLine $AgentScript) $agentProcess.CommandLine
+    Write-Check "Agent process runs in an interactive session" ([int]$agentProcess.SessionId -gt 0) "SessionId: $($agentProcess.SessionId)"
+}
