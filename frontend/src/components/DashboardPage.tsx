@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { 
   Shield, 
   Search, 
@@ -90,13 +90,13 @@ const formatUsageDuration = (seconds?: number | null) => {
   return `${totalSeconds}s`;
 };
 
-type UsagePeriod = "current_session" | "today" | "yesterday" | "last_2_days";
+type UsagePeriod = "current_session" | "today" | "yesterday" | "last_4_days";
 
 const usagePeriodLabels: Record<UsagePeriod, string> = {
   current_session: "Current Session",
   today: "Today",
   yesterday: "Yesterday",
-  last_2_days: "Last 2 Days",
+  last_4_days: "Last 4 Days",
 };
 
 const appAccentClasses = [
@@ -464,6 +464,215 @@ const newestApplicationEntry = (entries: Array<Record<string, any>>) => {
   return sortNewestTelemetry(entries).find((entry) => entry && entry.timestamp);
 };
 
+type TimelineEntry = {
+  timestamp?: string | null;
+  application?: string | null;
+  application_name?: string | null;
+  window_title?: string | null;
+  process_path?: string | null;
+};
+
+type TimelineInterval = TimelineEntry & {
+  endTimestamp?: string | null;
+  durationSeconds?: number | null;
+};
+
+const appTimelineTitle = (entry: TimelineEntry) => (
+  entry.application || entry.application_name || entry.window_title || entry.process_path || "Application changed"
+);
+
+const appTimelineDetail = (entry: TimelineEntry) => (
+  entry.window_title || entry.process_path || "Foreground application event"
+);
+
+const timeOnlyLabel = (value?: string | null) => {
+  if (!value) return "Now";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Now";
+  return parsed.toLocaleTimeString([], { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+};
+
+const timeInputLabel = (value: string) => {
+  const [hoursRaw, minutesRaw] = value.split(":").map(Number);
+  if (!Number.isFinite(hoursRaw) || !Number.isFinite(minutesRaw)) return value;
+  const suffix = hoursRaw >= 12 ? "PM" : "AM";
+  const hours = hoursRaw % 12 || 12;
+  return `${String(hours).padStart(2, "0")}:${String(minutesRaw).padStart(2, "0")} ${suffix}`;
+};
+
+const filterTimelineByTimeRange = (entries: TimelineEntry[], startTime: string, endTime: string) => {
+  if (!startTime || !endTime) return [];
+  const [startHours, startMinutes] = startTime.split(":").map(Number);
+  const [endHours, endMinutes] = endTime.split(":").map(Number);
+  if (![startHours, startMinutes, endHours, endMinutes].every(Number.isFinite)) return [];
+  return entries.filter((entry) => {
+    if (!entry.timestamp) return false;
+    const parsed = new Date(entry.timestamp);
+    if (Number.isNaN(parsed.getTime())) return false;
+    const local = new Date(parsed.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const minutes = local.getHours() * 60 + local.getMinutes();
+    return minutes >= startHours * 60 + startMinutes && minutes <= endHours * 60 + endMinutes;
+  });
+};
+
+const timelineAccentClasses = [
+  "border-sky-400/35 bg-sky-400/10 text-sky-200 shadow-[0_10px_30px_rgba(56,189,248,0.12)]",
+  "border-emerald-400/30 bg-emerald-400/10 text-emerald-200 shadow-[0_10px_30px_rgba(52,211,153,0.1)]",
+  "border-amber-300/30 bg-amber-300/10 text-amber-100 shadow-[0_10px_30px_rgba(245,158,11,0.1)]",
+  "border-violet-300/30 bg-violet-300/10 text-violet-100 shadow-[0_10px_30px_rgba(167,139,250,0.1)]",
+  "border-rose-300/30 bg-rose-300/10 text-rose-100 shadow-[0_10px_30px_rgba(251,113,133,0.1)]",
+];
+
+const hashText = (value: string) => (
+  value.split("").reduce((total, char) => total + char.charCodeAt(0), 0)
+);
+
+const timelineAccentFor = (appName: string) => timelineAccentClasses[hashText(appName) % timelineAccentClasses.length];
+
+const timelineIconFor = (appName: string) => {
+  const lowered = appName.toLowerCase();
+  if (lowered.includes("chrome") || lowered.includes("edge") || lowered.includes("firefox") || lowered.includes("browser")) return <Globe className="h-4 w-4" />;
+  if (lowered.includes("code") || lowered.includes("studio")) return <Monitor className="h-4 w-4" />;
+  if (lowered.includes("excel") || lowered.includes("sheet")) return <FileSpreadsheet className="h-4 w-4" />;
+  if (lowered.includes("explorer") || lowered.includes("folder")) return <Database className="h-4 w-4" />;
+  return <Activity className="h-4 w-4" />;
+};
+
+const buildTimelineIntervals = (entries: TimelineEntry[], endTime: string): TimelineInterval[] => {
+  const sorted = [...entries].sort((a, b) => telemetryTimeMs(a.timestamp) - telemetryTimeMs(b.timestamp));
+  const [endHours, endMinutes] = endTime.split(":").map(Number);
+  return sorted.map((entry, index) => {
+    const startMs = telemetryTimeMs(entry.timestamp);
+    const nextMs = telemetryTimeMs(sorted[index + 1]?.timestamp);
+    let endMs = nextMs || 0;
+    if (!endMs && entry.timestamp && Number.isFinite(endHours) && Number.isFinite(endMinutes)) {
+      const parsed = new Date(entry.timestamp);
+      if (!Number.isNaN(parsed.getTime())) {
+        const localEnd = new Date(parsed.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+        localEnd.setHours(endHours, endMinutes, 0, 0);
+        endMs = localEnd.getTime();
+      }
+    }
+    const durationSeconds = startMs && endMs && endMs > startMs ? Math.floor((endMs - startMs) / 1000) : null;
+    return {
+      ...entry,
+      endTimestamp: endMs ? new Date(endMs).toISOString() : null,
+      durationSeconds,
+    };
+  });
+};
+
+const parseTimeValue = (value: string) => {
+  const [hoursRaw, minutesRaw] = value.split(":").map(Number);
+  const hours = Number.isFinite(hoursRaw) ? Math.max(0, Math.min(23, hoursRaw)) : 0;
+  const minutes = Number.isFinite(minutesRaw) ? Math.max(0, Math.min(59, minutesRaw)) : 0;
+  return { hours, minutes };
+};
+
+const toTimeValue = (hours: number, minutes: number) => (
+  `${String((hours + 24) % 24).padStart(2, "0")}:${String(Math.max(0, Math.min(59, minutes))).padStart(2, "0")}`
+);
+
+const ClockTimePicker = React.memo(function ClockTimePicker({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [mode, setMode] = useState<"hour" | "minute">("hour");
+  const { hours, minutes } = parseTimeValue(value);
+  const isPm = hours >= 12;
+  const displayHour = hours % 12 || 12;
+  const minuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+
+  const setHour = (hour12: number) => {
+    const nextHour = (isPm ? 12 : 0) + (hour12 % 12);
+    onChange(toTimeValue(nextHour, minutes));
+    setMode("minute");
+  };
+
+  const setMinute = (minute: number) => {
+    onChange(toTimeValue(hours, minute));
+  };
+
+  const setPeriod = (period: "AM" | "PM") => {
+    const hour12 = hours % 12;
+    onChange(toTimeValue((period === "PM" ? 12 : 0) + hour12, minutes));
+  };
+
+  const dialValues = mode === "hour"
+    ? Array.from({ length: 12 }, (_, index) => index + 1)
+    : minuteOptions;
+
+  return (
+    <div className="rounded-2xl border border-[#2B3752] bg-[#0B1220]/72 p-4 shadow-[inset_0_0_28px_rgba(56,189,248,0.05)]">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#8EA0B8]">{label}</span>
+        <div className="inline-flex rounded-lg border border-[#2B3752] bg-[#101827] p-1">
+          {(["AM", "PM"] as const).map((period) => (
+            <button
+              key={period}
+              onClick={() => setPeriod(period)}
+              className={`h-7 rounded-md px-2.5 text-[10px] font-black transition-colors ${
+                (period === "PM") === isPm
+                  ? "bg-emerald-300/18 text-emerald-100"
+                  : "text-[#8EA0B8] hover:text-white"
+              }`}
+            >
+              {period}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mb-4 grid grid-cols-[1fr_auto_1fr] items-center gap-2 rounded-xl border border-[#38BDF8]/25 bg-[#07111F]/85 px-3 py-3 text-center">
+        <button
+          onClick={() => setMode("hour")}
+          className={`rounded-lg px-3 py-2 text-3xl font-black tabular-nums transition-colors ${mode === "hour" ? "bg-[#38BDF8]/16 text-[#BAE6FD]" : "text-white hover:bg-white/[0.04]"}`}
+        >
+          {String(displayHour).padStart(2, "0")}
+        </button>
+        <span className="text-3xl font-black text-[#64748B]">:</span>
+        <button
+          onClick={() => setMode("minute")}
+          className={`rounded-lg px-3 py-2 text-3xl font-black tabular-nums transition-colors ${mode === "minute" ? "bg-amber-300/16 text-amber-100" : "text-white hover:bg-white/[0.04]"}`}
+        >
+          {String(minutes).padStart(2, "0")}
+        </button>
+      </div>
+
+      <div className="relative mx-auto h-56 w-56 rounded-full border border-[#38BDF8]/20 bg-[radial-gradient(circle,#111827_0%,#0B1220_58%,#07111F_100%)] shadow-[inset_0_0_34px_rgba(15,23,42,0.9),0_0_30px_rgba(56,189,248,0.08)]">
+        <span className="absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#38BDF8]" />
+        {dialValues.map((dialValue, index) => {
+          const total = dialValues.length;
+          const angle = ((index / total) * 360) - 90;
+          const radius = 88;
+          const x = Math.cos((angle * Math.PI) / 180) * radius;
+          const y = Math.sin((angle * Math.PI) / 180) * radius;
+          const selected = mode === "hour" ? dialValue === displayHour : dialValue === minutes;
+          return (
+            <button
+              key={`${mode}-${dialValue}`}
+              onClick={() => mode === "hour" ? setHour(dialValue) : setMinute(dialValue)}
+              className={`absolute flex h-10 w-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-sm font-black tabular-nums transition-colors ${
+                selected
+                  ? "bg-[#38BDF8] text-[#03121F] shadow-[0_0_18px_rgba(56,189,248,0.42)]"
+                  : "text-[#CBD5E1] hover:bg-white/[0.07] hover:text-white"
+              }`}
+              style={{ left: `calc(50% + ${x}px)`, top: `calc(50% + ${y}px)` }}
+            >
+              {mode === "minute" ? String(dialValue).padStart(2, "0") : dialValue}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+});
+
 export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemoMode = false }: DashboardPageProps) {
   // Master fleet list held in state for fully reactive user experiences
   const [assets, setAssets] = useState<Asset[]>(() => isDemoMode ? INITIAL_ASSETS : []);
@@ -477,6 +686,15 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   const [isMonitoringOpen, setIsMonitoringOpen] = useState(false);
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [timelineStartTime, setTimelineStartTime] = useState("14:00");
+  const [timelineEndTime, setTimelineEndTime] = useState("16:00");
+  const [historyStartTime, setHistoryStartTime] = useState("14:00");
+  const [historyEndTime, setHistoryEndTime] = useState("16:00");
+  const [isTimelineSelectorOpen, setIsTimelineSelectorOpen] = useState(false);
+  const [isTimelineHistoryOpen, setIsTimelineHistoryOpen] = useState(false);
+  const [isSupportCenterOpen, setIsSupportCenterOpen] = useState(false);
+  const [isRaiseTicketOpen, setIsRaiseTicketOpen] = useState(false);
+  const [isEmailSupportOpen, setIsEmailSupportOpen] = useState(false);
   const persistedDashboardState = useMemo(() => readDashboardState(), []);
   const [searchQuery, setSearchQuery] = useState(() => isDemoMode ? "" : (persistedDashboardState.searchQuery || ""));
   const [currentPage, setCurrentPage] = useState(() => isDemoMode ? 1 : (persistedDashboardState.currentPage || 1));
@@ -497,10 +715,32 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     return [...localLogs, ...liveLogs];
   }, [localLogs, liveLogs]);
 
+  const applicationTimelineEntries = useMemo<TimelineEntry[]>(() => {
+    const entries = selectedAssetDetail?.application_timeline || selectedAsset?.applicationHistory || [];
+    return sortNewestTelemetry(entries as TimelineEntry[]);
+  }, [selectedAssetDetail, selectedAsset]);
+
+  const liveApplicationTimeline = useMemo(() => (
+    applicationTimelineEntries.slice(0, 60)
+  ), [applicationTimelineEntries]);
+
+  const filteredApplicationTimeline = useMemo(() => (
+    filterTimelineByTimeRange(applicationTimelineEntries, historyStartTime, historyEndTime)
+  ), [applicationTimelineEntries, historyStartTime, historyEndTime]);
+
+  const filteredTimelineIntervals = useMemo(() => (
+    buildTimelineIntervals(filteredApplicationTimeline, historyEndTime)
+  ), [filteredApplicationTimeline, historyEndTime]);
+
   useEffect(() => {
     if (isDemoMode) return;
     writeDashboardState({ searchQuery, currentPage });
   }, [searchQuery, currentPage, isDemoMode]);
+
+  useEffect(() => () => {
+    window.clearTimeout(workspaceScrollWriteRef.current);
+    window.clearTimeout(detailScrollWriteRef.current);
+  }, []);
 
   useEffect(() => {
     if (isDemoMode || restoredWorkspaceScrollRef.current || !workspaceRef.current) return;
@@ -553,6 +793,17 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   const assetDetailDrawerRef = useRef<HTMLDivElement | null>(null);
   const restoredWorkspaceScrollRef = useRef(false);
   const restoredDetailScrollRef = useRef(false);
+  const workspaceScrollWriteRef = useRef(0);
+  const detailScrollWriteRef = useRef(0);
+
+  const persistScrollPosition = useCallback((key: "workspaceScrollTop" | "detailScrollTop", value: number) => {
+    if (isDemoMode) return;
+    const ref = key === "workspaceScrollTop" ? workspaceScrollWriteRef : detailScrollWriteRef;
+    window.clearTimeout(ref.current);
+    ref.current = window.setTimeout(() => {
+      writeDashboardState({ [key]: value });
+    }, 180);
+  }, [isDemoMode]);
 
   const handleShowDevices = () => {
     setSearchQuery("");
@@ -709,14 +960,15 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
 
   // Continuous simulations loops for demo content
   useEffect(() => {
+    if (!isDemoMode) return;
     const ramTimer = setInterval(() => {
       setRamValue((prev: number) => Math.min(98, Math.max(45, prev + Math.floor(Math.random() * 7) - 3)));
-    }, 1200);
+    }, 2200);
 
     const biosTimer = setInterval(() => {
       const chars = "0123456789ABCDEF";
       setBiosHash((prev: string) => prev.slice(0, 8) + chars[Math.floor(Math.random() * 16)]);
-    }, 900);
+    }, 2400);
 
     const gridTimer = setInterval(() => {
       setChartGridCells((prev: string[]) => 
@@ -728,7 +980,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
           return state;
         })
       );
-    }, 2000);
+    }, 4200);
 
     let tick = 0;
     const waveTimer = setInterval(() => {
@@ -740,7 +992,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
         points.push(`${x},${y}`);
       }
       setChartWavePath(`M ${points.join(" L ")}`);
-    }, 85);
+    }, 240);
 
     return () => {
       clearInterval(ramTimer);
@@ -748,7 +1000,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
       clearInterval(gridTimer);
       clearInterval(waveTimer);
     };
-  }, []);
+  }, [isDemoMode]);
 
   // Demo-only telemetry animation. Production values come from PostgreSQL/psutil.
   useEffect(() => {
@@ -1107,14 +1359,21 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   // Search filter computes
   const filteredAssets = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
-    if (!query) return assets;
-    return assets.filter((asset: Asset) => 
-      asset.hostname.toLowerCase().includes(query) ||
-      asset.employee.toLowerCase().includes(query) ||
-      asset.ipAddress.toLowerCase().includes(query) ||
-      asset.os.toLowerCase().includes(query) ||
-      asset.ram.toLowerCase().includes(query)
-    );
+    const statusRank: Record<string, number> = { Online: 0, Idle: 1, Overload: 2, Offline: 3 };
+    const matches = !query
+      ? assets
+      : assets.filter((asset: Asset) => 
+          asset.hostname.toLowerCase().includes(query) ||
+          asset.employee.toLowerCase().includes(query) ||
+          asset.ipAddress.toLowerCase().includes(query) ||
+          asset.os.toLowerCase().includes(query) ||
+          asset.ram.toLowerCase().includes(query)
+        );
+    return [...matches].sort((a, b) => {
+      const rankDelta = (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9);
+      if (rankDelta !== 0) return rankDelta;
+      return telemetryTimeMs(b.lastSeen || b.lastActiveTime) - telemetryTimeMs(a.lastSeen || a.lastActiveTime);
+    });
   }, [assets, searchQuery]);
 
   // Pagination bounds (5 per page)
@@ -1869,7 +2128,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
           <ul className="flex flex-col gap-1.5 text-xs">
             <li>
               <button 
-                onClick={() => handleSidebarAction(() => alert(`OPERATIONAL WORKSPACE SECURITY PROFILE:\n\nAdmin Token: ${userEmail}\nSession Status: SECURE GATEWAY ENCRYPTION LOGS ACTIVE\nUTC Stamp: ${new Date().toISOString()}`))}
+                onClick={() => handleSidebarAction(() => setIsSupportCenterOpen(true))}
                 className="w-full text-[#bbc9cf] hover:text-[#00d1ff] hover:bg-[#2d363e]/40 transition-all flex items-center gap-3 px-3 py-2 rounded-lg text-left"
               >
                 <HelpCircle className="w-4.5 h-4.5 text-[#bbc9cf]" />
@@ -1936,7 +2195,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
           id="scrolling-command-workspace"
           ref={workspaceRef}
           onScroll={(event) => {
-            if (!isDemoMode) writeDashboardState({ workspaceScrollTop: event.currentTarget.scrollTop });
+            persistScrollPosition("workspaceScrollTop", event.currentTarget.scrollTop);
           }}
           className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 md:p-8 pb-10 md:pb-12 flex flex-col gap-6 select-text selection:bg-[#00d1ff]/20"
         >
@@ -2078,13 +2337,19 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
           </section>
 
           {/* Main command data list console block */}
-          <section id="fleet-telemetry-panel" className="flex-none xl:flex-1 glass-panel rounded-xl flex flex-col overflow-hidden min-h-[320px] md:min-h-[500px] bg-[#161B22]/90 border border-white/8 shadow-lg">
+          <section id="fleet-telemetry-panel" className="flex-none xl:flex-1 rounded-2xl flex flex-col overflow-hidden min-h-[320px] md:min-h-[500px] bg-[linear-gradient(145deg,#121A27_0%,#101827_55%,#07111F_100%)] border border-[#334155]/80 shadow-[0_22px_70px_rgba(2,8,23,0.36)]">
             
             {/* Table Toolbar Section */}
-            <div className="p-4 border-b border-[#3c494e]/30 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-[#141c24]/50">
+            <div className="p-4 border-b border-[#334155]/60 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-[linear-gradient(90deg,rgba(56,189,248,0.08),rgba(52,211,153,0.05),rgba(245,158,11,0.04))]">
               <div>
-                <h2 className="text-lg font-bold text-[#dae3ee]">Real-Time Fleet Telemetry</h2>
-                <p className="text-xs text-[#bbc9cf] font-light mt-0.5">Compact fleet view. Click any device row for the complete endpoint profile.</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-lg font-bold text-[#F8FAFC]">Real-Time Fleet Telemetry</h2>
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300/30 bg-emerald-300/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-200">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-300" />
+                    Online First
+                  </span>
+                </div>
+                <p className="text-xs text-[#bbc9cf] font-light mt-0.5">Live endpoints are promoted first. Offline devices remain visible for audit history.</p>
               </div>
               <div className="flex w-full sm:w-auto items-center gap-2">
                 <button
@@ -2171,9 +2436,12 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                         switch(status) {
                           case "Online":
                             return (
-                              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#00d1ff]/10 text-[#00d1ff] border border-[#00d1ff]/20">
-                                <span className="w-1.5 h-1.5 rounded-full bg-[#00d1ff]"></span>
-                                <span className="text-[10px] font-semibold">Online</span>
+                              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-400/12 text-emerald-200 border border-emerald-300/35 shadow-[0_0_16px_rgba(52,211,153,0.12)]">
+                                <span className="relative flex h-2 w-2">
+                                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300 opacity-60"></span>
+                                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-300"></span>
+                                </span>
+                                <span className="text-[10px] font-black">LIVE</span>
                               </div>
                             );
                           case "Idle":
@@ -2216,14 +2484,21 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                         <tr 
                           key={assetIdentity(asset)} 
                           onClick={() => handleSelectAsset(asset)}
-                          className={`table-row-hover group transition-all duration-150 cursor-pointer ${assetIdentity(selectedAsset) === assetIdentity(asset) ? "bg-[#00d1ff]/10" : ""}`}
+                          className={`group cursor-pointer transition-colors duration-150 ${
+                            asset.status === "Online"
+                              ? "bg-emerald-300/[0.035] hover:bg-emerald-300/[0.075] shadow-[inset_3px_0_0_rgba(52,211,153,0.8)]"
+                              : "hover:bg-[#1B2338]/70 opacity-80 hover:opacity-100"
+                          } ${assetIdentity(selectedAsset) === assetIdentity(asset) ? "bg-[#00d1ff]/10" : ""}`}
                           title={`Open complete asset profile for ${asset.hostname}`}
                         >
                           <td className="py-3 px-3 sm:px-4 font-bold text-white">
                             <div className="flex items-center gap-2 min-w-0">
-                              <Laptop className="w-3.5 h-3.5 text-[#859399] shrink-0" />
+                              <Laptop className={`w-3.5 h-3.5 shrink-0 ${asset.status === "Online" ? "text-emerald-300 drop-shadow-[0_0_8px_rgba(52,211,153,0.45)]" : "text-[#859399]"}`} />
                               <div className="min-w-0">
-                                <div className="truncate">{asset.hostname}</div>
+                                <div className="flex items-center gap-2 truncate">
+                                  <span className="truncate">{asset.hostname}</span>
+                                  {asset.status === "Online" ? <span className="rounded border border-emerald-300/30 bg-emerald-300/10 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-emerald-200">Live</span> : null}
+                                </div>
                                 <div className="sm:hidden text-[10px] text-[#bbc9cf] font-normal truncate">{asset.employee}</div>
                               </div>
                             </div>
@@ -2254,7 +2529,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                               {threatLevel}
                             </span>
                           </td>
-                          <td className="py-3 px-3 sm:px-4 text-[#bbc9cf] font-sans text-[11px] hidden lg:table-cell truncate">{lastSeen}</td>
+                          <td className={`py-3 px-3 sm:px-4 font-sans text-[11px] hidden lg:table-cell truncate ${asset.status === "Online" ? "text-emerald-100" : "text-[#bbc9cf]"}`}>{lastSeen}</td>
                           <td className="py-3 px-3 sm:px-4 text-center">
                             <div className="flex justify-center select-none group-hover:scale-110 transition-transform">
                               {getAlertIcon(asset.alertStatus)}
@@ -2739,10 +3014,10 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
           >
             <div 
               id="asset-detail-drawer"
-              ref={assetDetailDrawerRef}
-              onScroll={(event) => {
-                if (!isDemoMode) writeDashboardState({ detailScrollTop: event.currentTarget.scrollTop });
-              }}
+            ref={assetDetailDrawerRef}
+            onScroll={(event) => {
+                persistScrollPosition("detailScrollTop", event.currentTarget.scrollTop);
+            }}
               className="w-full max-w-7xl bg-[#0B1220] border-l border-[#2B3752] h-full overflow-y-auto p-4 sm:p-6 md:p-8 flex flex-col gap-5 shadow-2xl relative select-text font-sans"
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
             >
@@ -2840,50 +3115,104 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
               </DetailSection>
               </div>
 
-              <section className="animate-[fadeIn_520ms_ease-out] rounded-3xl border border-[#38BDF8]/55 bg-[linear-gradient(135deg,#14233A_0%,#141B2D_48%,#0B1220_100%)] p-5 shadow-[0_0_0_1px_rgba(56,189,248,0.16),0_28px_90px_rgba(8,47,73,0.42),0_0_45px_rgba(56,189,248,0.12)]">
+              <section className="rounded-2xl border border-[#334155] bg-[linear-gradient(135deg,#111827_0%,#141B2D_54%,#0B1220_100%)] p-5 shadow-[0_18px_54px_rgba(2,8,23,0.34)]">
                 <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[#38BDF8]/60 bg-[#38BDF8]/15 shadow-[0_0_24px_rgba(56,189,248,0.28)]">
-                      <Activity className="h-5 w-5 text-[#38BDF8]" />
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#38BDF8]/45 bg-[#38BDF8]/12 shadow-[0_0_22px_rgba(56,189,248,0.2)]">
+                      <Activity className="h-5 w-5 text-[#7DD3FC]" />
                     </div>
                     <div>
                       <h3 className="text-2xl font-bold tracking-tight text-white">Active Application Timeline</h3>
                       <p className="text-sm text-[#A8B3C7]">Live foreground activity with newest entries first.</p>
                     </div>
                   </div>
-                  <span className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-400/45 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-200 shadow-[0_0_20px_rgba(52,211,153,0.16)]">
-                    <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-300" />
-                    Live Monitoring
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setTimelineStartTime(historyStartTime);
+                        setTimelineEndTime(historyEndTime);
+                        setIsTimelineSelectorOpen(true);
+                      }}
+                      className="inline-flex h-9 w-fit items-center gap-2 rounded-full border border-amber-300/35 bg-amber-300/10 px-3 py-1.5 text-xs font-semibold text-amber-100 shadow-[0_0_18px_rgba(245,158,11,0.1)] transition-colors hover:border-amber-200/55 hover:bg-amber-300/15"
+                    >
+                      <Search className="h-3.5 w-3.5" />
+                      Activity History Search
+                    </button>
+                    <span className="inline-flex h-9 w-fit items-center gap-2 rounded-full border border-emerald-400/45 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-200 shadow-[0_0_20px_rgba(52,211,153,0.16)]">
+                      <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-300" />
+                      Live Monitoring
+                    </span>
+                  </div>
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-[0.92fr_1.08fr] gap-5">
                   <div className="grid grid-cols-1 gap-3">
-                  <DetailField label="Current Active Window" value={selectedAsset.activeWindow} />
-                  <DetailField label="Current Active Application" value={selectedAsset.activeApplication} accent />
-                  <DetailField label="Active File Path" value={<span className="text-[#38BDF8]">{resolveActivePath(selectedAsset)}</span>} />
-                  <DetailField label="Live Status" value={
-                    selectedAsset.status === "Online"
-                      ? <span className="inline-flex items-center gap-2 text-emerald-300"><span className="h-2 w-2 animate-pulse rounded-full bg-emerald-300" />Heartbeat active</span>
-                      : <span className="inline-flex items-center gap-2 text-red-300"><span className="h-2 w-2 rounded-full bg-red-300" />Heartbeat stopped</span>
-                  } />
-                  <DetailField label="Last Active Time" value={formatTelemetryTimestamp(selectedAsset.lastActiveTime)} />
+                    <div className="rounded-2xl border border-emerald-300/30 bg-[linear-gradient(135deg,rgba(16,185,129,0.12),rgba(15,23,42,0.86))] p-4 shadow-[0_16px_40px_rgba(16,185,129,0.08)]">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <span className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-200">Current Application</span>
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300/35 bg-emerald-300/12 px-2 py-0.5 text-[9px] font-black uppercase text-emerald-100">
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-300" />
+                          Active
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-[#0B1220]/80 text-emerald-100">
+                          {timelineIconFor(selectedAsset.activeApplication || "")}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-xl font-black text-white">{selectedAsset.activeApplication || "No active application"}</p>
+                          <p className="mt-1 truncate text-xs text-[#A8B3C7]" title={selectedAsset.activeWindow}>{selectedAsset.activeWindow || "No active window"}</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="rounded-xl border border-[#38BDF8]/25 bg-[#38BDF8]/8 p-3">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#7DD3FC]">Active Path</p>
+                        <p className="mt-2 truncate text-sm font-semibold text-white" title={resolveActivePath(selectedAsset)}>{resolveActivePath(selectedAsset)}</p>
+                      </div>
+                      <div className="rounded-xl border border-amber-300/25 bg-amber-300/8 p-3">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-amber-100">Last Active</p>
+                        <p className="mt-2 truncate text-sm font-semibold text-white">{formatTelemetryTimestamp(selectedAsset.lastActiveTime)}</p>
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-[#2B3752] bg-[#0F1728]/80 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8EA0B8]">Live Status</p>
+                      <div className="mt-2">
+                        {selectedAsset.status === "Online"
+                          ? <span className="inline-flex items-center gap-2 text-sm font-bold text-emerald-300"><span className="h-2 w-2 animate-pulse rounded-full bg-emerald-300" />Heartbeat active</span>
+                          : <span className="inline-flex items-center gap-2 text-sm font-bold text-red-300"><span className="h-2 w-2 rounded-full bg-red-300" />Heartbeat stopped</span>}
+                      </div>
+                    </div>
                   </div>
                   <div className="max-h-80 overflow-y-auto pr-2">
-                    {(selectedAssetDetail?.application_timeline || selectedAsset.applicationHistory || []).length ? (
-                      (selectedAssetDetail?.application_timeline || selectedAsset.applicationHistory || []).slice(0, 100).map((entry, index) => (
-                        <div key={`${entry.timestamp}-${index}`} className="relative grid grid-cols-[26px_92px_1fr] gap-3 pb-5 last:pb-0">
-                          {index < Math.min((selectedAssetDetail?.application_timeline || selectedAsset.applicationHistory || []).length, 100) - 1 ? <span className="absolute left-[9px] top-5 h-full w-px bg-gradient-to-b from-[#38BDF8]/70 via-[#2B3752] to-[#2B3752]/20" /> : null}
-                          <span className="relative mt-1 h-5 w-5 rounded-full border-4 border-[#141B2D] bg-[#38BDF8] shadow-[0_0_22px_rgba(56,189,248,0.62)] after:absolute after:inset-[-7px] after:rounded-full after:border after:border-[#38BDF8]/20" />
-                          <span className="pt-1 text-[11px] font-semibold text-[#8EA0B8]">{formatTelemetryTimestamp(entry.timestamp).split(",").pop()?.trim() || "Now"}</span>
-                          <div className="rounded-xl border border-[#38BDF8]/20 bg-[#0F1728]/85 p-3 shadow-[0_10px_28px_rgba(2,8,23,0.2)] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#38BDF8]/45 hover:bg-[#1B2338] hover:shadow-[0_14px_34px_rgba(56,189,248,0.14)]">
-                            <p className="flex flex-wrap items-center gap-2 font-semibold text-white">
-                              <span>{entry.application || entry.application_name || entry.window_title || entry.process_path || "Application changed"} opened</span>
-                              {index === 0 ? <span className="rounded-full border border-[#38BDF8]/35 bg-[#38BDF8]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#7DD3FC]">Newest</span> : null}
-                            </p>
-                            <p className="mt-1 truncate text-[11px] text-[#8EA0B8]">{entry.window_title || entry.process_path || "Foreground application event"}</p>
-                          </div>
-                        </div>
-                      ))
+                    {liveApplicationTimeline.length ? (
+                      <div className="space-y-3">
+                        {liveApplicationTimeline.map((entry, index) => {
+                          const appName = appTimelineTitle(entry);
+                          const isCurrent = index === 0;
+                          return (
+                            <div
+                              key={`${entry.timestamp}-${index}`}
+                              className={`grid grid-cols-[38px_78px_1fr] gap-3 rounded-xl border p-3 ${timelineAccentFor(appName)} ${isCurrent ? "ring-1 ring-emerald-300/35" : ""}`}
+                            >
+                              <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-[#0B1220]/80">
+                                {timelineIconFor(appName)}
+                              </div>
+                              <div className="pt-0.5">
+                                <div className="text-[11px] font-black text-white">{timeOnlyLabel(entry.timestamp)}</div>
+                                {isCurrent ? <div className="mt-1 text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-300">Current</div> : null}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                  <p className="truncate text-sm font-bold text-white">{appName}</p>
+                                  {isCurrent ? <span className="rounded-full border border-emerald-300/35 bg-emerald-300/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-200">Live</span> : null}
+                                </div>
+                                <p className="mt-1 truncate text-[11px] text-[#A8B3C7]" title={appTimelineDetail(entry)}>{appTimelineDetail(entry)}</p>
+                                {entry.process_path ? <p className="mt-1 truncate text-[10px] text-[#64748B]" title={entry.process_path}>{entry.process_path}</p> : null}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     ) : (
                       <div className="rounded-xl border border-dashed border-[#2B3752] bg-[#0F1728]/70 p-4 text-sm text-[#8EA0B8]">No active application events stored in Neon yet.</div>
                     )}
@@ -3042,6 +3371,196 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                 </div>
               </div>
 
+            </div>
+          </div>
+        )}
+
+        {isTimelineSelectorOpen && selectedAsset && (
+          <div className="fixed inset-0 z-[68] flex items-center justify-center bg-[#020617]/62 px-4 py-6 backdrop-blur-sm">
+            <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-amber-300/30 bg-[linear-gradient(145deg,#101827_0%,#141B2D_64%,#0B1220_100%)] p-5 shadow-[0_24px_80px_rgba(2,8,23,0.66),0_0_34px_rgba(245,158,11,0.12)]">
+              <div className="mb-5 flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-amber-200">Activity History Search</p>
+                  <h3 className="mt-1 text-lg font-bold text-white">Select Time Range</h3>
+                </div>
+                <button
+                  onClick={() => setIsTimelineSelectorOpen(false)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#2B3752] bg-[#0F1728] text-[#A8B3C7] transition-colors hover:border-amber-300/45 hover:text-white"
+                  aria-label="Cancel activity history search"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <ClockTimePicker label="Start Time" value={timelineStartTime} onChange={setTimelineStartTime} />
+                <ClockTimePicker label="End Time" value={timelineEndTime} onChange={setTimelineEndTime} />
+              </div>
+              <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button
+                  onClick={() => setIsTimelineSelectorOpen(false)}
+                  className="inline-flex h-10 items-center justify-center rounded-lg border border-[#2B3752] bg-[#0F1728] px-4 text-xs font-bold text-[#CBD5E1] transition-colors hover:bg-[#1B2338]"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setHistoryStartTime(timelineStartTime);
+                    setHistoryEndTime(timelineEndTime);
+                    setIsTimelineSelectorOpen(false);
+                    setIsTimelineHistoryOpen(true);
+                  }}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-amber-300/45 bg-amber-300/14 px-4 text-xs font-bold text-amber-100 transition-colors hover:border-amber-200/70 hover:bg-amber-300/22"
+                >
+                  <Clock className="h-4 w-4" />
+                  View Activity
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isTimelineHistoryOpen && selectedAsset && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[#020617]/78 px-4 py-6 backdrop-blur-sm">
+            <div className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[#38BDF8]/35 bg-[#101827] shadow-[0_28px_110px_rgba(2,8,23,0.72),0_0_42px_rgba(56,189,248,0.16)]">
+              <div className="flex items-start justify-between gap-4 border-b border-[#2B3752] bg-[#141B2D] px-5 py-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-[#7DD3FC]">Activity History</p>
+                  <h3 className="mt-1 text-xl font-bold text-white">
+                    {timeInputLabel(historyStartTime)} - {timeInputLabel(historyEndTime)}
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setIsTimelineHistoryOpen(false)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#2B3752] bg-[#0F1728] text-[#A8B3C7] transition-colors hover:border-[#38BDF8]/45 hover:text-white"
+                  aria-label="Close activity history"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="overflow-y-auto p-5">
+                {filteredTimelineIntervals.length ? (
+                  <div className="space-y-3">
+                    {filteredTimelineIntervals.map((entry, index) => {
+                      const appName = appTimelineTitle(entry);
+                      return (
+                        <div key={`filtered-${entry.timestamp}-${index}`} className={`rounded-xl border p-4 ${timelineAccentFor(appName)}`}>
+                          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                            <div className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-[#0B1220]/70 px-3 py-2 text-xs font-bold text-white">
+                              <Clock className="h-3.5 w-3.5 text-[#7DD3FC]" />
+                              {timeOnlyLabel(entry.timestamp)} - {entry.endTimestamp ? timeOnlyLabel(entry.endTimestamp) : timeInputLabel(historyEndTime)}
+                            </div>
+                            {entry.durationSeconds ? (
+                              <span className="rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#CBD5E1]">
+                                {formatUsageDuration(entry.durationSeconds)}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="grid grid-cols-[40px_1fr] gap-3">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-[#0B1220]/80">
+                              {timelineIconFor(appName)}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate text-base font-bold text-white">{appName}</p>
+                              <p className="mt-1 truncate text-sm text-[#CBD5E1]" title={entry.window_title || ""}>{entry.window_title || "Unknown window title"}</p>
+                              <p className="mt-1 truncate text-[11px] text-[#8EA0B8]" title={entry.process_path || ""}>{entry.process_path || "No process path stored"}</p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-[#2B3752] bg-[#0F1728]/70 p-5 text-sm text-[#8EA0B8]">
+                    No application events found between {historyStartTime} and {historyEndTime} for the loaded current-day history.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isSupportCenterOpen && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#020617]/78 px-4 py-6 backdrop-blur-sm">
+            <div className="w-full max-w-2xl rounded-2xl border border-[#38BDF8]/30 bg-[linear-gradient(145deg,#101827_0%,#141B2D_58%,#0B1220_100%)] p-5 shadow-[0_28px_100px_rgba(2,8,23,0.7),0_0_42px_rgba(56,189,248,0.12)]">
+              <div className="mb-5 flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-[#7DD3FC]">Support Center</p>
+                  <h3 className="mt-1 text-2xl font-bold text-white">Asset Sentinel Support</h3>
+                </div>
+                <button
+                  onClick={() => setIsSupportCenterOpen(false)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#2B3752] bg-[#0F1728] text-[#A8B3C7] transition-colors hover:border-[#38BDF8]/45 hover:text-white"
+                  aria-label="Close support center"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <button
+                  onClick={() => {
+                    setIsSupportCenterOpen(false);
+                    setIsRaiseTicketOpen(true);
+                  }}
+                  className="rounded-xl border border-emerald-300/30 bg-emerald-300/10 p-5 text-left shadow-[0_14px_34px_rgba(52,211,153,0.08)] transition-colors hover:border-emerald-200/55 hover:bg-emerald-300/15"
+                >
+                  <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-emerald-300/30 bg-[#0B1220]/70">
+                    <HelpCircle className="h-5 w-5 text-emerald-200" />
+                  </div>
+                  <p className="text-lg font-bold text-white">Raise Ticket</p>
+                  <p className="mt-1 text-sm text-[#A8B3C7]">Create a new technical support request</p>
+                </button>
+                <button
+                  onClick={() => {
+                    setIsSupportCenterOpen(false);
+                    setIsEmailSupportOpen(true);
+                  }}
+                  className="rounded-xl border border-amber-300/30 bg-amber-300/10 p-5 text-left shadow-[0_14px_34px_rgba(245,158,11,0.08)] transition-colors hover:border-amber-200/55 hover:bg-amber-300/15"
+                >
+                  <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-amber-300/30 bg-[#0B1220]/70">
+                    <Info className="h-5 w-5 text-amber-100" />
+                  </div>
+                  <p className="text-lg font-bold text-white">Email Support</p>
+                  <p className="mt-1 text-sm text-[#A8B3C7]">Contact support team directly</p>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isRaiseTicketOpen && (
+          <div className="fixed inset-0 z-[81] flex items-center justify-center bg-[#020617]/78 px-4 py-6 backdrop-blur-sm">
+            <div className="w-full max-w-xl rounded-2xl border border-emerald-300/30 bg-[#101827] p-5 shadow-[0_28px_100px_rgba(2,8,23,0.7)]">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-emerald-200">Raise Support Ticket</p>
+                  <h3 className="mt-1 text-2xl font-bold text-white">Ticket form coming here.</h3>
+                </div>
+                <button onClick={() => setIsRaiseTicketOpen(false)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#2B3752] bg-[#0F1728] text-[#A8B3C7] hover:text-white" aria-label="Close raise ticket">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="mt-5 rounded-xl border border-dashed border-emerald-300/25 bg-emerald-300/[0.04] p-5 text-sm text-[#CBD5E1]">
+                Fields for category, severity, description, and attachments will be added later.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isEmailSupportOpen && (
+          <div className="fixed inset-0 z-[81] flex items-center justify-center bg-[#020617]/78 px-4 py-6 backdrop-blur-sm">
+            <div className="w-full max-w-xl rounded-2xl border border-amber-300/30 bg-[#101827] p-5 shadow-[0_28px_100px_rgba(2,8,23,0.7)]">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-amber-200">Email Support</p>
+                  <h3 className="mt-1 text-2xl font-bold text-white">Email action placeholder</h3>
+                </div>
+                <button onClick={() => setIsEmailSupportOpen(false)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#2B3752] bg-[#0F1728] text-[#A8B3C7] hover:text-white" aria-label="Close email support">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="mt-5 rounded-xl border border-dashed border-amber-300/25 bg-amber-300/[0.04] p-5 text-sm text-[#CBD5E1]">
+                Direct email integration will be connected later. This placeholder confirms the workflow.
+              </div>
             </div>
           </div>
         )}
