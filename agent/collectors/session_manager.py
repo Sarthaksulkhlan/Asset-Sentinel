@@ -373,10 +373,15 @@ def get_latest_windows_login_event(username: Optional[str]) -> Optional[Dict[str
     """
     Return the newest interactive Windows login boundary for this user.
 
-    Security 4624 logon type 2 is a full interactive login, and 4801 is
-    workstation unlock after a successful user authentication.
+    Security 4624 logon type 2 is a full interactive login. Unlocks are
+    session-state events, not new work sessions.
     """
-    return _read_latest_windows_security_event(username, {4624, 4801, 4778}, True)
+    return _read_latest_windows_security_event(username, {4624}, True)
+
+
+def get_latest_windows_unlock_event(username: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Return the newest Windows unlock or reconnect event for this user."""
+    return _read_latest_windows_security_event(username, {4801, 4778}, False)
 
 
 def get_latest_windows_logout_event(username: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -435,6 +440,7 @@ def get_current_session_info() -> Dict[str, Any]:
     """
     username = get_current_username()
     login_event = get_latest_windows_login_event(username)
+    unlock_event = get_latest_windows_unlock_event(username)
     logout_event = get_latest_windows_logout_event(username)
     login_timestamp = login_event.get("event_timestamp") if login_event else get_login_timestamp()
     session_info = {
@@ -450,6 +456,9 @@ def get_current_session_info() -> Dict[str, Any]:
         "latest_logout_timestamp": logout_event.get("event_timestamp") if logout_event else None,
         "latest_logout_event_id": logout_event.get("event_id") if logout_event else None,
         "latest_logout_event_record_id": logout_event.get("event_record_id") if logout_event else None,
+        "latest_unlock_timestamp": unlock_event.get("event_timestamp") if unlock_event else None,
+        "latest_unlock_event_id": unlock_event.get("event_id") if unlock_event else None,
+        "latest_unlock_event_record_id": unlock_event.get("event_record_id") if unlock_event else None,
         "device_status": get_device_status(),
         "collection_timestamp": get_login_timestamp(),
     }
