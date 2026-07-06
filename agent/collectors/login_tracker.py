@@ -234,6 +234,49 @@ def _current_boot_token() -> str:
         return datetime.now(timezone.utc).strftime("%Y%m%d")
 
 
+def _current_boot_time() -> Optional[datetime]:
+    try:
+        import psutil
+
+        return datetime.fromtimestamp(psutil.boot_time(), timezone.utc)
+    except Exception as exc:
+        logger.warning("Could not read psutil.boot_time for stale session cleanup: %s", exc)
+        return None
+
+
+def close_stale_sessions_from_previous_boot(hostname: Optional[str] = None) -> int:
+    boot_time = _current_boot_time()
+    if boot_time is None:
+        return 0
+
+    sessions = load_sessions()
+    closed = 0
+    for session in sessions:
+        if session.get("event_type") != "LOGIN" or session.get("active") is False:
+            continue
+        if hostname and session.get("hostname") != hostname:
+            continue
+        session_start = _parse_iso_timestamp(session.get("login_timestamp") or session.get("recorded_at"))
+        if not session_start or session_start >= boot_time:
+            continue
+        session["logout_timestamp"] = boot_time.isoformat()
+        session["session_duration"] = _format_duration(session.get("login_timestamp"), boot_time.isoformat())
+        session["active"] = False
+        session["device_status"] = None
+        session["last_seen"] = boot_time.isoformat()
+        closed += 1
+
+    if closed:
+        save_sessions(sessions)
+        logger.info(
+            "Closed stale active sessions from previous boot: hostname=%s boot_time=%s count=%s",
+            hostname or "*",
+            boot_time.isoformat(),
+            closed,
+        )
+    return closed
+
+
 def _observed_session_record_id(session_info: Dict[str, Any]) -> str:
     return (
         f"session-observed:{session_info.get('hostname') or socket.gethostname()}:"
