@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { authFetch, configureApiClient } from "../lib/api";
 
-export type AuthRole = "Admin" | "IT Admin" | "Viewer";
+export type AuthRole = "SUPER_ADMIN" | "COMPANY_ADMIN" | "Super Admin" | "Admin" | "IT Admin" | "Viewer";
 
 export interface AuthUser {
   id: number;
@@ -9,6 +9,7 @@ export interface AuthUser {
   username: string;
   displayName: string;
   role: AuthRole;
+  companyId?: number | null;
   externalProvider?: string;
 }
 
