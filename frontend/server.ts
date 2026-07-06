@@ -255,6 +255,33 @@ async function startServer() {
     return res.status(result.status).json(result.data);
   });
 
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    const result = await fetchFromBackend("auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify(req.body || {}),
+    });
+    if (!result) return res.status(503).json({ error: "Password recovery backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
+  app.post("/api/auth/verify-reset-code", async (req, res) => {
+    const result = await fetchFromBackend("auth/verify-reset-code", {
+      method: "POST",
+      body: JSON.stringify(req.body || {}),
+    });
+    if (!result) return res.status(503).json({ error: "Password recovery backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
+  app.post("/api/auth/reset-password", async (req, res) => {
+    const result = await fetchFromBackend("auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify(req.body || {}),
+    });
+    if (!result) return res.status(503).json({ error: "Password recovery backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
   app.post("/api/early-access", async (req, res) => {
     const result = await fetchFromBackend("early-access", {
       method: "POST",
@@ -270,6 +297,76 @@ async function startServer() {
       body: JSON.stringify(req.body || {}),
     });
     if (!result) return res.status(503).json({ error: "Registration backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
+  app.get("/api/support/tickets", async (req, res) => {
+    const result = await fetchFromBackend("support/tickets", { headers: authHeaders(req) });
+    if (!result) return res.status(503).json({ error: "Support backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
+  app.post("/api/support/tickets", async (req, res) => {
+    const result = await fetchFromBackend("support/tickets", {
+      method: "POST",
+      headers: authHeaders(req),
+      body: JSON.stringify(req.body || {}),
+    });
+    if (!result) return res.status(503).json({ error: "Support backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
+  app.patch("/api/support/tickets/:id", async (req, res) => {
+    const result = await fetchFromBackend(`support/tickets/${encodeURIComponent(req.params.id)}`, {
+      method: "PATCH",
+      headers: authHeaders(req),
+      body: JSON.stringify(req.body || {}),
+    });
+    if (!result) return res.status(503).json({ error: "Support backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
+  app.post("/api/support/email", async (req, res) => {
+    const result = await fetchFromBackend("support/email", {
+      method: "POST",
+      headers: authHeaders(req),
+      body: JSON.stringify(req.body || {}),
+    });
+    if (!result) return res.status(503).json({ error: "Support backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
+  app.get("/api/super-admin/overview", async (req, res) => {
+    const result = await fetchFromBackend("super-admin/overview", { headers: authHeaders(req) });
+    if (!result) return res.status(503).json({ error: "Super admin backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
+  app.get("/api/super-admin/companies", async (req, res) => {
+    const result = await fetchFromBackend("super-admin/companies", { headers: authHeaders(req) });
+    if (!result) return res.status(503).json({ error: "Super admin backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
+  app.get("/api/super-admin/company/:id", async (req, res) => {
+    const result = await fetchFromBackend(`super-admin/company/${encodeURIComponent(req.params.id)}`, { headers: authHeaders(req) });
+    if (!result) return res.status(503).json({ error: "Super admin backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
+  app.patch("/api/super-admin/company/:id", async (req, res) => {
+    const result = await fetchFromBackend(`super-admin/company/${encodeURIComponent(req.params.id)}`, {
+      method: "PATCH",
+      headers: authHeaders(req),
+      body: JSON.stringify(req.body || {}),
+    });
+    if (!result) return res.status(503).json({ error: "Super admin backend unavailable" });
+    return res.status(result.status).json(result.data);
+  });
+
+  app.get("/api/super-admin/tickets", async (req, res) => {
+    const result = await fetchFromBackend("super-admin/tickets", { headers: authHeaders(req) });
+    if (!result) return res.status(503).json({ error: "Super admin backend unavailable" });
     return res.status(result.status).json(result.data);
   });
 
