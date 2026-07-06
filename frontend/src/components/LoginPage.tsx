@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { 
   Shield, 
   Mail, 
@@ -8,14 +8,21 @@ import {
   LogIn, 
   Smartphone, 
   HelpCircle, 
-  AlertTriangle 
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  Loader2,
+  LockKeyhole,
+  RotateCw,
+  X
 } from "lucide-react";
 import { SentinelLogo } from "./SentinelLogo";
 import { useAuth } from "../auth/AuthContext";
+import { authFetch } from "../lib/api";
 
 interface LoginPageProps {
-  onNavigate: (view: "landing" | "login" | "admin-signup" | "dashboard" | "demo") => void;
-  onLoginSuccess: (email: string) => void;
+  onNavigate: (view: "landing" | "login" | "admin-signup" | "dashboard" | "super-admin" | "demo") => void;
+  onLoginSuccess: (role?: string) => void;
 }
 
 export default function LoginPage({ onNavigate, onLoginSuccess }: LoginPageProps) {
@@ -26,6 +33,7 @@ export default function LoginPage({ onNavigate, onLoginSuccess }: LoginPageProps
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [forgotOpen, setForgotOpen] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,7 +44,7 @@ export default function LoginPage({ onNavigate, onLoginSuccess }: LoginPageProps
       const user = await login(email.trim(), password);
       setIsSuccess(true);
       setTimeout(() => {
-        onLoginSuccess(user.email || user.username);
+        onLoginSuccess(user.role);
       }, 900);
     } catch (error) {
       setErrorMsg(error instanceof Error ? error.message : "ACCESS DENIED: Invalid command identity or security key token.");
@@ -115,13 +123,13 @@ export default function LoginPage({ onNavigate, onLoginSuccess }: LoginPageProps
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-bold uppercase tracking-wider text-[#bbc9cf] flex items-center gap-1.5 font-mono" htmlFor="email">
                 <Shield className="w-3.5 h-3.5 text-[#bbc9cf]" />
-                Corporate Username
+                Corporate Username or Email
               </label>
               <input 
                 className="input-cyber w-full rounded-lg px-4 py-3 text-xs font-mono text-[#dae3ee] bg-[#0D1117] border border-white/10 focus:border-[#00d1ff] focus:ring-1 focus:ring-[#00d1ff] placeholder:text-[#3c494e] outline-none transition-all" 
                 id="email" 
                 name="email" 
-                placeholder="Sentinelcommand" 
+                placeholder="admin@company.com or sentinelcommand"
                 required 
                 type="text"
                 value={email}
@@ -139,10 +147,17 @@ export default function LoginPage({ onNavigate, onLoginSuccess }: LoginPageProps
                 </label>
                 <button 
                   type="button"
-                  onClick={() => alert("SUPPORT ENCRYPTION: Please check key credentials database folder or contact your cybersecurity supervisor.")}
+                  onClick={() => {
+                    if (!email.trim()) {
+                      setErrorMsg("Enter your registered corporate username or email first, then use Forgot Password.");
+                      return;
+                    }
+                    setErrorMsg("");
+                    setForgotOpen(true);
+                  }}
                   className="text-[10px] font-semibold text-[#00d1ff] hover:text-[#a4e6ff] transition-colors font-mono"
                 >
-                  Forgot key?
+                  Forgot Password?
                 </button>
               </div>
               <div className="relative">
@@ -232,6 +247,358 @@ export default function LoginPage({ onNavigate, onLoginSuccess }: LoginPageProps
         </div>
 
       </main>
+      {forgotOpen && <ForgotPasswordModal accountIdentifier={email.trim()} onClose={() => setForgotOpen(false)} />}
     </div>
   );
+}
+
+type ResetStep = "email" | "verify" | "password" | "success";
+
+const resetPasswordChecks = (password: string) => [
+  { label: "8 characters", valid: password.length >= 8 },
+  { label: "Uppercase", valid: /[A-Z]/.test(password) },
+  { label: "Lowercase", valid: /[a-z]/.test(password) },
+  { label: "Number", valid: /\d/.test(password) },
+  { label: "Symbol", valid: /[^A-Za-z0-9]/.test(password) },
+];
+
+function ForgotPasswordModal({ accountIdentifier, onClose }: { accountIdentifier: string; onClose: () => void }) {
+  const [step, setStep] = useState<ResetStep>("email");
+  const [identifier] = useState(accountIdentifier.trim());
+  const [otpDigits, setOtpDigits] = useState(["", "", "", ""]);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [isBusy, setIsBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [resendSeconds, setResendSeconds] = useState(0);
+  const otpRefs = useRef<Array<HTMLInputElement | null>>([]);
+
+  const otp = otpDigits.join("");
+  const checks = useMemo(() => resetPasswordChecks(newPassword), [newPassword]);
+  const passwordValid = checks.every((check) => check.valid);
+  const strength = checks.filter((check) => check.valid).length;
+
+  useEffect(() => {
+    if (resendSeconds <= 0) return;
+    const timer = window.setTimeout(() => setResendSeconds((value) => Math.max(0, value - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [resendSeconds]);
+
+  const sendCode = async () => {
+    const normalizedIdentifier = identifier.trim();
+    if (!normalizedIdentifier) {
+      setError("Enter your registered account on the login form first.");
+      return;
+    }
+    setIsBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await authFetch("/api/auth/forgot-password", {
+        method: "POST",
+        body: JSON.stringify({ identifier: normalizedIdentifier }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      setMessage(payload.message || "If account exists, verification code has been sent.");
+      setOtpDigits(["", "", "", ""]);
+      setStep("verify");
+      setResendSeconds(60);
+      window.setTimeout(() => otpRefs.current[0]?.focus(), 80);
+    } catch {
+      setError("Unable to reach password recovery service.");
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const verifyCode = async () => {
+    if (otp.length !== 4) {
+      setError("Enter the 4 digit verification code.");
+      return;
+    }
+    setIsBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await authFetch("/api/auth/verify-reset-code", {
+        method: "POST",
+        body: JSON.stringify({ identifier, otp }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.reset_allowed) {
+        setError(payload.error || "Invalid or expired verification code.");
+        return;
+      }
+      setStep("password");
+      setMessage("Verification complete. Create a new password.");
+    } catch {
+      setError("Unable to verify code right now.");
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const updatePassword = async () => {
+    if (!passwordValid) {
+      setError("New password does not meet strength requirements.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError("Passwords must match.");
+      return;
+    }
+    setIsBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await authFetch("/api/auth/reset-password", {
+        method: "POST",
+        body: JSON.stringify({ identifier, otp, new_password: newPassword }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(payload.error || "Password reset failed.");
+        return;
+      }
+      setStep("success");
+      setMessage("Password updated successfully.");
+    } catch {
+      setError("Unable to update password right now.");
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleOtpChange = (index: number, value: string) => {
+    const digit = value.replace(/\D/g, "").slice(-1);
+    setOtpDigits((current) => {
+      const next = [...current];
+      next[index] = digit;
+      return next;
+    });
+    if (digit && index < 3) otpRefs.current[index + 1]?.focus();
+  };
+
+  const handleOtpKeyDown = (index: number, event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Backspace" && !otpDigits[index] && index > 0) {
+      otpRefs.current[index - 1]?.focus();
+    }
+    if (event.key === "Enter") {
+      verifyCode();
+    }
+  };
+
+  const handleOtpPaste = (event: React.ClipboardEvent<HTMLInputElement>) => {
+    const pasted = event.clipboardData.getData("text").replace(/\D/g, "").slice(0, 4);
+    if (pasted.length < 2) return;
+    event.preventDefault();
+    const next = ["", "", "", ""];
+    pasted.split("").forEach((digit, index) => {
+      next[index] = digit;
+    });
+    setOtpDigits(next);
+    otpRefs.current[Math.min(pasted.length, 4) - 1]?.focus();
+  };
+
+  const title = step === "email" ? "Reset Password" : step === "verify" ? "Verify Your Email" : step === "password" ? "Create New Password" : "Password Updated";
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/70 px-4 py-6 backdrop-blur-sm">
+      <section className="relative w-full max-w-[520px] rounded-xl border border-[#00d1ff]/25 bg-[#111821]/95 shadow-[0_24px_90px_rgba(0,0,0,0.55)] animate-[fadeIn_180ms_ease-out]">
+        <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-5">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-lg border border-[#00d1ff]/30 bg-[#00d1ff]/10 text-[#a4e6ff]">
+              {step === "success" ? <CheckCircle2 className="h-5 w-5 text-emerald-300" /> : <LockKeyhole className="h-5 w-5" />}
+            </div>
+            <div>
+              <p className="text-[10px] font-mono uppercase tracking-[0.24em] text-[#00d1ff]">Account Recovery</p>
+              <h2 className="mt-1 text-xl font-black text-white">{title}</h2>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-white/10 p-2 text-[#8fa3ad] transition-colors hover:border-white/20 hover:text-white"
+            aria-label="Close password reset"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 px-5 pt-5">
+          {["Email", "Code", "Password"].map((item, index) => (
+            <div key={item} className={`h-1.5 rounded-full ${index <= stepIndex(step) ? "bg-[#00d1ff]" : "bg-white/10"}`} />
+          ))}
+        </div>
+
+        <div className="px-5 py-5">
+          {message && (
+            <div className="mb-4 rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-4 py-3 text-xs text-emerald-200">
+              {message}
+            </div>
+          )}
+          {error && (
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-400/35 bg-red-500/10 px-4 py-3 text-xs text-red-200">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {error}
+            </div>
+          )}
+
+          {step === "email" && (
+            <div className="grid gap-5">
+              <p className="text-sm leading-6 text-[#bbc9cf]">
+                The verification code will be sent to the registered email linked with this account.
+              </p>
+              <div className="grid gap-2">
+                <span className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[#bbc9cf] font-mono">
+                  <Mail className="h-3.5 w-3.5" />
+                  Account From Login
+                </span>
+                <div className="rounded-lg border border-[#00d1ff]/20 bg-[#00d1ff]/10 px-4 py-3 font-mono text-sm text-[#a4e6ff]">
+                  {identifier}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={sendCode}
+                disabled={isBusy}
+                className="cyber-button inline-flex items-center justify-center gap-2 rounded-lg bg-[#00d1ff] px-4 py-3 text-sm font-black uppercase tracking-wider text-[#003543] disabled:opacity-60"
+              >
+                {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                Send Code
+              </button>
+            </div>
+          )}
+
+          {step === "verify" && (
+            <div className="grid gap-5">
+              <p className="text-sm leading-6 text-[#bbc9cf]">
+                Enter 4 digit verification code sent to:
+                <span className="block pt-1 font-mono text-[#a4e6ff]">{identifier}</span>
+              </p>
+              <div className="flex justify-center gap-3">
+                {otpDigits.map((digit, index) => (
+                  <input
+                    key={index}
+                    ref={(node) => {
+                      otpRefs.current[index] = node;
+                    }}
+                    value={digit}
+                    onChange={(event) => handleOtpChange(index, event.target.value)}
+                    onKeyDown={(event) => handleOtpKeyDown(index, event)}
+                    onPaste={handleOtpPaste}
+                    inputMode="numeric"
+                    maxLength={1}
+                    className="h-14 w-14 rounded-lg border border-white/10 bg-[#0D1117] text-center font-mono text-2xl font-black text-white outline-none transition-all focus:border-[#00d1ff] focus:ring-2 focus:ring-[#00d1ff]/20"
+                  />
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={verifyCode}
+                disabled={isBusy || otp.length !== 4}
+                className="cyber-button inline-flex items-center justify-center gap-2 rounded-lg bg-[#00d1ff] px-4 py-3 text-sm font-black uppercase tracking-wider text-[#003543] disabled:opacity-60"
+              >
+                {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                Verify Code
+              </button>
+              <button
+                type="button"
+                onClick={sendCode}
+                disabled={isBusy || resendSeconds > 0}
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-xs font-bold uppercase tracking-wider text-[#bbc9cf] transition-colors hover:border-[#00d1ff]/30 hover:text-[#00d1ff] disabled:opacity-45"
+              >
+                <RotateCw className="h-4 w-4" />
+                {resendSeconds > 0 ? `Resend in ${resendSeconds}s` : "Resend OTP"}
+              </button>
+            </div>
+          )}
+
+          {step === "password" && (
+            <div className="grid gap-5">
+              <label className="grid gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-[#bbc9cf] font-mono">New Password</span>
+                <div className="relative">
+                  <input
+                    className="input-cyber w-full rounded-lg border border-white/10 bg-[#0D1117] px-4 py-3 pr-10 text-sm text-[#dae3ee] outline-none transition-all focus:border-[#00d1ff] focus:ring-1 focus:ring-[#00d1ff]"
+                    type={showNewPassword ? "text" : "password"}
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword((value) => !value)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#bbc9cf] hover:text-[#00d1ff]"
+                  >
+                    {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </label>
+              <label className="grid gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-[#bbc9cf] font-mono">Confirm Password</span>
+                <input
+                  className="input-cyber w-full rounded-lg border border-white/10 bg-[#0D1117] px-4 py-3 text-sm text-[#dae3ee] outline-none transition-all focus:border-[#00d1ff] focus:ring-1 focus:ring-[#00d1ff]"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  autoComplete="new-password"
+                />
+              </label>
+              <div className="rounded-lg border border-white/10 bg-[#0D1117] p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-widest text-[#a4e6ff]">Password strength</span>
+                  <span className="text-xs font-mono text-[#00d1ff]">{strength <= 2 ? "Weak" : strength <= 4 ? "Medium" : "Strong"}</span>
+                </div>
+                <div className="grid gap-2">
+                  {checks.map((check) => (
+                    <div key={check.label} className={`flex items-center gap-2 text-xs ${check.valid ? "text-emerald-300" : "text-[#8fa3ad]"}`}>
+                      <span className={`flex h-5 w-5 items-center justify-center rounded-full border ${check.valid ? "border-emerald-400/40 bg-emerald-400/10" : "border-white/10"}`}>
+                        {check.valid ? <Check className="h-3.5 w-3.5" /> : null}
+                      </span>
+                      {check.label}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={updatePassword}
+                disabled={isBusy}
+                className="cyber-button inline-flex items-center justify-center gap-2 rounded-lg bg-[#00d1ff] px-4 py-3 text-sm font-black uppercase tracking-wider text-[#003543] disabled:opacity-60"
+              >
+                {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockKeyhole className="h-4 w-4" />}
+                Update Password
+              </button>
+            </div>
+          )}
+
+          {step === "success" && (
+            <div className="grid gap-5 text-center">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-emerald-400/40 bg-emerald-400/10">
+                <CheckCircle2 className="h-9 w-9 text-emerald-300" />
+              </div>
+              <p className="text-lg font-black text-white">Password updated successfully</p>
+              <p className="text-sm leading-6 text-[#bbc9cf]">Your old sessions have been revoked. Sign in again with your new password.</p>
+              <button
+                type="button"
+                onClick={onClose}
+                className="cyber-button inline-flex items-center justify-center gap-2 rounded-lg bg-[#00d1ff] px-4 py-3 text-sm font-black uppercase tracking-wider text-[#003543]"
+              >
+                Return to Login
+              </button>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function stepIndex(step: ResetStep) {
+  if (step === "email") return 0;
+  if (step === "verify") return 1;
+  return 2;
 }
