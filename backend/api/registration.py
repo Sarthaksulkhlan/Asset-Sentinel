@@ -5,9 +5,9 @@ from typing import Any, Dict, Optional, Tuple
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
-from auth import ROLE_ADMIN, hash_password
+from auth import ROLE_COMPANY_ADMIN, hash_password
 from database import get_db_session
-from models import AdminUser, EarlyAccessRequest, User
+from models import AdminUser, Company, EarlyAccessRequest, User
 from notifications import get_last_email_error, send_alert_email
 
 
@@ -210,8 +210,27 @@ def register_admin(payload: Dict[str, Any], request) -> Tuple[Dict[str, Any], in
                 field = "username" if existing_user else "workEmail"
                 return _error("Username or email is already registered.", field, 409)
 
+            company = session.execute(
+                select(Company)
+                .where(func.lower(Company.name) == values["companyName"].lower())
+                .limit(1)
+            ).scalar_one_or_none()
+            if not company:
+                company = Company(
+                    name=values["companyName"],
+                    website=company_website or None,
+                    industry=values["industry"],
+                    company_size=values["companySize"],
+                    country=values["country"],
+                    plan="Trial",
+                    status="Active",
+                )
+                session.add(company)
+                session.flush()
+
             session.add(
                 AdminUser(
+                    company_id=company.id,
                     company_name=values["companyName"],
                     company_website=company_website or None,
                     industry=values["industry"],
@@ -236,7 +255,8 @@ def register_admin(payload: Dict[str, Any], request) -> Tuple[Dict[str, Any], in
                     email=email,
                     display_name=values["fullName"],
                     password_hash=password_hash,
-                    role=ROLE_ADMIN,
+                    role=ROLE_COMPANY_ADMIN,
+                    company_id=company.id,
                     is_active=True,
                     external_provider="local",
                     external_subject=username,
