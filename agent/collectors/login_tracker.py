@@ -441,14 +441,13 @@ def _record_lockapp_unlocks_from_history(
             unlock_timestamp,
             record_id,
         )
-        latest_recorded = record_session_state_event(
-            current_session,
-            "UNLOCK",
-            unlock_timestamp,
-            "windows_unlock_observed",
-            "LOCKAPP_UNLOCK",
-            record_id,
-        )
+        latest_recorded = record_login({
+            **current_session,
+            "login_timestamp": unlock_timestamp,
+            "login_source": "windows_unlock_observed",
+            "windows_event_id": "LOCKAPP_UNLOCK",
+            "windows_event_record_id": record_id,
+        })
         lock_event = None
         _pending_lockapp_event = None
 
