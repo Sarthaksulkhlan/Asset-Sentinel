@@ -508,6 +508,11 @@ def close_active_sessions(
     force_close = bool(current_session.get("force_close_active_sessions"))
     logout_event_record_id = current_session.get("latest_logout_event_record_id")
     logout_event_id = current_session.get("latest_logout_event_id") or "4634"
+    logout_source = "windows_logoff"
+    if logout_event_id == "4800":
+        logout_source = "windows_lock"
+    elif logout_event_id == "4779":
+        logout_source = "windows_session_disconnect"
     logout_records: List[Dict[str, Any]] = []
 
     for session in sessions:
@@ -539,7 +544,7 @@ def close_active_sessions(
             "active": False,
             "device_status": None,
             "last_seen": logout_timestamp,
-            "login_source": "windows_logoff",
+            "login_source": logout_source,
             "windows_event_id": logout_event_id,
             "windows_event_record_id": logout_event_record_id,
             "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -614,28 +619,48 @@ def detect_login() -> Optional[Dict[str, Any]]:
 
     unlock_event_record_id = current_session.get("latest_unlock_event_record_id")
     if unlock_event_record_id and not has_session_event_signature(current_session.get("hostname"), unlock_event_record_id):
-        record_session_state_event(
-            current_session,
-            "UNLOCK",
-            current_session.get("latest_unlock_timestamp") or datetime.now(timezone.utc).isoformat(),
-            "windows_unlock" if current_session.get("latest_unlock_event_id") == "4801" else "windows_session_reconnect",
-            current_session.get("latest_unlock_event_id") or "4801",
+        unlock_session = {
+            **current_session,
+            "login_timestamp": current_session.get("latest_unlock_timestamp") or datetime.now(timezone.utc).isoformat(),
+            "login_source": "windows_unlock" if current_session.get("latest_unlock_event_id") == "4801" else "windows_session_reconnect",
+            "windows_event_id": current_session.get("latest_unlock_event_id") or "4801",
+            "windows_event_record_id": unlock_event_record_id,
+        }
+        logger.info(
+            "Windows unlock detected as new current session: host=%s user=%s event_id=%s record_id=%s",
+            unlock_session.get("hostname"),
+            unlock_session.get("username"),
+            unlock_session.get("windows_event_id"),
             unlock_event_record_id,
         )
+        return record_login(unlock_session)
 
     if (
         logout_event_record_id
         and current_session.get("latest_logout_event_id") in {"4800", "4779"}
         and not has_session_event_signature(current_session.get("hostname"), logout_event_record_id)
     ):
-        record_session_state_event(
-            current_session,
-            "LOCK",
-            logout_timestamp,
-            "windows_lock" if current_session.get("latest_logout_event_id") == "4800" else "windows_session_disconnect",
-            current_session.get("latest_logout_event_id") or "4800",
+        lock_session = {
+            **current_session,
+            "force_close_active_sessions": True,
+            "latest_logout_timestamp": logout_timestamp,
+            "latest_logout_event_id": current_session.get("latest_logout_event_id") or "4800",
+            "latest_logout_event_record_id": logout_event_record_id,
+        }
+        sessions = load_sessions()
+        before_count = len(sessions)
+        updated_sessions = close_active_sessions(sessions, lock_session, logout_timestamp)
+        if len(updated_sessions) != before_count or any(
+            session.get("active") is False and session.get("logout_timestamp") == logout_timestamp
+            for session in updated_sessions
+        ):
+            save_sessions(updated_sessions)
+        logger.info(
+            "Windows lock event %s record %s closed current session",
+            current_session.get("latest_logout_event_id"),
             logout_event_record_id,
         )
+        return None
     elif logout_event_record_id and not has_session_event_signature(current_session.get("hostname"), logout_event_record_id):
         sessions = load_sessions()
         before_count = len(sessions)
@@ -745,7 +770,13 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
         )
         return {}
     session_info = {**session_info, "force_close_active_sessions": True}
-    close_timestamp = session_info.get("latest_logout_timestamp") or now
+    login_time = _parse_iso_timestamp(session_info.get("login_timestamp"))
+    latest_logout_time = _parse_iso_timestamp(session_info.get("latest_logout_timestamp"))
+    close_timestamp = (
+        session_info.get("latest_logout_timestamp")
+        if latest_logout_time and (login_time is None or latest_logout_time <= login_time)
+        else now
+    )
     sessions = close_active_sessions(sessions, session_info, close_timestamp)
 
     # Create login record
