@@ -23,6 +23,7 @@ class Asset(Base):
     __tablename__ = "assets"
 
     id = Column(BigInteger, primary_key=True)
+    company_id = Column(BigInteger, ForeignKey("companies.id", ondelete="SET NULL"))
     device_uid = Column(String(255), nullable=False)
     hostname = Column(String(255), nullable=False)
     ip_address = Column(INET)
@@ -57,6 +58,7 @@ class Asset(Base):
         CheckConstraint("status IN ('Online', 'Idle', 'Offline', 'Overload')", name="chk_assets_status"),
         UniqueConstraint("device_uid", name="uq_assets_device_uid"),
         UniqueConstraint("hostname", "collected_at", name="uq_assets_hostname_collected_at"),
+        Index("idx_assets_company_id", "company_id"),
         Index("idx_assets_device_uid", "device_uid"),
         Index("idx_assets_hostname_collected_at", "hostname", collected_at.desc()),
         Index("idx_assets_last_seen", last_seen.desc()),
@@ -72,6 +74,7 @@ class SessionRecord(Base):
     __tablename__ = "sessions"
 
     id = Column(BigInteger, primary_key=True)
+    company_id = Column(BigInteger, ForeignKey("companies.id", ondelete="SET NULL"))
     event_type = Column(String(20), nullable=False)
     username = Column(String(255))
     hostname = Column(String(255), nullable=False)
@@ -103,6 +106,7 @@ class SessionRecord(Base):
             "recorded_at",
             name="uq_sessions_event_identity",
         ),
+        Index("idx_sessions_company_id", "company_id"),
         Index("idx_sessions_hostname_recorded_at", "hostname", recorded_at.desc()),
         Index("idx_sessions_username_recorded_at", "username", recorded_at.desc()),
         Index("idx_sessions_active", "active"),
@@ -116,6 +120,7 @@ class Alert(Base):
     __tablename__ = "alerts"
 
     id = Column(BigInteger, primary_key=True)
+    company_id = Column(BigInteger, ForeignKey("companies.id", ondelete="SET NULL"))
     alert_type = Column(String(100), nullable=False)
     hostname = Column(String(255), nullable=False)
     severity = Column(String(20), nullable=False)
@@ -130,6 +135,7 @@ class Alert(Base):
     __table_args__ = (
         CheckConstraint("severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')", name="chk_alerts_severity"),
         UniqueConstraint("alert_type", "hostname", "severity", "timestamp", name="uq_alerts_event_identity"),
+        Index("idx_alerts_company_id", "company_id"),
         Index("idx_alerts_hostname_timestamp", "hostname", timestamp.desc()),
         Index("idx_alerts_severity_timestamp", "severity", timestamp.desc()),
         Index("idx_alerts_alert_type", "alert_type"),
@@ -142,6 +148,7 @@ class ActiveApplication(Base):
     __tablename__ = "active_applications"
 
     id = Column(BigInteger, primary_key=True)
+    company_id = Column(BigInteger, ForeignKey("companies.id", ondelete="SET NULL"))
     hostname = Column(String(255), nullable=False)
     username = Column(String(255))
     application_name = Column(String(512))
@@ -159,6 +166,7 @@ class ActiveApplication(Base):
             "timestamp",
             name="uq_active_applications_signature",
         ),
+        Index("idx_active_applications_company_id", "company_id"),
         Index("idx_active_applications_hostname_timestamp", "hostname", timestamp.desc()),
         Index("idx_active_applications_username_timestamp", "username", timestamp.desc()),
         Index("idx_active_applications_timestamp", timestamp.desc()),
@@ -169,6 +177,7 @@ class ActiveApplicationHistory(Base):
     __tablename__ = "active_application_history"
 
     id = Column(BigInteger, primary_key=True)
+    company_id = Column(BigInteger, ForeignKey("companies.id", ondelete="SET NULL"))
     hostname = Column(String(255), nullable=False)
     username = Column(String(255))
     application = Column(String(512))
@@ -178,6 +187,7 @@ class ActiveApplicationHistory(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (
+        Index("idx_active_application_history_company_id", "company_id"),
         Index("idx_active_application_history_hostname_timestamp", "hostname", timestamp.desc()),
         Index("idx_active_application_history_username_timestamp", "username", timestamp.desc()),
     )
@@ -187,6 +197,7 @@ class ApplicationUsageSegment(Base):
     __tablename__ = "application_usage_segments"
 
     id = Column(BigInteger, primary_key=True)
+    company_id = Column(BigInteger, ForeignKey("companies.id", ondelete="SET NULL"))
     device_id = Column(String(255), nullable=False)
     hostname = Column(String(255), nullable=False)
     username = Column(String(255))
@@ -202,6 +213,7 @@ class ApplicationUsageSegment(Base):
 
     __table_args__ = (
         UniqueConstraint("device_id", "application_name", "start_time", "end_time", name="uq_application_usage_segments_identity"),
+        Index("idx_application_usage_segments_company_id", "company_id"),
         Index("idx_application_usage_segments_device_date", "device_id", "date"),
         Index("idx_application_usage_segments_hostname_start", "hostname", start_time.desc()),
         Index("idx_application_usage_segments_application", "application_name"),
@@ -212,6 +224,7 @@ class ApplicationUsageDaily(Base):
     __tablename__ = "application_usage_daily"
 
     id = Column(BigInteger, primary_key=True)
+    company_id = Column(BigInteger, ForeignKey("companies.id", ondelete="SET NULL"))
     date = Column(DateTime(timezone=True), nullable=False)
     hostname = Column(String(255), nullable=False)
     username = Column(String(255))
@@ -228,6 +241,7 @@ class ApplicationUsageDaily(Base):
 
     __table_args__ = (
         UniqueConstraint("date", "hostname", "username", "application_name", "window_title", name="uq_application_usage_daily_app"),
+        Index("idx_application_usage_daily_company_id", "company_id"),
         Index("idx_application_usage_daily_host_date", "hostname", "date"),
         Index("idx_application_usage_daily_app", "application_name"),
     )
@@ -237,6 +251,7 @@ class ActivitySession(Base):
     __tablename__ = "activity_sessions"
 
     id = Column(BigInteger, primary_key=True)
+    company_id = Column(BigInteger, ForeignKey("companies.id", ondelete="SET NULL"))
     hostname = Column(String(255), nullable=False)
     username = Column(String(255))
     app_name = Column(String(512), nullable=False)
@@ -254,6 +269,7 @@ class ActivitySession(Base):
 
     __table_args__ = (
         CheckConstraint("last_state IN ('ACTIVE', 'IDLE', 'LOCKED')", name="chk_activity_sessions_last_state"),
+        Index("idx_activity_sessions_company_id", "company_id"),
         Index("idx_activity_sessions_host_created_date", "hostname", "created_date"),
         Index("idx_activity_sessions_host_end", "hostname", end_time.desc()),
         Index("idx_activity_sessions_app", "app_name"),
@@ -264,6 +280,7 @@ class HardwareChange(Base):
     __tablename__ = "hardware_changes"
 
     id = Column(BigInteger, primary_key=True)
+    company_id = Column(BigInteger, ForeignKey("companies.id", ondelete="SET NULL"))
     hostname = Column(String(255), nullable=False)
     change_type = Column(String(50), nullable=False)
     severity = Column(String(20), nullable=False)
@@ -291,9 +308,32 @@ class HardwareChange(Base):
             "current_asset_id",
             name="uq_hardware_changes_snapshot_pair",
         ),
+        Index("idx_hardware_changes_company_id", "company_id"),
         Index("idx_hardware_changes_hostname_detected_at", "hostname", detected_at.desc()),
         Index("idx_hardware_changes_type_detected_at", "change_type", detected_at.desc()),
         Index("idx_hardware_changes_alert_id", "alert_id"),
+    )
+
+
+class Company(Base):
+    __tablename__ = "companies"
+
+    id = Column(BigInteger, primary_key=True)
+    name = Column(String(255), nullable=False)
+    website = Column(String(512))
+    industry = Column(String(120))
+    company_size = Column(String(80))
+    country = Column(String(120))
+    plan = Column(String(80), nullable=False, default="Trial", server_default="Trial")
+    status = Column(String(30), nullable=False, default="Active", server_default="Active")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_companies_name"),
+        CheckConstraint("status IN ('Active', 'Suspended')", name="chk_companies_status"),
+        Index("idx_companies_status", "status"),
+        Index("idx_companies_created_at", created_at.desc()),
     )
 
 
@@ -306,6 +346,7 @@ class User(Base):
     password_hash = Column(Text)
     display_name = Column(String(255))
     role = Column(String(50), nullable=False, default="Admin")
+    company_id = Column(BigInteger, ForeignKey("companies.id", ondelete="SET NULL"))
     is_active = Column(Boolean, nullable=False, default=True)
     external_provider = Column(String(100))
     external_subject = Column(String(255))
@@ -317,8 +358,9 @@ class User(Base):
         UniqueConstraint("email", name="uq_users_email"),
         UniqueConstraint("username", name="uq_users_username"),
         UniqueConstraint("external_provider", "external_subject", name="uq_users_external_identity"),
-        CheckConstraint("role IN ('Super Admin', 'Admin', 'IT Admin', 'Viewer')", name="chk_users_role"),
+        CheckConstraint("role IN ('SUPER_ADMIN', 'COMPANY_ADMIN', 'Super Admin', 'Admin', 'IT Admin', 'Viewer')", name="chk_users_role"),
         Index("idx_users_role", "role"),
+        Index("idx_users_company_id", "company_id"),
         Index("idx_users_is_active", "is_active"),
         Index("idx_users_external_identity", "external_provider", "external_subject"),
     )
@@ -345,10 +387,33 @@ class RefreshToken(Base):
     )
 
 
+class PasswordResetOtp(Base):
+    __tablename__ = "password_reset_otps"
+
+    id = Column(BigInteger, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    otp_hash = Column(String(128), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    verified = Column(Boolean, nullable=False, default=False)
+    used = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    verified_at = Column(DateTime(timezone=True))
+    used_at = Column(DateTime(timezone=True))
+
+    user = relationship("User")
+
+    __table_args__ = (
+        Index("idx_password_reset_otps_user_created", "user_id", created_at.desc()),
+        Index("idx_password_reset_otps_expires_at", expires_at),
+    )
+
+
 class AdminUser(Base):
     __tablename__ = "admin_users"
 
     id = Column(BigInteger, primary_key=True)
+    company_id = Column(BigInteger, ForeignKey("companies.id", ondelete="SET NULL"))
     company_name = Column(String(255), nullable=False)
     company_website = Column(String(512))
     industry = Column(String(120), nullable=False)
@@ -370,8 +435,44 @@ class AdminUser(Base):
     __table_args__ = (
         UniqueConstraint("work_email", name="uq_admin_users_work_email"),
         UniqueConstraint("username", name="uq_admin_users_username"),
+        Index("idx_admin_users_company_id", "company_id"),
         Index("idx_admin_users_company_name", "company_name"),
         Index("idx_admin_users_created_at", created_at.desc()),
+    )
+
+
+class SupportTicket(Base):
+    __tablename__ = "support_tickets"
+
+    id = Column(BigInteger, primary_key=True)
+    ticket_number = Column(String(40), nullable=False)
+    company_id = Column(BigInteger, ForeignKey("companies.id", ondelete="SET NULL"))
+    created_by_user_id = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"))
+    title = Column(String(255), nullable=False)
+    category = Column(String(120), nullable=False)
+    priority = Column(String(20), nullable=False, default="MEDIUM")
+    description = Column(Text, nullable=False)
+    related_device = Column(String(255))
+    status = Column(String(30), nullable=False, default="OPEN")
+    admin_response = Column(Text)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    resolved_at = Column(DateTime(timezone=True))
+
+    company = relationship("Company")
+    created_by = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("ticket_number", name="uq_support_tickets_ticket_number"),
+        CheckConstraint(
+            "category IN ('Agent Issue', 'Device Offline', 'Login Tracking Issue', 'Application Monitoring Issue', 'Performance Issue', 'Account Issue', 'Other')",
+            name="chk_support_tickets_category",
+        ),
+        CheckConstraint("priority IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')", name="chk_support_tickets_priority"),
+        CheckConstraint("status IN ('OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED')", name="chk_support_tickets_status"),
+        Index("idx_support_tickets_company_id", "company_id"),
+        Index("idx_support_tickets_status", "status"),
+        Index("idx_support_tickets_created_at", created_at.desc()),
     )
 
 
