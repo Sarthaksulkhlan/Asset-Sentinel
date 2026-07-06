@@ -3,14 +3,16 @@ import LandingPage from "./components/LandingPage";
 import LoginPage from "./components/LoginPage";
 import AdminSignupPage from "./components/AdminSignupPage";
 import DashboardPage from "./components/DashboardPage";
+import SuperAdminDashboard from "./components/SuperAdminDashboard";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 
-type ViewState = "landing" | "login" | "admin-signup" | "dashboard" | "demo";
+type ViewState = "landing" | "login" | "admin-signup" | "dashboard" | "super-admin" | "demo";
 
 const routeForView = (view: ViewState) => {
   if (view === "login") return "/login";
   if (view === "admin-signup") return "/admin-signup";
   if (view === "dashboard") return "/dashboard";
+  if (view === "super-admin") return "/super-admin";
   if (view === "demo") return "/demo";
   return "/";
 };
@@ -19,6 +21,7 @@ const viewForPath = (path: string): ViewState => {
   if (path === "/login") return "login";
   if (path === "/admin-signup") return "admin-signup";
   if (path === "/dashboard") return "dashboard";
+  if (path === "/super-admin") return "super-admin";
   if (path === "/demo") return "demo";
   return "landing";
 };
@@ -44,13 +47,16 @@ function AppShell() {
 
   useEffect(() => {
     if (isAuthLoading) return;
-    if (view === "dashboard" && !isAuthenticated) {
+    if ((view === "dashboard" || view === "super-admin") && !isAuthenticated) {
       navigate("login", true);
     }
-  }, [isAuthenticated, isAuthLoading, navigate, view]);
+    if (view === "super-admin" && isAuthenticated && user?.role !== "SUPER_ADMIN") {
+      navigate("dashboard", true);
+    }
+  }, [isAuthenticated, isAuthLoading, navigate, user?.role, view]);
 
-  const handleLoginSuccess = () => {
-    navigate("dashboard", true);
+  const handleLoginSuccess = (role?: string) => {
+    navigate(role === "SUPER_ADMIN" ? "super-admin" : "dashboard", true);
   };
 
   const handleSignOut = async () => {
@@ -99,6 +105,25 @@ function AppShell() {
             onNavigate={(targetView) => navigate(targetView)}
           />
         );
+      case "super-admin":
+        if (!isAuthenticated) {
+          return (
+            <LoginPage
+              onNavigate={(targetView) => navigate(targetView)}
+              onLoginSuccess={handleLoginSuccess}
+            />
+          );
+        }
+        if (user?.role !== "SUPER_ADMIN") {
+          return (
+            <DashboardPage
+              userEmail={user?.email || user?.username || "Authenticated User"}
+              onSignOut={handleSignOut}
+              onNavigate={(targetView) => navigate(targetView)}
+            />
+          );
+        }
+        return <SuperAdminDashboard onSignOut={handleSignOut} />;
       case "demo":
         return (
           <DashboardPage 
