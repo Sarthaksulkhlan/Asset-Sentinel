@@ -464,10 +464,13 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
         logger.info("Dashboard login summary for hostname=%s: no login_history records", hostname)
         return {"logins_today": 0, "logins_this_week": 0, "total_logins": 0}
 
-    login_rows = [row for row in rows if _is_countable_login(row)]
+    countable_login_rows = [row for row in rows if _is_countable_login(row)]
+    login_rows = _dedup_countable_login_rows(countable_login_rows)
     latest = rows[-1]
-    latest_login = login_rows[-1] if login_rows else latest
-    active_login = next((row for row in reversed(login_rows) if row.active), latest_login)
+    latest_login = countable_login_rows[-1] if countable_login_rows else latest
+    current_open_login = _current_open_login(rows)
+    active_login = current_open_login or next((row for row in reversed(login_rows) if row.active), None)
+    current_login = active_login or latest_login
     today = datetime.now(_local_tzinfo()).date()
     week_start = today - timedelta(days=today.weekday())
     logins_today = 0
@@ -479,11 +482,12 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
         stamp = row.login_timestamp or row.recorded_at
         stamp_date = _local_date(stamp) if stamp else None
         if _is_countable_login(row):
+            last_successful_login = stamp
+        if row in login_rows:
             if stamp_date == today:
                 logins_today += 1
             if stamp_date and stamp_date >= week_start:
                 logins_this_week += 1
-            last_successful_login = stamp
         if row.event_type == "LOGOUT":
             last_logout = row.logout_timestamp or row.recorded_at
         details = getattr(row, "details", None) or {}
@@ -491,21 +495,25 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
             last_failed_login = _parse_datetime(details.get("failed_login_timestamp"))
 
     summary = {
-        "current_user": active_login.username or latest_login.username,
-        "username": active_login.username or latest_login.username,
-        "session_id": active_login.session_id or latest_login.session_id,
-        "login_timestamp": _iso(active_login.login_timestamp or active_login.recorded_at),
-        "last_login": _iso(active_login.login_timestamp or active_login.recorded_at),
-        "current_login_time": _iso(active_login.login_timestamp or active_login.recorded_at),
+        "current_user": current_login.username or latest_login.username,
+        "username": current_login.username or latest_login.username,
+        "session_id": current_login.session_id or latest_login.session_id,
+        "login_timestamp": _iso(current_login.login_timestamp or current_login.recorded_at),
+        "last_login": _iso(current_login.login_timestamp or current_login.recorded_at),
+        "current_login_time": _iso(current_login.login_timestamp or current_login.recorded_at),
         "logout_timestamp": _iso(last_logout or latest.logout_timestamp),
         "last_logout": _iso(last_logout or latest.logout_timestamp),
-        "session_duration": active_login.session_duration if active_login.session_duration and active_login.session_duration != "Active" else _duration(active_login.login_timestamp or active_login.recorded_at),
+        "session_duration": (
+            _duration(active_login.login_timestamp or active_login.recorded_at)
+            if active_login
+            else (latest_login.session_duration or "Ended")
+        ),
         "total_logins": len(login_rows),
         "logins_today": logins_today,
         "logins_this_week": logins_this_week,
         "last_successful_login": _iso(last_successful_login),
         "last_failed_login": _iso(last_failed_login),
-        "active_session": active_login.active,
+        "active_session": bool(current_open_login or (active_login and active_login.active)),
     }
     logger.info(
         "Dashboard login summary for hostname=%s: total=%s today=%s week=%s last_success=%s",
@@ -545,6 +553,53 @@ def _is_countable_login(row: SessionRecord) -> bool:
     if str(row.windows_event_id or "") in REAL_LOGIN_EVENT_IDS:
         return True
     return False
+
+
+def _is_lock_or_logout(row: SessionRecord) -> bool:
+    if row.event_type == "LOGOUT":
+        return True
+    source = row.login_source or ""
+    event_id = str(row.windows_event_id or "")
+    return source in NON_COUNTABLE_LOGIN_SOURCES or event_id in {"4800", "4779", "LOCKAPP_LOCK"}
+
+
+def _current_open_login(rows: Iterable[SessionRecord]) -> Optional[SessionRecord]:
+    ordered_rows = sorted(
+        list(rows),
+        key=lambda row: (
+            _parse_datetime(row.recorded_at) or _parse_datetime(row.login_timestamp) or datetime.min.replace(tzinfo=timezone.utc),
+            row.id or 0,
+        ),
+    )
+    for row in reversed(ordered_rows):
+        if _is_lock_or_logout(row):
+            return None
+        if _is_countable_login(row) and not row.logout_timestamp:
+            return row
+    return None
+
+
+def _dedup_countable_login_rows(rows: Iterable[SessionRecord], window_seconds: int = 120) -> List[SessionRecord]:
+    deduped: List[SessionRecord] = []
+    last_by_identity: Dict[tuple, datetime] = {}
+    for row in sorted(
+        list(rows),
+        key=lambda item: (
+            _parse_datetime(item.login_timestamp or item.recorded_at) or datetime.min.replace(tzinfo=timezone.utc),
+            item.id or 0,
+        ),
+    ):
+        stamp = _parse_datetime(row.login_timestamp or row.recorded_at)
+        if not stamp:
+            continue
+        identity = (row.hostname, row.username, row.session_id)
+        previous = last_by_identity.get(identity)
+        if previous and abs((stamp - previous).total_seconds()) <= window_seconds:
+            last_by_identity[identity] = stamp
+            continue
+        deduped.append(row)
+        last_by_identity[identity] = stamp
+    return deduped
 
 
 def _activity_summary(session, hostname: str) -> Dict[str, Any]:
