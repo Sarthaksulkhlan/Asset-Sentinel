@@ -313,16 +313,19 @@ def serialize_active_application_history(row: ActiveApplicationHistory) -> Dict[
     }
 
 
-def list_assets() -> List[Dict[str, Any]]:
+def list_assets(company_id: Optional[int] = None) -> List[Dict[str, Any]]:
     with get_db_session() as session:
         merge_duplicate_assets(session)
-        rows = session.execute(select(Asset).order_by(Asset.hostname.asc())).scalars().all()
+        query = select(Asset).order_by(Asset.hostname.asc())
+        if company_id is not None:
+            query = query.where(Asset.company_id == company_id)
+        rows = session.execute(query).scalars().all()
         assets = []
         for row in rows:
             asset = serialize_asset(row)
-            asset.update(_session_summary(session, row.hostname))
-            asset.update(_alert_summary(session, row.hostname))
-            asset.update(_activity_summary(session, row.hostname))
+            asset.update(_session_summary(session, row.hostname, company_id))
+            asset.update(_alert_summary(session, row.hostname, company_id))
+            asset.update(_activity_summary(session, row.hostname, company_id))
             assets.append(asset)
         logger.info(
             "Dashboard assets query returned %s assets: online=%s offline=%s",
@@ -417,9 +420,12 @@ def _legacy_build_asset(record: Dict[str, Any]) -> Asset:
     )
 
 
-def list_alerts() -> List[Dict[str, Any]]:
+def list_alerts(company_id: Optional[int] = None) -> List[Dict[str, Any]]:
     with get_db_session() as session:
-        rows = session.execute(select(Alert).order_by(Alert.timestamp.asc(), Alert.id.asc())).scalars().all()
+        query = select(Alert).order_by(Alert.timestamp.asc(), Alert.id.asc())
+        if company_id is not None:
+            query = query.where(Alert.company_id == company_id)
+        rows = session.execute(query).scalars().all()
         return [serialize_alert(row) for row in rows]
 
 
@@ -454,12 +460,11 @@ def list_sessions() -> List[Dict[str, Any]]:
         return [serialize_session(row) for row in rows]
 
 
-def _session_summary(session, hostname: str) -> Dict[str, Any]:
-    rows = session.execute(
-        select(SessionRecord)
-        .where(SessionRecord.hostname == hostname)
-        .order_by(SessionRecord.recorded_at.asc(), SessionRecord.id.asc())
-    ).scalars().all()
+def _session_summary(session, hostname: str, company_id: Optional[int] = None) -> Dict[str, Any]:
+    query = select(SessionRecord).where(SessionRecord.hostname == hostname)
+    if company_id is not None:
+        query = query.where(SessionRecord.company_id == company_id)
+    rows = session.execute(query.order_by(SessionRecord.recorded_at.asc(), SessionRecord.id.asc())).scalars().all()
     if not rows:
         logger.info("Dashboard login summary for hostname=%s: no login_history records", hostname)
         return {"logins_today": 0, "logins_this_week": 0, "total_logins": 0}
@@ -526,10 +531,11 @@ def _session_summary(session, hostname: str) -> Dict[str, Any]:
     return summary
 
 
-def _alert_summary(session, hostname: str) -> Dict[str, Any]:
-    rows = session.execute(
-        select(Alert).where(Alert.hostname == hostname).order_by(Alert.timestamp.desc()).limit(20)
-    ).scalars().all()
+def _alert_summary(session, hostname: str, company_id: Optional[int] = None) -> Dict[str, Any]:
+    query = select(Alert).where(Alert.hostname == hostname)
+    if company_id is not None:
+        query = query.where(Alert.company_id == company_id)
+    rows = session.execute(query.order_by(Alert.timestamp.desc()).limit(20)).scalars().all()
     severity_rank = {"CRITICAL": 3, "HIGH": 2, "MEDIUM": 1, "LOW": 0}
     highest = max((row.severity for row in rows), key=lambda sev: severity_rank.get(sev, 0), default=None)
     alert_status = "critical" if highest == "CRITICAL" else "warning" if highest in {"HIGH", "MEDIUM"} else "nominal"
@@ -602,13 +608,11 @@ def _dedup_countable_login_rows(rows: Iterable[SessionRecord], window_seconds: i
     return deduped
 
 
-def _activity_summary(session, hostname: str) -> Dict[str, Any]:
-    history = session.execute(
-        select(ActiveApplicationHistory)
-        .where(ActiveApplicationHistory.hostname == hostname)
-        .order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc())
-        .limit(10)
-    ).scalars().all()
+def _activity_summary(session, hostname: str, company_id: Optional[int] = None) -> Dict[str, Any]:
+    query = select(ActiveApplicationHistory).where(ActiveApplicationHistory.hostname == hostname)
+    if company_id is not None:
+        query = query.where(ActiveApplicationHistory.company_id == company_id)
+    history = session.execute(query.order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc()).limit(10)).scalars().all()
     latest = history[0] if history else None
     if not latest:
         return {"application_history": []}
@@ -794,13 +798,16 @@ def _build_session_record(record: Dict[str, Any]) -> SessionRecord:
     )
 
 
-def list_active_applications_history() -> List[Dict[str, Any]]:
+def list_active_applications_history(company_id: Optional[int] = None) -> List[Dict[str, Any]]:
     with get_db_session() as session:
-        rows = session.execute(
+        query = (
             select(ActiveApplicationHistory)
             .order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc())
             .limit(500)
-        ).scalars().all()
+        )
+        if company_id is not None:
+            query = query.where(ActiveApplicationHistory.company_id == company_id)
+        rows = session.execute(query).scalars().all()
         return [serialize_active_application_history(row) for row in rows]
 
 
@@ -1192,8 +1199,8 @@ def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any 
         )
 
 
-def get_latest_active_applications() -> List[Dict[str, Any]]:
-    history = list_active_applications_history()
+def get_latest_active_applications(company_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    history = list_active_applications_history(company_id)
     latest_by_host: Dict[str, Dict[str, Any]] = {}
     for record in history:
         hostname = record.get("hostname")
@@ -1712,7 +1719,7 @@ def _application_usage_analytics(
     }
 
 
-def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
+def get_asset_details(hostname: str, company_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
     if not hostname:
         return None
 
@@ -1720,72 +1727,48 @@ def get_asset_details(hostname: str) -> Optional[Dict[str, Any]]:
         asset_row = _find_asset_by_public_identifier(session, hostname)
         if asset_row is None:
             return None
+        if company_id is not None and asset_row.company_id != company_id:
+            return None
 
         asset = serialize_asset(asset_row)
         hostname = asset_row.hostname
-        sessions = session.execute(
-            select(SessionRecord)
-            .where(SessionRecord.hostname == hostname)
-            .order_by(SessionRecord.recorded_at.desc(), SessionRecord.id.desc())
-            .limit(100)
-        ).scalars().all()
-        sessions_for_usage = session.execute(
-            select(SessionRecord)
-            .where(SessionRecord.hostname == hostname)
-            .order_by(SessionRecord.recorded_at.desc(), SessionRecord.id.desc())
-            .limit(2000)
-        ).scalars().all()
-        alerts = session.execute(
-            select(Alert)
-            .where(Alert.hostname == hostname)
-            .order_by(Alert.timestamp.desc(), Alert.id.desc())
-            .limit(100)
-        ).scalars().all()
-        app_history = session.execute(
-            select(ActiveApplicationHistory)
-            .where(ActiveApplicationHistory.hostname == hostname)
-            .order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc())
-            .limit(100)
-        ).scalars().all()
-        app_history_for_usage = session.execute(
-            select(ActiveApplicationHistory)
-            .where(ActiveApplicationHistory.hostname == hostname)
-            .order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc())
-            .limit(2000)
-        ).scalars().all()
-        usage_segments = session.execute(
-            select(ApplicationUsageSegment)
-            .where(ApplicationUsageSegment.hostname == hostname)
-            .order_by(ApplicationUsageSegment.start_time.desc(), ApplicationUsageSegment.id.desc())
-            .limit(5000)
-        ).scalars().all()
-        daily_usage = session.execute(
-            select(ApplicationUsageDaily)
-            .where(ApplicationUsageDaily.hostname == hostname)
-            .order_by(ApplicationUsageDaily.date.desc(), ApplicationUsageDaily.last_seen.desc(), ApplicationUsageDaily.id.desc())
-            .limit(1000)
-        ).scalars().all()
-        activity_session_rows = session.execute(
-            select(ActivitySession)
-            .where(ActivitySession.hostname == hostname)
-            .order_by(ActivitySession.created_date.desc(), ActivitySession.end_time.desc(), ActivitySession.id.desc())
-            .limit(5000)
-        ).scalars().all()
-        hardware_changes = session.execute(
-            select(HardwareChange)
-            .where(HardwareChange.hostname == hostname)
-            .order_by(HardwareChange.detected_at.desc(), HardwareChange.id.desc())
-            .limit(100)
-        ).scalars().all()
-        asset_samples = session.execute(
-            select(Asset)
-            .where(Asset.id == asset_row.id)
-        ).scalars().all()
+        sessions_query = select(SessionRecord).where(SessionRecord.hostname == hostname)
+        sessions_usage_query = select(SessionRecord).where(SessionRecord.hostname == hostname)
+        alerts_query = select(Alert).where(Alert.hostname == hostname)
+        app_history_query = select(ActiveApplicationHistory).where(ActiveApplicationHistory.hostname == hostname)
+        app_history_usage_query = select(ActiveApplicationHistory).where(ActiveApplicationHistory.hostname == hostname)
+        usage_segments_query = select(ApplicationUsageSegment).where(ApplicationUsageSegment.hostname == hostname)
+        daily_usage_query = select(ApplicationUsageDaily).where(ApplicationUsageDaily.hostname == hostname)
+        activity_sessions_query = select(ActivitySession).where(ActivitySession.hostname == hostname)
+        hardware_changes_query = select(HardwareChange).where(HardwareChange.hostname == hostname)
+        asset_samples_query = select(Asset).where(Asset.id == asset_row.id)
+        if company_id is not None:
+            sessions_query = sessions_query.where(SessionRecord.company_id == company_id)
+            sessions_usage_query = sessions_usage_query.where(SessionRecord.company_id == company_id)
+            alerts_query = alerts_query.where(Alert.company_id == company_id)
+            app_history_query = app_history_query.where(ActiveApplicationHistory.company_id == company_id)
+            app_history_usage_query = app_history_usage_query.where(ActiveApplicationHistory.company_id == company_id)
+            usage_segments_query = usage_segments_query.where(ApplicationUsageSegment.company_id == company_id)
+            daily_usage_query = daily_usage_query.where(ApplicationUsageDaily.company_id == company_id)
+            activity_sessions_query = activity_sessions_query.where(ActivitySession.company_id == company_id)
+            hardware_changes_query = hardware_changes_query.where(HardwareChange.company_id == company_id)
+            asset_samples_query = asset_samples_query.where(Asset.company_id == company_id)
 
-        summary = _session_summary(session, hostname)
+        sessions = session.execute(sessions_query.order_by(SessionRecord.recorded_at.desc(), SessionRecord.id.desc()).limit(100)).scalars().all()
+        sessions_for_usage = session.execute(sessions_usage_query.order_by(SessionRecord.recorded_at.desc(), SessionRecord.id.desc()).limit(2000)).scalars().all()
+        alerts = session.execute(alerts_query.order_by(Alert.timestamp.desc(), Alert.id.desc()).limit(100)).scalars().all()
+        app_history = session.execute(app_history_query.order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc()).limit(100)).scalars().all()
+        app_history_for_usage = session.execute(app_history_usage_query.order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc()).limit(2000)).scalars().all()
+        usage_segments = session.execute(usage_segments_query.order_by(ApplicationUsageSegment.start_time.desc(), ApplicationUsageSegment.id.desc()).limit(5000)).scalars().all()
+        daily_usage = session.execute(daily_usage_query.order_by(ApplicationUsageDaily.date.desc(), ApplicationUsageDaily.last_seen.desc(), ApplicationUsageDaily.id.desc()).limit(1000)).scalars().all()
+        activity_session_rows = session.execute(activity_sessions_query.order_by(ActivitySession.created_date.desc(), ActivitySession.end_time.desc(), ActivitySession.id.desc()).limit(5000)).scalars().all()
+        hardware_changes = session.execute(hardware_changes_query.order_by(HardwareChange.detected_at.desc(), HardwareChange.id.desc()).limit(100)).scalars().all()
+        asset_samples = session.execute(asset_samples_query).scalars().all()
+
+        summary = _session_summary(session, hostname, company_id)
         asset.update(summary)
-        asset.update(_alert_summary(session, hostname))
-        asset.update(_activity_summary(session, hostname))
+        asset.update(_alert_summary(session, hostname, company_id))
+        asset.update(_activity_summary(session, hostname, company_id))
 
         timeline: List[Dict[str, Any]] = []
         ordered_sessions = sorted(sessions, key=lambda row: (row.recorded_at, row.id), reverse=True)
