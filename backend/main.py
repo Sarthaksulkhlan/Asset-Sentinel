@@ -29,14 +29,21 @@ from startup_health import device_health_response, run_startup_checks, startup_h
 from registration import register_admin, submit_early_access
 from telemetry_bootstrap import bootstrap_local_telemetry
 from auth import (
+    ROLE_SUPER_ADMIN,
     authenticate_local,
     bootstrap_admin_user,
     ensure_auth_schema,
     refresh_access_token,
     require_auth,
     revoke_refresh_token,
+    request_password_reset_otp,
+    reset_password_with_otp,
     serialize_user,
+    normalize_role,
+    verify_password_reset_otp,
 )
+from support import create_support_ticket, list_support_tickets, send_support_message, update_support_ticket
+from super_admin import all_support_tickets, company_detail, list_companies, super_admin_overview, update_company_status
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -63,6 +70,12 @@ def add_live_api_cache_headers(response):
 # Helper functions
 # ---------------------------------------------------------------------------
 
+def _request_company_scope():
+    user = getattr(g, "current_user", None)
+    if not user or normalize_role(user.role) == ROLE_SUPER_ADMIN:
+        return None
+    return getattr(user, "company_id", None)
+
 # ---------------------------------------------------------------------------
 # API endpoints
 # ---------------------------------------------------------------------------
@@ -74,7 +87,7 @@ def get_assets():
     GET /api/assets
     Returns all hardware snapshots from PostgreSQL.
     """
-    return jsonify(list_assets())
+    return jsonify(list_assets(_request_company_scope()))
 
 
 @app.route("/api/assets/<path:hostname>/details", methods=["GET"])
@@ -85,7 +98,7 @@ def get_asset_detail(hostname):
     Returns a single asset with PostgreSQL-backed sessions, alerts,
     application timeline, hardware changes, device timeline, and chart data.
     """
-    detail = get_asset_details(hostname)
+    detail = get_asset_details(hostname, _request_company_scope())
     if detail is None:
         return jsonify({"error": "Asset not found"}), 404
     return jsonify(detail)
@@ -104,7 +117,7 @@ def get_alerts():
     GET /api/alerts
     Returns all alert records from PostgreSQL.
     """
-    return jsonify(list_alerts())
+    return jsonify(list_alerts(_request_company_scope()))
 
 
 @app.route("/api/active-applications", methods=["GET"])
@@ -114,7 +127,7 @@ def get_active_applications():
     GET /api/active-applications
     Returns the latest active Windows application seen for each monitored host.
     """
-    return jsonify(get_latest_active_applications())
+    return jsonify(get_latest_active_applications(_request_company_scope()))
 
 
 @app.route("/api/debug/startup-health", methods=["GET"])
@@ -170,6 +183,33 @@ def auth_refresh():
     return jsonify(refreshed)
 
 
+@app.route("/api/auth/forgot-password", methods=["POST"])
+def auth_forgot_password():
+    payload = request.get_json(silent=True) or {}
+    return jsonify(request_password_reset_otp(payload.get("identifier") or payload.get("email") or ""))
+
+
+@app.route("/api/auth/verify-reset-code", methods=["POST"])
+def auth_verify_reset_code():
+    payload = request.get_json(silent=True) or {}
+    data, status_code = verify_password_reset_otp(
+        payload.get("identifier") or payload.get("email") or "",
+        payload.get("otp") or "",
+    )
+    return jsonify(data), status_code
+
+
+@app.route("/api/auth/reset-password", methods=["POST"])
+def auth_reset_password():
+    payload = request.get_json(silent=True) or {}
+    data, status_code = reset_password_with_otp(
+        payload.get("identifier") or payload.get("email") or "",
+        payload.get("otp") or "",
+        payload.get("new_password") or "",
+    )
+    return jsonify(data), status_code
+
+
 @app.route("/api/auth/logout", methods=["POST"])
 def auth_logout():
     payload = request.get_json(silent=True) or {}
@@ -183,6 +223,70 @@ def auth_logout():
 @require_auth()
 def auth_me():
     return jsonify({"user": serialize_user(g.current_user)})
+
+
+@app.route("/api/support/tickets", methods=["GET"])
+@require_auth()
+def support_tickets_list():
+    data, status_code = list_support_tickets()
+    return jsonify(data), status_code
+
+
+@app.route("/api/support/tickets", methods=["POST"])
+@require_auth()
+def support_tickets_create():
+    payload = request.get_json(silent=True) or {}
+    data, status_code = create_support_ticket(payload)
+    return jsonify(data), status_code
+
+
+@app.route("/api/support/tickets/<int:ticket_id>", methods=["PATCH"])
+@require_auth({ROLE_SUPER_ADMIN})
+def support_tickets_update(ticket_id: int):
+    payload = request.get_json(silent=True) or {}
+    data, status_code = update_support_ticket(ticket_id, payload)
+    return jsonify(data), status_code
+
+
+@app.route("/api/support/email", methods=["POST"])
+@require_auth()
+def support_email():
+    payload = request.get_json(silent=True) or {}
+    data, status_code = send_support_message(payload)
+    return jsonify(data), status_code
+
+
+@app.route("/api/super-admin/overview", methods=["GET"])
+@require_auth({ROLE_SUPER_ADMIN})
+def super_admin_overview_endpoint():
+    return jsonify(super_admin_overview())
+
+
+@app.route("/api/super-admin/companies", methods=["GET"])
+@require_auth({ROLE_SUPER_ADMIN})
+def super_admin_companies_endpoint():
+    return jsonify(list_companies())
+
+
+@app.route("/api/super-admin/company/<int:company_id>", methods=["GET"])
+@require_auth({ROLE_SUPER_ADMIN})
+def super_admin_company_detail_endpoint(company_id: int):
+    data, status_code = company_detail(company_id)
+    return jsonify(data), status_code
+
+
+@app.route("/api/super-admin/company/<int:company_id>", methods=["PATCH"])
+@require_auth({ROLE_SUPER_ADMIN})
+def super_admin_company_update_endpoint(company_id: int):
+    payload = request.get_json(silent=True) or {}
+    data, status_code = update_company_status(company_id, payload.get("status") or "")
+    return jsonify(data), status_code
+
+
+@app.route("/api/super-admin/tickets", methods=["GET"])
+@require_auth({ROLE_SUPER_ADMIN})
+def super_admin_tickets_endpoint():
+    return jsonify(all_support_tickets())
 
 
 # ============================================================================
