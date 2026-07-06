@@ -57,7 +57,7 @@ def _build_email_body(subject: str, fields: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def send_alert_email(subject: str, fields: Dict[str, Any]) -> bool:
+def _send_email(to_email: str, subject: str, body: str) -> bool:
     _set_last_email_error("")
     Config.reload_local_env()
     missing = [
@@ -65,7 +65,6 @@ def send_alert_email(subject: str, fields: Dict[str, Any]) -> bool:
             "SMTP_HOST": Config.SMTP_HOST,
             "SMTP_USERNAME": Config.SMTP_USERNAME,
             "SMTP_PASSWORD": Config.SMTP_PASSWORD,
-            "ALERT_EMAIL": Config.ALERT_EMAIL,
         }.items()
         if not value
     ]
@@ -82,8 +81,8 @@ def send_alert_email(subject: str, fields: Dict[str, Any]) -> bool:
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = Config.SMTP_FROM_EMAIL or Config.SMTP_USERNAME
-    message["To"] = Config.ALERT_EMAIL
-    message.set_content(_build_email_body(subject, fields))
+    message["To"] = to_email
+    message.set_content(body)
 
     try:
         smtp_cls = smtplib.SMTP_SSL if Config.SMTP_USE_SSL else smtplib.SMTP
@@ -94,7 +93,7 @@ def send_alert_email(subject: str, fields: Dict[str, Any]) -> bool:
                 smtp.ehlo()
             smtp.login(Config.SMTP_USERNAME, Config.SMTP_PASSWORD)
             smtp.send_message(message)
-        logger.info("Email notification sent to %s with subject %s", Config.ALERT_EMAIL, subject)
+        logger.info("Email notification sent to %s with subject %s", to_email, subject)
         return True
     except smtplib.SMTPAuthenticationError as exc:
         _set_last_email_error(f"SMTP authentication failed for {Config.SMTP_USERNAME} via {Config.SMTP_HOST}:{Config.SMTP_PORT}: {exc}")
@@ -108,3 +107,45 @@ def send_alert_email(subject: str, fields: Dict[str, Any]) -> bool:
         _set_last_email_error(f"Unexpected email failure via {Config.SMTP_HOST}:{Config.SMTP_PORT}: {exc}")
         logger.exception("Email notification failed unexpectedly for subject %s via %s:%s: %s", subject, Config.SMTP_HOST, Config.SMTP_PORT, exc)
         return False
+
+
+def send_alert_email(subject: str, fields: Dict[str, Any]) -> bool:
+    Config.reload_local_env()
+    if not Config.ALERT_EMAIL:
+        _set_last_email_error(
+            "missing environment variable(s): ALERT_EMAIL. Configure ALERT_EMAIL in .env."
+        )
+        logger.error("Email notification skipped: %s", get_last_email_error())
+        return False
+    return _send_email(Config.ALERT_EMAIL, subject, _build_email_body(subject, fields))
+
+
+def send_password_reset_otp_email(to_email: str, otp: str) -> bool:
+    body = "\n".join([
+        "Hello,",
+        "",
+        "Your Asset Sentinel password reset verification code is:",
+        "",
+        otp,
+        "",
+        "This code expires in 10 minutes.",
+        "",
+        "If you did not request this, ignore this email.",
+    ])
+    return _send_email(
+        to_email,
+        "Asset Sentinel Password Verification Code",
+        body,
+    )
+
+
+def send_support_email(subject: str, fields: Dict[str, Any]) -> bool:
+    Config.reload_local_env()
+    support_email = Config.SUPPORT_EMAIL or Config.ALERT_EMAIL
+    if not support_email:
+        _set_last_email_error(
+            "missing environment variable(s): SUPPORT_EMAIL or ALERT_EMAIL. Configure support routing in .env."
+        )
+        logger.error("Support email skipped: %s", get_last_email_error())
+        return False
+    return _send_email(support_email, subject, _build_email_body(subject, fields))
