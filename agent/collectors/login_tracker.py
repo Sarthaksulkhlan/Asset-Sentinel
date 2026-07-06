@@ -62,15 +62,15 @@ from storage import (
 COUNTABLE_LOGIN_SOURCES = {
     "windows_interactive_logon",
     "windows_session_observed",
+    "windows_unlock",
+    "windows_unlock_observed",
+    "windows_session_reconnect",
 }
-COUNTABLE_LOGIN_EVENT_IDS = {"4624", "SESSION_OBSERVED"}
+COUNTABLE_LOGIN_EVENT_IDS = {"4624", "4801", "4778", "LOCKAPP_UNLOCK", "SESSION_OBSERVED"}
 SESSION_STATE_SOURCES = {
     "windows_lock",
     "windows_lock_observed",
-    "windows_unlock",
-    "windows_unlock_observed",
     "windows_session_disconnect",
-    "windows_session_reconnect",
 }
 
 # ============================================================================

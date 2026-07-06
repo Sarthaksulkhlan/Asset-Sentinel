@@ -38,8 +38,8 @@ from login_tracker import load_sessions
 from storage import get_asset_status
 
 NON_COUNTABLE_LOGIN_SOURCES = {
-    "windows_session_reconnect",
     "windows_lock",
+    "windows_lock_observed",
     "windows_session_disconnect",
 }
 

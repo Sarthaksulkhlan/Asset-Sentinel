@@ -19,15 +19,15 @@ logger = logging.getLogger("asset_sentinel.storage")
 REAL_LOGIN_SOURCES = {
     "windows_interactive_logon",
     "windows_session_observed",
+    "windows_unlock",
+    "windows_unlock_observed",
+    "windows_session_reconnect",
 }
-REAL_LOGIN_EVENT_IDS = {"4624", "SESSION_OBSERVED"}
+REAL_LOGIN_EVENT_IDS = {"4624", "4801", "4778", "LOCKAPP_UNLOCK", "SESSION_OBSERVED"}
 NON_COUNTABLE_LOGIN_SOURCES = {
     "windows_lock",
     "windows_lock_observed",
     "windows_session_disconnect",
-    "windows_unlock",
-    "windows_unlock_observed",
-    "windows_session_reconnect",
 }
 SESSION_STATE_SOURCES = NON_COUNTABLE_LOGIN_SOURCES | {"windows_logoff", "windows_user_logoff"}
 SESSION_STATE_EVENT_IDS = {"4800", "4801", "4779", "4778", "LOCKAPP_LOCK", "LOCKAPP_UNLOCK"}
