@@ -23,7 +23,7 @@ import ShaderBackground from "./ShaderBackground";
 import { SentinelLogo } from "./SentinelLogo";
 
 interface LandingPageProps {
-  onNavigate: (view: "landing" | "login" | "admin-signup" | "dashboard" | "demo") => void;
+  onNavigate: (view: "landing" | "login" | "admin-signup" | "dashboard" | "super-admin" | "demo") => void;
 }
 
 interface RollingKpiValueProps {
