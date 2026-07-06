@@ -216,6 +216,19 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     CONSTRAINT uq_refresh_tokens_jwt_id UNIQUE (jwt_id)
 );
 
+CREATE TABLE IF NOT EXISTS password_reset_otps (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    otp_hash VARCHAR(128) NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    verified BOOLEAN NOT NULL DEFAULT false,
+    used BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    verified_at TIMESTAMPTZ,
+    used_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS admin_users (
     id BIGSERIAL PRIMARY KEY,
     company_name VARCHAR(255) NOT NULL,
@@ -353,6 +366,11 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id
     ON refresh_tokens (user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at
     ON refresh_tokens (expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_otps_user_created
+    ON password_reset_otps (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_password_reset_otps_expires_at
+    ON password_reset_otps (expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_admin_users_company_name
     ON admin_users (company_name);
