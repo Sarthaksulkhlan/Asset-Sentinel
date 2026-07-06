@@ -570,9 +570,48 @@ def _activity_summary(session, hostname: str) -> Dict[str, Any]:
 
 def replace_sessions(records: Iterable[Dict[str, Any]]) -> None:
     with get_db_session() as session:
-        session.execute(delete(SessionRecord))
         for record in records:
-            session.add(_build_session_record(record))
+            existing = _find_existing_session_record(session, record)
+            if existing is None:
+                session.add(_build_session_record(record))
+                continue
+            existing.logout_timestamp = _parse_datetime(record.get("logout_timestamp"))
+            existing.session_duration = record.get("session_duration")
+            existing.active = bool(record.get("active", False))
+            existing.device_status = record.get("device_status")
+            existing.last_seen = _parse_datetime(record.get("last_seen"))
+            existing.login_source = record.get("login_source")
+            existing.windows_event_id = str(record.get("windows_event_id")) if record.get("windows_event_id") else existing.windows_event_id
+            existing.windows_event_record_id = (
+                str(record.get("windows_event_record_id"))
+                if record.get("windows_event_record_id")
+                else existing.windows_event_record_id
+            )
+
+
+def _find_existing_session_record(session, record: Dict[str, Any]) -> Optional[SessionRecord]:
+    event_record_id = record.get("windows_event_record_id")
+    hostname = record.get("hostname") or "Unknown"
+    if event_record_id:
+        existing = session.execute(
+            select(SessionRecord)
+            .where(SessionRecord.hostname == hostname)
+            .where(SessionRecord.windows_event_record_id == str(event_record_id))
+            .limit(1)
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+    recorded_at = _parse_datetime(record.get("recorded_at"))
+    query = (
+        select(SessionRecord)
+        .where(SessionRecord.event_type == (record.get("event_type") or "LOGIN"))
+        .where(SessionRecord.hostname == hostname)
+        .where(SessionRecord.username == record.get("username"))
+        .where(SessionRecord.session_id == record.get("session_id"))
+    )
+    if recorded_at:
+        query = query.where(SessionRecord.recorded_at == recorded_at)
+    return session.execute(query.limit(1)).scalar_one_or_none()
 
 
 def append_session(record: Dict[str, Any]) -> None:
@@ -638,6 +677,26 @@ def has_session_event_signature(hostname: str, windows_event_record_id: Optional
             .limit(1)
         ).scalar_one_or_none()
         return row is not None
+
+
+def activate_session_event(hostname: str, windows_event_record_id: Optional[str], last_seen: Optional[str] = None) -> bool:
+    if not hostname or not windows_event_record_id:
+        return False
+    seen_at = _parse_datetime(last_seen) or datetime.now(timezone.utc)
+    with get_db_session() as session:
+        row = session.execute(
+            select(SessionRecord)
+            .where(SessionRecord.hostname == hostname)
+            .where(SessionRecord.windows_event_record_id == str(windows_event_record_id))
+            .limit(1)
+        ).scalar_one_or_none()
+        if row is None or not _is_countable_login(row):
+            return False
+        row.active = True
+        row.logout_timestamp = None
+        row.session_duration = "Active"
+        row.last_seen = seen_at
+        return True
 
 
 def touch_active_session(hostname: str, username: Optional[str], session_id: Optional[str]) -> None:
