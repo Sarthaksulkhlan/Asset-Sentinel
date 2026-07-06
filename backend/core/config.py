@@ -72,6 +72,10 @@ class Config:
     BOOTSTRAP_ADMIN_EMAIL = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_EMAIL", "centralcommand@asset-sentinel.local")
     BOOTSTRAP_ADMIN_PASSWORD = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_PASSWORD", "your_admin_password")
     BOOTSTRAP_ADMIN_DISPLAY_NAME = os.environ.get("ASSET_SENTINEL_BOOTSTRAP_ADMIN_DISPLAY_NAME", "Central Command")
+    SUPER_ADMIN_USERNAME = os.environ.get("SUPER_ADMIN_USERNAME", BOOTSTRAP_ADMIN_USERNAME)
+    SUPER_ADMIN_EMAIL = os.environ.get("SUPER_ADMIN_EMAIL", BOOTSTRAP_ADMIN_EMAIL)
+    SUPER_ADMIN_PASSWORD = os.environ.get("SUPER_ADMIN_PASSWORD", BOOTSTRAP_ADMIN_PASSWORD)
+    SUPER_ADMIN_DISPLAY_NAME = os.environ.get("SUPER_ADMIN_DISPLAY_NAME", BOOTSTRAP_ADMIN_DISPLAY_NAME)
     SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
     SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
     SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
@@ -80,6 +84,7 @@ class Config:
     SMTP_USE_SSL = os.environ.get("SMTP_USE_SSL", "").lower() in {"1", "true", "yes"}
     SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
     ALERT_EMAIL = os.environ.get("ALERT_EMAIL", "")
+    SUPPORT_EMAIL = os.environ.get("SUPPORT_EMAIL", ALERT_EMAIL)
 
     @classmethod
     def refresh_from_environment(cls) -> None:
@@ -91,6 +96,11 @@ class Config:
         cls.SMTP_USE_SSL = os.environ.get("SMTP_USE_SSL", "").lower() in {"1", "true", "yes"}
         cls.SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
         cls.ALERT_EMAIL = os.environ.get("ALERT_EMAIL", "")
+        cls.SUPPORT_EMAIL = os.environ.get("SUPPORT_EMAIL", cls.ALERT_EMAIL)
+        cls.SUPER_ADMIN_USERNAME = os.environ.get("SUPER_ADMIN_USERNAME", cls.BOOTSTRAP_ADMIN_USERNAME)
+        cls.SUPER_ADMIN_EMAIL = os.environ.get("SUPER_ADMIN_EMAIL", cls.BOOTSTRAP_ADMIN_EMAIL)
+        cls.SUPER_ADMIN_PASSWORD = os.environ.get("SUPER_ADMIN_PASSWORD", cls.BOOTSTRAP_ADMIN_PASSWORD)
+        cls.SUPER_ADMIN_DISPLAY_NAME = os.environ.get("SUPER_ADMIN_DISPLAY_NAME", cls.BOOTSTRAP_ADMIN_DISPLAY_NAME)
 
     @classmethod
     def reload_local_env(cls) -> None:
