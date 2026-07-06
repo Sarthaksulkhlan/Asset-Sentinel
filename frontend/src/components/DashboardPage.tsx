@@ -53,7 +53,7 @@ import { apiFetch } from "../lib/api";
 interface DashboardPageProps {
   userEmail: string;
   onSignOut: () => void;
-  onNavigate: (view: "landing" | "login" | "admin-signup" | "dashboard" | "demo") => void;
+  onNavigate: (view: "landing" | "login" | "admin-signup" | "dashboard" | "super-admin" | "demo") => void;
   isDemoMode?: boolean;
 }
 
@@ -673,6 +673,18 @@ const ClockTimePicker = React.memo(function ClockTimePicker({
   );
 });
 
+const SUPPORT_CATEGORIES = [
+  "Agent Issue",
+  "Device Offline",
+  "Login Tracking Issue",
+  "Application Monitoring Issue",
+  "Performance Issue",
+  "Account Issue",
+  "Other",
+];
+
+const SUPPORT_PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+
 export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemoMode = false }: DashboardPageProps) {
   // Master fleet list held in state for fully reactive user experiences
   const [assets, setAssets] = useState<Asset[]>(() => isDemoMode ? INITIAL_ASSETS : []);
@@ -695,6 +707,21 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   const [isSupportCenterOpen, setIsSupportCenterOpen] = useState(false);
   const [isRaiseTicketOpen, setIsRaiseTicketOpen] = useState(false);
   const [isEmailSupportOpen, setIsEmailSupportOpen] = useState(false);
+  const [supportMessage, setSupportMessage] = useState("");
+  const [supportError, setSupportError] = useState("");
+  const [supportBusy, setSupportBusy] = useState(false);
+  const [ticketForm, setTicketForm] = useState({
+    title: "",
+    category: "Agent Issue",
+    priority: "MEDIUM",
+    relatedDevice: "",
+    description: "",
+  });
+  const [emailSupportForm, setEmailSupportForm] = useState({
+    subject: "",
+    priority: "MEDIUM",
+    message: "",
+  });
   const persistedDashboardState = useMemo(() => readDashboardState(), []);
   const [searchQuery, setSearchQuery] = useState(() => isDemoMode ? "" : (persistedDashboardState.searchQuery || ""));
   const [currentPage, setCurrentPage] = useState(() => isDemoMode ? 1 : (persistedDashboardState.currentPage || 1));
@@ -1671,6 +1698,55 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
       { timestamp: timeStr, node: "COMMAND-GATE", message: "LOCAL CSV EXPORT TRIGGERED: Generated spreadsheet report covering all node assets.", type: "info" },
       ...prev
     ]);
+  };
+
+  const submitSupportTicket = async () => {
+    setSupportBusy(true);
+    setSupportError("");
+    setSupportMessage("");
+    try {
+      const response = await apiFetch("/api/support/tickets", {
+        method: "POST",
+        body: JSON.stringify({
+          ...ticketForm,
+          relatedDevice: ticketForm.relatedDevice || selectedAsset?.hostname || "",
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setSupportError(payload.error || "Unable to create support ticket.");
+        return;
+      }
+      setSupportMessage(`Ticket ${payload.ticket?.ticketNumber || ""} created successfully.`);
+      setTicketForm({ title: "", category: "Agent Issue", priority: "MEDIUM", relatedDevice: "", description: "" });
+    } catch {
+      setSupportError("Support ticket service is unavailable.");
+    } finally {
+      setSupportBusy(false);
+    }
+  };
+
+  const submitSupportEmail = async () => {
+    setSupportBusy(true);
+    setSupportError("");
+    setSupportMessage("");
+    try {
+      const response = await apiFetch("/api/support/email", {
+        method: "POST",
+        body: JSON.stringify(emailSupportForm),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setSupportError(payload.error || "Unable to send support email.");
+        return;
+      }
+      setSupportMessage(payload.message || "Support email sent.");
+      setEmailSupportForm({ subject: "", priority: "MEDIUM", message: "" });
+    } catch {
+      setSupportError("Support email service is unavailable.");
+    } finally {
+      setSupportBusy(false);
+    }
   };
 
   if (isDemoMode) {
@@ -3533,14 +3609,49 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-emerald-200">Raise Support Ticket</p>
-                  <h3 className="mt-1 text-2xl font-bold text-white">Ticket form coming here.</h3>
+                  <h3 className="mt-1 text-2xl font-bold text-white">Create Technical Ticket</h3>
                 </div>
                 <button onClick={() => setIsRaiseTicketOpen(false)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#2B3752] bg-[#0F1728] text-[#A8B3C7] hover:text-white" aria-label="Close raise ticket">
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <div className="mt-5 rounded-xl border border-dashed border-emerald-300/25 bg-emerald-300/[0.04] p-5 text-sm text-[#CBD5E1]">
-                Fields for category, severity, description, and attachments will be added later.
+              <div className="mt-5 grid gap-3">
+                {supportMessage && <div className="rounded-lg border border-emerald-300/30 bg-emerald-300/10 px-3 py-2 text-sm text-emerald-100">{supportMessage}</div>}
+                {supportError && <div className="rounded-lg border border-red-300/30 bg-red-500/10 px-3 py-2 text-sm text-red-100">{supportError}</div>}
+                <input
+                  value={ticketForm.title}
+                  onChange={(event) => setTicketForm((form) => ({ ...form, title: event.target.value }))}
+                  placeholder="Ticket title"
+                  className="rounded-lg border border-[#2B3752] bg-[#0B1220] px-3 py-3 text-sm text-white outline-none focus:border-emerald-300/60"
+                />
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <select value={ticketForm.category} onChange={(event) => setTicketForm((form) => ({ ...form, category: event.target.value }))} className="rounded-lg border border-[#2B3752] bg-[#0B1220] px-3 py-3 text-sm text-white outline-none focus:border-emerald-300/60">
+                    {SUPPORT_CATEGORIES.map((category) => <option key={category}>{category}</option>)}
+                  </select>
+                  <select value={ticketForm.priority} onChange={(event) => setTicketForm((form) => ({ ...form, priority: event.target.value }))} className="rounded-lg border border-[#2B3752] bg-[#0B1220] px-3 py-3 text-sm text-white outline-none focus:border-emerald-300/60">
+                    {SUPPORT_PRIORITIES.map((priority) => <option key={priority}>{priority}</option>)}
+                  </select>
+                </div>
+                <input
+                  value={ticketForm.relatedDevice}
+                  onChange={(event) => setTicketForm((form) => ({ ...form, relatedDevice: event.target.value }))}
+                  placeholder={selectedAsset?.hostname ? `Related device: ${selectedAsset.hostname}` : "Related device or hostname"}
+                  className="rounded-lg border border-[#2B3752] bg-[#0B1220] px-3 py-3 text-sm text-white outline-none focus:border-emerald-300/60"
+                />
+                <textarea
+                  value={ticketForm.description}
+                  onChange={(event) => setTicketForm((form) => ({ ...form, description: event.target.value }))}
+                  placeholder="Describe the issue, affected device, and expected behavior"
+                  rows={5}
+                  className="resize-none rounded-lg border border-[#2B3752] bg-[#0B1220] px-3 py-3 text-sm text-white outline-none focus:border-emerald-300/60"
+                />
+                <button
+                  onClick={submitSupportTicket}
+                  disabled={supportBusy}
+                  className="rounded-lg bg-emerald-300 px-4 py-3 text-sm font-black uppercase tracking-widest text-[#052016] disabled:opacity-60"
+                >
+                  {supportBusy ? "Creating..." : "Create Ticket"}
+                </button>
               </div>
             </div>
           </div>
@@ -3552,14 +3663,38 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-amber-200">Email Support</p>
-                  <h3 className="mt-1 text-2xl font-bold text-white">Email action placeholder</h3>
+                  <h3 className="mt-1 text-2xl font-bold text-white">Contact Support Team</h3>
                 </div>
                 <button onClick={() => setIsEmailSupportOpen(false)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#2B3752] bg-[#0F1728] text-[#A8B3C7] hover:text-white" aria-label="Close email support">
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <div className="mt-5 rounded-xl border border-dashed border-amber-300/25 bg-amber-300/[0.04] p-5 text-sm text-[#CBD5E1]">
-                Direct email integration will be connected later. This placeholder confirms the workflow.
+              <div className="mt-5 grid gap-3">
+                {supportMessage && <div className="rounded-lg border border-emerald-300/30 bg-emerald-300/10 px-3 py-2 text-sm text-emerald-100">{supportMessage}</div>}
+                {supportError && <div className="rounded-lg border border-red-300/30 bg-red-500/10 px-3 py-2 text-sm text-red-100">{supportError}</div>}
+                <input
+                  value={emailSupportForm.subject}
+                  onChange={(event) => setEmailSupportForm((form) => ({ ...form, subject: event.target.value }))}
+                  placeholder="Subject"
+                  className="rounded-lg border border-[#2B3752] bg-[#0B1220] px-3 py-3 text-sm text-white outline-none focus:border-amber-300/60"
+                />
+                <select value={emailSupportForm.priority} onChange={(event) => setEmailSupportForm((form) => ({ ...form, priority: event.target.value }))} className="rounded-lg border border-[#2B3752] bg-[#0B1220] px-3 py-3 text-sm text-white outline-none focus:border-amber-300/60">
+                  {SUPPORT_PRIORITIES.map((priority) => <option key={priority}>{priority}</option>)}
+                </select>
+                <textarea
+                  value={emailSupportForm.message}
+                  onChange={(event) => setEmailSupportForm((form) => ({ ...form, message: event.target.value }))}
+                  placeholder="Write your support message"
+                  rows={6}
+                  className="resize-none rounded-lg border border-[#2B3752] bg-[#0B1220] px-3 py-3 text-sm text-white outline-none focus:border-amber-300/60"
+                />
+                <button
+                  onClick={submitSupportEmail}
+                  disabled={supportBusy}
+                  className="rounded-lg bg-amber-300 px-4 py-3 text-sm font-black uppercase tracking-widest text-[#2a1700] disabled:opacity-60"
+                >
+                  {supportBusy ? "Sending..." : "Send Email"}
+                </button>
               </div>
             </div>
           </div>
