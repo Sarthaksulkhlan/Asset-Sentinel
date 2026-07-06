@@ -1299,6 +1299,21 @@ def _latest_session_start(sessions: Iterable[SessionRecord]) -> Optional[datetim
     return login_times[-1] if login_times else None
 
 
+def _latest_active_session_start(sessions: Iterable[SessionRecord]) -> Optional[datetime]:
+    session_rows = list(sessions)
+    current_open = _current_open_login(session_rows)
+    if current_open:
+        return _parse_datetime(current_open.login_timestamp or current_open.recorded_at)
+    login_times: List[datetime] = []
+    for row in session_rows:
+        if row.event_type != "LOGIN" or not row.active or not _is_countable_login(row):
+            continue
+        stamp = row.login_timestamp or row.recorded_at
+        if stamp:
+            login_times.append(_parse_required_datetime(stamp))
+    return sorted(login_times)[-1] if login_times else None
+
+
 class LASTINPUTINFO(ctypes.Structure):
     _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
 
@@ -1416,10 +1431,10 @@ def _period_bounds(
     local_now = now.astimezone(Config.DISPLAY_TZINFO)
     today = local_now.date()
     if period == "current_session":
-        fallback_start = _latest_session_start(sessions) or _session_window_for_local_days(
-            [today], sessions, app_history, activity_sessions, asset_last_seen, now
-        )[0]
-        return fallback_start, now
+        active_start = _latest_active_session_start(sessions)
+        if active_start:
+            return active_start, now
+        return now, now
     if period == "yesterday":
         return _session_window_for_local_days([today - timedelta(days=1)], sessions, app_history, activity_sessions, asset_last_seen, now)
     if period == "last_4_days":
