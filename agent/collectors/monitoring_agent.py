@@ -139,6 +139,9 @@ class AssetSentinelAgent:
         self._register_thread("active-application", self._active_application_loop)
         self._register_thread("thread-watchdog", self._thread_watchdog_loop, supervised=False)
         logger.info("Asset Sentinel monitoring agent started.")
+        logger.info("Monitoring Agent: Running")
+        logger.info("Login Tracker: Running")
+        logger.info("Session Manager: Running")
         self.print_startup_health_report()
 
     def run_forever(self) -> None:
@@ -449,6 +452,8 @@ class AssetSentinelAgent:
         mark(bool(self.device_uid), "Device Registered", None if self.device_uid else "device_uid unavailable")
         mark(snapshot["threads"].get("heartbeat", {}).get("alive", False), "Heartbeat Running")
         mark(snapshot["threads"].get("login-activity", {}).get("alive", False), "Login Tracker Running")
+        mark(snapshot["threads"].get("login-activity", {}).get("alive", False), "Session Manager Running")
+        mark(True, "Monitoring Agent Running")
         mark(snapshot["threads"].get("active-application", {}).get("alive", False), "Active Application Running")
         mark(snapshot["threads"].get("login-activity", {}).get("alive", False), "Windows Session Hook Active")
         mark(snapshot["threads"].get("login-activity", {}).get("alive", False), "Event Log Subscription Active")

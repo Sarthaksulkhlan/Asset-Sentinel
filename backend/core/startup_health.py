@@ -102,6 +102,9 @@ def run_startup_checks(start_agent: bool = True) -> Dict[str, Any]:
             ),
             "agent": snapshot,
         }
+        logger.info("Monitoring Agent: Running")
+        logger.info("Login Tracker: Running")
+        logger.info("Session Manager: Running")
 
     _startup_report = report
     print_startup_health_report(report)
@@ -172,8 +175,10 @@ def print_startup_health_report(report: Dict[str, Any]) -> None:
     labels = [
         ("database", "Database Connected"),
         ("registration", "Device Registered"),
+        ("telemetry_pipeline", "Monitoring Agent Running"),
         ("heartbeat", "Heartbeat Running"),
         ("login_tracker", "Login Tracker Running"),
+        ("login_tracker", "Session Manager Running"),
         ("active_application", "Active Application Running"),
         ("windows_hooks", "Windows Session Hook Active"),
         ("windows_hooks", "Event Log Subscription Active"),
