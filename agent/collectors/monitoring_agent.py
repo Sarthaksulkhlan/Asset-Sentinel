@@ -35,7 +35,7 @@ from active_application_monitor import (
 from collect_hardware import collect_hardware
 from config import Config
 from database import database_host_for_display, init_db
-from login_tracker import detect_login
+from login_tracker import close_stale_sessions_from_previous_boot, detect_login
 from service_logging import LOG_DIR, configure_logging, ensure_log_dir
 from storage import (
     append_active_application,
@@ -127,6 +127,9 @@ class AssetSentinelAgent:
         corrected = normalize_active_application_timestamps()
         if corrected:
             logger.info("Corrected %s future active application timestamps.", corrected)
+        closed_stale_sessions = close_stale_sessions_from_previous_boot(self.hostname)
+        if closed_stale_sessions:
+            logger.info("Stale session cleanup closed %s previous-boot sessions.", closed_stale_sessions)
 
         self._run_hardware_cycle(spool_on_failure=True)
         self._register_thread("spool-retry", self._spool_retry_loop)
