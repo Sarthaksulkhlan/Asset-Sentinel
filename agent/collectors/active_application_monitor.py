@@ -21,7 +21,7 @@ for path in [
         sys.path.insert(0, path_text)
 
 from collect_hardware import collect_current_active_path
-from login_tracker import detect_login
+from login_tracker import close_active_sessions, detect_login, load_sessions, record_login, save_sessions
 from session_manager import get_current_session_info
 from storage import (
     append_active_application,
@@ -170,7 +170,7 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
                 f"{session_info.get('username')}:{int(now)}"
             )
             if not has_session_event_signature(session_info.get("hostname"), synthetic_record_id):
-                append_session({
+                lock_record = {
                     "event_type": "LOGOUT",
                     "username": session_info.get("username"),
                     "hostname": session_info.get("hostname") or socket.gethostname(),
@@ -186,7 +186,21 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
                     "windows_event_id": "LOCKAPP_LOCK",
                     "windows_event_record_id": synthetic_record_id,
                     "recorded_at": timestamp,
-                })
+                }
+                active_sessions = load_sessions()
+                updated_sessions = close_active_sessions(
+                    active_sessions,
+                    {
+                        **session_info,
+                        "force_close_active_sessions": True,
+                        "latest_logout_timestamp": timestamp,
+                        "latest_logout_event_id": "LOCKAPP_LOCK",
+                        "latest_logout_event_record_id": synthetic_record_id,
+                    },
+                    timestamp,
+                )
+                save_sessions(updated_sessions)
+                append_session(lock_record)
                 logger.info(
                     "Logout detected from LockApp fallback: user=%s host=%s record_id=%s",
                     session_info.get("username"),
@@ -215,22 +229,13 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
         _lock_screen_observed = False
         return
 
-    append_session({
-        "event_type": "LOGIN",
-        "username": session_info.get("username"),
+    record_login({
+        **session_info,
         "hostname": session_info.get("hostname") or socket.gethostname(),
-        "ip_address": session_info.get("ip_address"),
-        "session_id": session_info.get("session_id"),
         "login_timestamp": timestamp,
-        "logout_timestamp": None,
-        "session_duration": "Active",
-        "active": False,
-        "device_status": None,
-        "last_seen": timestamp,
         "login_source": "windows_unlock_observed",
         "windows_event_id": "LOCKAPP_UNLOCK",
         "windows_event_record_id": synthetic_record_id,
-        "recorded_at": timestamp,
     })
     append_alert(
         "UNLOCK",
@@ -246,7 +251,7 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
         timestamp,
     )
     logger.info(
-        "Unlock detected from LockApp fallback without starting a new work session: user=%s host=%s record_id=%s",
+        "Unlock detected from LockApp fallback and started a new current session: user=%s host=%s record_id=%s",
         session_info.get("username"),
         session_info.get("hostname"),
         synthetic_record_id,
