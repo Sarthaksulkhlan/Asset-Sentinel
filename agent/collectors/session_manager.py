@@ -248,6 +248,18 @@ def _event_time_to_utc(value: Any) -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _parse_iso_utc(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo:
+        return parsed.astimezone(timezone.utc)
+    return parsed.replace(tzinfo=datetime.now().astimezone().tzinfo).astimezone(timezone.utc)
+
+
 def _read_latest_windows_security_event(
     username: Optional[str],
     event_ids: set[int],
@@ -442,17 +454,29 @@ def get_current_session_info() -> Dict[str, Any]:
     login_event = get_latest_windows_login_event(username)
     unlock_event = get_latest_windows_unlock_event(username)
     logout_event = get_latest_windows_logout_event(username)
-    login_timestamp = login_event.get("event_timestamp") if login_event else get_login_timestamp()
+    login_boundary = login_event
+    login_boundary_time = _parse_iso_utc(login_event.get("event_timestamp")) if login_event else None
+    unlock_boundary_time = _parse_iso_utc(unlock_event.get("event_timestamp")) if unlock_event else None
+    logout_boundary_time = _parse_iso_utc(logout_event.get("event_timestamp")) if logout_event else None
+    if unlock_event and (
+        login_boundary_time is None
+        or (unlock_boundary_time and unlock_boundary_time > login_boundary_time)
+    ):
+        login_boundary = unlock_event
+        login_boundary_time = unlock_boundary_time
+    login_timestamp = login_boundary.get("event_timestamp") if login_boundary else get_login_timestamp()
+    if logout_boundary_time and login_boundary_time and logout_boundary_time > login_boundary_time:
+        login_timestamp = get_login_timestamp()
     session_info = {
         "username": username,
         "hostname": get_current_hostname(),
         "ip_address": get_current_ip_address(),
         "session_id": get_session_id_via_wmi(),
         "login_timestamp": login_timestamp,
-        "login_source": login_event.get("login_source") if login_event else "session_poll",
-        "windows_event_id": login_event.get("event_id") if login_event else None,
-        "windows_event_record_id": login_event.get("event_record_id") if login_event else None,
-        "windows_logon_type": login_event.get("logon_type") if login_event else None,
+        "login_source": login_boundary.get("login_source") if login_boundary else "session_poll",
+        "windows_event_id": login_boundary.get("event_id") if login_boundary else None,
+        "windows_event_record_id": login_boundary.get("event_record_id") if login_boundary else None,
+        "windows_logon_type": login_boundary.get("logon_type") if login_boundary else None,
         "latest_logout_timestamp": logout_event.get("event_timestamp") if logout_event else None,
         "latest_logout_event_id": logout_event.get("event_id") if logout_event else None,
         "latest_logout_event_record_id": logout_event.get("event_record_id") if logout_event else None,
