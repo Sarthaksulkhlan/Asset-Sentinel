@@ -27,12 +27,17 @@ for path in [
     if path_text not in sys.path:
         sys.path.insert(0, path_text)
 
-from active_application_monitor import POLL_INTERVAL_SECONDS, _record_signature, collect_active_application_record
+from active_application_monitor import (
+    POLL_INTERVAL_SECONDS,
+    _record_signature,
+    _record_unlock_fallback_if_needed,
+    collect_active_application_record,
+)
 from collect_hardware import collect_foreground_diagnostics, collect_hardware
 from database import database_host_for_display, init_db
 from monitoring_agent import TelemetrySpool
 from service_logging import LOG_DIR, configure_logging
-from storage import append_active_application, get_latest_active_application_for_host, record_activity_sample, resolve_device_uid, upsert_asset
+from storage import append_active_application, get_latest_active_application_for_host, record_activity_sample, resolve_device_uid, update_asset_heartbeat, upsert_asset
 
 
 logger = logging.getLogger("asset_sentinel.active_application_user_agent")
@@ -45,6 +50,15 @@ PID_PATH = LOG_DIR / "active_application_user_agent.pid"
 STOP_PATH = LOG_DIR / "active_application_user_agent.stop"
 LOCK_PATH = LOG_DIR / "active_application_user_agent.lock"
 _LOCK_FILE = None
+
+
+def _usage_snapshot() -> tuple[Any, Any]:
+    try:
+        import psutil
+
+        return round(float(psutil.cpu_percent(interval=None)), 2), round(float(psutil.virtual_memory().percent), 2)
+    except Exception:
+        return None, None
 
 
 def _pid_is_running(pid: int) -> bool:
@@ -186,6 +200,12 @@ class ActiveApplicationUserAgent:
     def _tick(self) -> None:
         self._flush_spool_periodically()
         record = collect_active_application_record()
+        cpu_usage, ram_usage = _usage_snapshot()
+        update_asset_heartbeat(socket.gethostname(), cpu_usage, ram_usage, record)
+        try:
+            _record_unlock_fallback_if_needed(record)
+        except Exception as exc:
+            logger.exception("Active application lock/unlock session fallback failed and will continue: %s", exc)
         if not record:
             self._write_status("running", foreground_visible=False)
             self._log_no_foreground_window()
