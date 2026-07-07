@@ -204,9 +204,9 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
 
     if _is_lock_app(record):
         now = time.time()
-        if not _lock_screen_observed and now - _last_lock_fallback_at >= 15:
+        if not _lock_screen_observed and now - _last_lock_fallback_at >= LOCK_FALLBACK_DEBOUNCE_SECONDS:
             session_info = get_current_session_info()
-            timestamp = datetime.now().astimezone().isoformat()
+            timestamp = str(record.get("timestamp") or datetime.now().astimezone().isoformat())
             synthetic_record_id = (
                 f"lockapp-lock:{session_info.get('hostname')}:"
                 f"{session_info.get('username')}:{int(now)}"
@@ -257,12 +257,12 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
         return
 
     now = time.time()
-    if now - _last_unlock_fallback_at < 15:
+    if now - _last_unlock_fallback_at < UNLOCK_FALLBACK_DEBOUNCE_SECONDS:
         _lock_screen_observed = False
         return
 
     session_info = get_current_session_info()
-    timestamp = datetime.now().astimezone().isoformat()
+    timestamp = str(record.get("timestamp") or datetime.now().astimezone().isoformat())
     synthetic_record_id = (
         f"lockapp-unlock:{session_info.get('hostname')}:"
         f"{session_info.get('username')}:{int(now)}"

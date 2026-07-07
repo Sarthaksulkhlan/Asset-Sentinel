@@ -60,6 +60,12 @@ def _parse_required_datetime(value: Any) -> datetime:
 def _parse_uuid(value: Any) -> Optional[UUID]:
     if value in (None, ""):
         return None
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except ValueError:
+        return None
 
 
 def _default_company_id(session) -> Optional[int]:
@@ -97,12 +103,6 @@ def _company_id_for_hostname(session, hostname: Optional[str]) -> Optional[int]:
         if company_id is not None:
             return int(company_id)
     return _default_company_id(session)
-    if isinstance(value, UUID):
-        return value
-    try:
-        return UUID(str(value))
-    except ValueError:
-        return None
 
 
 def _iso(value: Any) -> Any:
@@ -751,6 +751,19 @@ def _find_existing_session_record(session, record: Dict[str, Any]) -> Optional[S
     return session.execute(query.limit(1)).scalar_one_or_none()
 
 
+def _session_record_with_storage_time(record: Dict[str, Any], received_at: datetime) -> Dict[str, Any]:
+    normalized = dict(record)
+    received_iso = received_at.isoformat()
+    normalized["recorded_at"] = normalized.get("recorded_at") or received_iso
+    normalized["last_seen"] = (
+        normalized.get("last_seen")
+        or normalized.get("login_timestamp")
+        or normalized.get("logout_timestamp")
+        or received_iso
+    )
+    return normalized
+
+
 def append_session(record: Dict[str, Any]) -> None:
     logger.info(
         "Telemetry before insert: type=%s hostname=%s username=%s event_id=%s record_id=%s",
@@ -761,6 +774,7 @@ def append_session(record: Dict[str, Any]) -> None:
         record.get("windows_event_record_id"),
     )
     with get_db_session() as session:
+        record = _session_record_with_storage_time(record, _database_now(session))
         company_id = record.get("company_id") or _company_id_for_hostname(session, record.get("hostname"))
         event_record_id = record.get("windows_event_record_id")
         if event_record_id:
@@ -822,8 +836,8 @@ def has_session_event_signature(hostname: str, windows_event_record_id: Optional
 def activate_session_event(hostname: str, windows_event_record_id: Optional[str], last_seen: Optional[str] = None) -> bool:
     if not hostname or not windows_event_record_id:
         return False
-    seen_at = _parse_datetime(last_seen) or datetime.now(timezone.utc)
     with get_db_session() as session:
+        seen_at = _parse_datetime(last_seen) or datetime.now(timezone.utc)
         row = session.execute(
             select(SessionRecord)
             .where(SessionRecord.hostname == hostname)
@@ -840,8 +854,8 @@ def activate_session_event(hostname: str, windows_event_record_id: Optional[str]
 
 
 def touch_active_session(hostname: str, username: Optional[str], session_id: Optional[str]) -> None:
-    now = datetime.now(timezone.utc)
     with get_db_session() as session:
+        now = datetime.now(timezone.utc)
         query = (
             select(SessionRecord)
             .where(SessionRecord.hostname == hostname)
