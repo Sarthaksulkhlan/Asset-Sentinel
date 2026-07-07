@@ -52,8 +52,8 @@ from telemetry_bootstrap import _find_existing_asset, _record_change_if_needed
 
 logger = logging.getLogger("asset_sentinel.agent")
 
-LOGIN_POLL_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_LOGIN_POLL_SECONDS", "5"))
-HEARTBEAT_POLL_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_HEARTBEAT_POLL_SECONDS", str(POLL_INTERVAL_SECONDS)))
+LOGIN_POLL_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_LOGIN_POLL_SECONDS", "1"))
+HEARTBEAT_POLL_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_HEARTBEAT_POLL_SECONDS", "2"))
 HARDWARE_POLL_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_HARDWARE_POLL_SECONDS", "900"))
 SPOOL_RETRY_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_SPOOL_RETRY_SECONDS", "30"))
 THREAD_WATCHDOG_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_THREAD_WATCHDOG_SECONDS", "5"))
@@ -228,6 +228,10 @@ class AssetSentinelAgent:
         while not self.stop_event.is_set():
             try:
                 logger.info("Telemetry before insert: type=login_activity hostname=%s", self.hostname)
+                try:
+                    _record_unlock_fallback_if_needed(collect_active_application_record())
+                except Exception as fallback_exc:
+                    logger.exception("Login loop lock/unlock fallback failed and will continue: %s", fallback_exc)
                 record = detect_login()
                 if record:
                     logger.info(
@@ -237,16 +241,55 @@ class AssetSentinelAgent:
                         record.get("login_source"),
                     )
                     logger.info("Telemetry after insert: type=login_activity hostname=%s record_id=%s", record.get("hostname"), record.get("windows_event_record_id"))
+                    self._refresh_active_application_after_unlock(record)
                 self._set_health("login-activity", running=True, last_success_at=datetime.now(timezone.utc).isoformat(), last_error=None)
             except Exception as exc:
                 logger.exception("Login activity polling failed: %s", exc)
                 self._set_health("login-activity", running=True, last_error=str(exc))
             self._wait(LOGIN_POLL_INTERVAL_SECONDS)
 
+    def _refresh_active_application_after_unlock(self, login_record: Dict[str, Any]) -> None:
+        event_id = str(login_record.get("windows_event_id") or "")
+        source = str(login_record.get("login_source") or "")
+        if event_id not in {"4801", "4778", "LOCKAPP_UNLOCK"} and "unlock" not in source and "reconnect" not in source:
+            return
+        try:
+            record = collect_active_application_record()
+            cpu_usage, ram_usage = self._usage_snapshot()
+            heartbeat_host = (record or {}).get("hostname") or login_record.get("hostname") or self.hostname
+            heartbeat_payload = {**(record or {})}
+            if self.device_uid:
+                heartbeat_payload["device_uid"] = self.device_uid
+            update_asset_heartbeat(heartbeat_host, cpu_usage, ram_usage, heartbeat_payload or None)
+            if not record:
+                logger.info("Unlock foreground refresh skipped: no foreground application visible yet.")
+                return
+            try:
+                record_activity_sample(record)
+            except Exception as sample_exc:
+                logger.exception("Unlock activity session sample failed and will continue: %s", sample_exc)
+            record["activity_state_changed"] = True
+            self._upload_or_spool("active_application", record)
+            self._last_active_signature_by_host[heartbeat_host] = _record_signature(record)
+            logger.info(
+                "Unlock foreground refresh inserted: hostname=%s application=%s window=%s",
+                heartbeat_host,
+                record.get("application_name"),
+                record.get("window_title"),
+            )
+        except Exception as exc:
+            logger.exception("Unlock foreground refresh failed and will continue: %s", exc)
+
     def _active_application_loop(self) -> None:
         while not self.stop_event.is_set():
             try:
                 record = collect_active_application_record()
+                cpu_usage, ram_usage = self._usage_snapshot()
+                heartbeat_host = (record or {}).get("hostname") or self.hostname
+                heartbeat_payload = {**(record or {})}
+                if self.device_uid:
+                    heartbeat_payload["device_uid"] = self.device_uid
+                update_asset_heartbeat(heartbeat_host, cpu_usage, ram_usage, heartbeat_payload or None)
                 _record_unlock_fallback_if_needed(record)
                 if record:
                     try:
