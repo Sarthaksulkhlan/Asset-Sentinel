@@ -17,3 +17,9 @@ clock so endpoint clock skew does not cause false offline flicker.
 The heartbeat offline grace window is set to tolerate normal network latency,
 database round trips, and short Windows scheduler pauses during lock and unlock
 without hiding genuinely stale devices.
+
+## Database Guard
+
+A heartbeat stability migration prevents older collectors or skewed endpoint
+clocks from moving an asset heartbeat timestamp backward after a fresher
+heartbeat has already been stored.
