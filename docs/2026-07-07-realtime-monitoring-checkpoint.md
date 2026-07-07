@@ -41,3 +41,9 @@ and login activity updates aligned.
 When an unlock or reconnect event is recorded, the monitoring agent immediately
 samples the foreground application and stores a fresh telemetry event instead of
 waiting for a later application change.
+
+## Login Summary
+
+Dashboard login summaries now select the latest successful login using the
+maximum login timestamp and use narrower deduplication so real unlock events are
+not hidden as duplicates.
