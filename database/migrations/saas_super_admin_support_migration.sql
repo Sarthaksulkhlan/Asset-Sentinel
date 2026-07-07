@@ -58,6 +58,11 @@ SET role = CASE lower(role)
     WHEN 'viewer' THEN 'Viewer'
     ELSE role
 END;
+
+UPDATE users
+SET role = 'COMPANY_ADMIN'
+WHERE company_id IS NOT NULL
+  AND role = 'Viewer';
 ALTER TABLE users
 ADD CONSTRAINT chk_users_role
 CHECK (role IN ('SUPER_ADMIN', 'COMPANY_ADMIN', 'Super Admin', 'Admin', 'IT Admin', 'Viewer'));
@@ -79,24 +84,24 @@ FROM admin_users au
 WHERE u.company_id IS NULL
   AND (lower(u.email) = lower(au.work_email) OR lower(u.username) = lower(au.username));
 
-WITH only_company AS (SELECT id FROM companies WHERE (SELECT count(*) FROM companies) = 1 LIMIT 1)
-UPDATE assets SET company_id = (SELECT id FROM only_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM only_company);
-WITH only_company AS (SELECT id FROM companies WHERE (SELECT count(*) FROM companies) = 1 LIMIT 1)
-UPDATE sessions SET company_id = (SELECT id FROM only_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM only_company);
-WITH only_company AS (SELECT id FROM companies WHERE (SELECT count(*) FROM companies) = 1 LIMIT 1)
-UPDATE alerts SET company_id = (SELECT id FROM only_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM only_company);
-WITH only_company AS (SELECT id FROM companies WHERE (SELECT count(*) FROM companies) = 1 LIMIT 1)
-UPDATE active_applications SET company_id = (SELECT id FROM only_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM only_company);
-WITH only_company AS (SELECT id FROM companies WHERE (SELECT count(*) FROM companies) = 1 LIMIT 1)
-UPDATE active_application_history SET company_id = (SELECT id FROM only_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM only_company);
-WITH only_company AS (SELECT id FROM companies WHERE (SELECT count(*) FROM companies) = 1 LIMIT 1)
-UPDATE application_usage_segments SET company_id = (SELECT id FROM only_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM only_company);
-WITH only_company AS (SELECT id FROM companies WHERE (SELECT count(*) FROM companies) = 1 LIMIT 1)
-UPDATE application_usage_daily SET company_id = (SELECT id FROM only_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM only_company);
-WITH only_company AS (SELECT id FROM companies WHERE (SELECT count(*) FROM companies) = 1 LIMIT 1)
-UPDATE activity_sessions SET company_id = (SELECT id FROM only_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM only_company);
-WITH only_company AS (SELECT id FROM companies WHERE (SELECT count(*) FROM companies) = 1 LIMIT 1)
-UPDATE hardware_changes SET company_id = (SELECT id FROM only_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM only_company);
+WITH default_company AS (SELECT id FROM companies WHERE lower(name) = lower('Asset Sentinel Internal') ORDER BY id DESC LIMIT 1)
+UPDATE assets SET company_id = (SELECT id FROM default_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM default_company);
+WITH default_company AS (SELECT id FROM companies WHERE lower(name) = lower('Asset Sentinel Internal') ORDER BY id DESC LIMIT 1)
+UPDATE sessions SET company_id = (SELECT id FROM default_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM default_company);
+WITH default_company AS (SELECT id FROM companies WHERE lower(name) = lower('Asset Sentinel Internal') ORDER BY id DESC LIMIT 1)
+UPDATE alerts SET company_id = (SELECT id FROM default_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM default_company);
+WITH default_company AS (SELECT id FROM companies WHERE lower(name) = lower('Asset Sentinel Internal') ORDER BY id DESC LIMIT 1)
+UPDATE active_applications SET company_id = (SELECT id FROM default_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM default_company);
+WITH default_company AS (SELECT id FROM companies WHERE lower(name) = lower('Asset Sentinel Internal') ORDER BY id DESC LIMIT 1)
+UPDATE active_application_history SET company_id = (SELECT id FROM default_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM default_company);
+WITH default_company AS (SELECT id FROM companies WHERE lower(name) = lower('Asset Sentinel Internal') ORDER BY id DESC LIMIT 1)
+UPDATE application_usage_segments SET company_id = (SELECT id FROM default_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM default_company);
+WITH default_company AS (SELECT id FROM companies WHERE lower(name) = lower('Asset Sentinel Internal') ORDER BY id DESC LIMIT 1)
+UPDATE application_usage_daily SET company_id = (SELECT id FROM default_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM default_company);
+WITH default_company AS (SELECT id FROM companies WHERE lower(name) = lower('Asset Sentinel Internal') ORDER BY id DESC LIMIT 1)
+UPDATE activity_sessions SET company_id = (SELECT id FROM default_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM default_company);
+WITH default_company AS (SELECT id FROM companies WHERE lower(name) = lower('Asset Sentinel Internal') ORDER BY id DESC LIMIT 1)
+UPDATE hardware_changes SET company_id = (SELECT id FROM default_company) WHERE company_id IS NULL AND EXISTS (SELECT 1 FROM default_company);
 
 CREATE TABLE IF NOT EXISTS support_tickets (
     id BIGSERIAL PRIMARY KEY,
