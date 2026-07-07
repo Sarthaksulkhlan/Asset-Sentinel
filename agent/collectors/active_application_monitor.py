@@ -37,7 +37,9 @@ from storage import (
 
 
 POLL_INTERVAL_SECONDS = 2
-LOGIN_POLL_INTERVAL_SECONDS = 5
+LOGIN_POLL_INTERVAL_SECONDS = 1
+LOCK_FALLBACK_DEBOUNCE_SECONDS = 2
+UNLOCK_FALLBACK_DEBOUNCE_SECONDS = 2
 IDLE_THRESHOLD_SECONDS = int(os.environ.get("IDLE_THRESHOLD_SECONDS") or os.environ.get("ASSET_SENTINEL_IDLE_THRESHOLD_SECONDS", "60"))
 logger = logging.getLogger("asset_sentinel.active_application_monitor")
 
