@@ -29,3 +29,9 @@ heartbeat has already been stored.
 Login activity polling now runs on a shorter cadence, and lock or unlock
 fallback detection is invoked from the same path that already observes Windows
 Lock Screen transitions.
+
+## Active Application Sync
+
+The user-session active application agent now refreshes heartbeat state and
+invokes session fallback detection during foreground polling, keeping timeline
+and login activity updates aligned.
