@@ -1432,6 +1432,67 @@ def _latest_active_session_start(sessions: Iterable[SessionRecord]) -> Optional[
     return sorted(login_times)[-1] if login_times else None
 
 
+def _is_lock_app_label(*values: Any) -> bool:
+    return any("lockapp" in str(value or "").lower() or "lock screen" in str(value or "").lower() for value in values)
+
+
+def _latest_lock_or_logout_time(sessions: Iterable[SessionRecord]) -> Optional[datetime]:
+    times: List[datetime] = []
+    for row in sessions:
+        if not _is_lock_or_logout(row):
+            continue
+        stamp = _parse_datetime(row.logout_timestamp or row.recorded_at or row.login_timestamp)
+        if stamp:
+            times.append(stamp)
+    return sorted(times)[-1] if times else None
+
+
+def _inferred_active_session_start(
+    sessions: Iterable[SessionRecord],
+    app_history: Optional[Iterable[ActiveApplicationHistory]] = None,
+    activity_sessions: Optional[Iterable[ActivitySession]] = None,
+    asset_last_seen: Any = None,
+    now: Optional[datetime] = None,
+) -> Optional[datetime]:
+    session_rows = list(sessions)
+    active_start = _latest_active_session_start(session_rows)
+    if active_start:
+        return active_start
+
+    latest_close = _latest_lock_or_logout_time(session_rows)
+    latest_login = _latest_session_start(session_rows)
+    if not latest_close or (latest_login and latest_login > latest_close):
+        return None
+
+    now = now or datetime.now(timezone.utc)
+    last_seen = _parse_datetime(asset_last_seen)
+    if last_seen and last_seen <= latest_close:
+        return None
+
+    candidates: List[datetime] = []
+    for row in app_history or []:
+        stamp = _parse_datetime(row.timestamp)
+        if not stamp or stamp <= latest_close or stamp > now:
+            continue
+        if _is_lock_app_label(row.application, row.window_title, row.process_path):
+            continue
+        candidates.append(stamp)
+
+    for row in activity_sessions or []:
+        if _is_lock_app_label(row.app_name, row.window_title):
+            continue
+        start = _parse_datetime(row.start_time)
+        end = _parse_datetime(row.end_time)
+        if start and start > latest_close and start <= now:
+            candidates.append(start)
+        elif start and end and start <= latest_close < end:
+            candidates.append(latest_close)
+
+    if not candidates:
+        return None
+    return sorted(candidates)[0]
+
+
 class LASTINPUTINFO(ctypes.Structure):
     _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
 
@@ -1549,7 +1610,7 @@ def _period_bounds(
     local_now = now.astimezone(Config.DISPLAY_TZINFO)
     today = local_now.date()
     if period == "current_session":
-        active_start = _latest_active_session_start(sessions)
+        active_start = _inferred_active_session_start(sessions, app_history, activity_sessions, asset_last_seen, now)
         if active_start:
             return active_start, now
         return now, now
@@ -1679,12 +1740,14 @@ def _application_usage_analytics(
     locked_intervals = list(locked_intervals or [])
     segment_keys = set()
     use_daily_usage = period != "current_session"
+    latest_activity_end: Optional[datetime] = None
 
     for row in activity_sessions or []:
         start = _parse_datetime(row.start_time)
         end = _parse_datetime(row.end_time)
         if not start or not end or end <= started_at or start >= ended_at:
             continue
+        latest_activity_end = max(latest_activity_end, end) if latest_activity_end else end
         clipped_start = max(start, started_at)
         clipped_end = min(end, ended_at)
         clipped_seconds = max(0, int((clipped_end - clipped_start).total_seconds()))
@@ -1725,7 +1788,7 @@ def _application_usage_analytics(
     has_daily_usage = bool(usage)
 
     for segment in segments or []:
-        if has_daily_usage:
+        if has_daily_usage or has_activity_sessions:
             continue
         start = _parse_datetime(segment.start_time)
         end = _parse_datetime(segment.end_time)
@@ -1769,7 +1832,9 @@ def _application_usage_analytics(
         raw_end = events[index + 1]["timestamp"] if index + 1 < len(events) else ended_at
         if raw_end <= started_at or raw_start >= ended_at:
             continue
-        start = max(raw_start, started_at)
+        if has_activity_sessions and latest_activity_end and raw_end <= latest_activity_end:
+            continue
+        start = max(raw_start, started_at, latest_activity_end if has_activity_sessions and latest_activity_end else started_at)
         end = min(raw_end, ended_at)
         seconds = max(0, int((end - start).total_seconds()))
         if seconds <= 0:
@@ -1881,6 +1946,24 @@ def get_asset_details(hostname: str, company_id: Optional[int] = None) -> Option
         asset.update(summary)
         asset.update(_alert_summary(session, hostname, company_id))
         asset.update(_activity_summary(session, hostname, company_id))
+
+        inferred_active_start = _inferred_active_session_start(
+            sessions_for_usage,
+            app_history_for_usage,
+            activity_session_rows,
+            asset_row.last_seen,
+            reference_now,
+        )
+        if inferred_active_start and not asset.get("active_session"):
+            inferred_iso = _iso(inferred_active_start)
+            asset["active_session"] = True
+            asset["login_timestamp"] = inferred_iso
+            asset["last_login"] = inferred_iso
+            asset["current_login_time"] = inferred_iso
+            asset["session_duration"] = _duration(inferred_active_start, reference_now) or asset.get("session_duration")
+            last_success = _parse_datetime(asset.get("last_successful_login"))
+            if last_success is None or inferred_active_start > last_success:
+                asset["last_successful_login"] = inferred_iso
 
         timeline: List[Dict[str, Any]] = []
         ordered_sessions = sorted(sessions, key=lambda row: (row.recorded_at, row.id), reverse=True)
