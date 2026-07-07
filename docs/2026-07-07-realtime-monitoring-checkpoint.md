@@ -35,3 +35,9 @@ Lock Screen transitions.
 The user-session active application agent now refreshes heartbeat state and
 invokes session fallback detection during foreground polling, keeping timeline
 and login activity updates aligned.
+
+## Unlock Refresh
+
+When an unlock or reconnect event is recorded, the monitoring agent immediately
+samples the foreground application and stores a fresh telemetry event instead of
+waiting for a later application change.
