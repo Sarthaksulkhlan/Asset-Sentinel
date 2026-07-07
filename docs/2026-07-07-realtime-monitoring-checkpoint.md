@@ -11,3 +11,9 @@ activity freshness across monitored Windows endpoints.
 Heartbeat writes now use the database receive time as the shared source of truth
 for fleet online status. Dashboard status calculations use the same reference
 clock so endpoint clock skew does not cause false offline flicker.
+
+## Offline Grace
+
+The heartbeat offline grace window is set to tolerate normal network latency,
+database round trips, and short Windows scheduler pauses during lock and unlock
+without hiding genuinely stale devices.
