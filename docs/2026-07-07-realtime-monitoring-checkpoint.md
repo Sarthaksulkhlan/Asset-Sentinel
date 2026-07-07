@@ -47,3 +47,9 @@ waiting for a later application change.
 Dashboard login summaries now select the latest successful login using the
 maximum login timestamp and use narrower deduplication so real unlock events are
 not hidden as duplicates.
+
+## Multi-Device Behavior
+
+The changes are endpoint-neutral: each monitored host writes to the shared
+database, and dashboard queries continue to filter by company ownership while
+reading the freshest heartbeat and session rows.
