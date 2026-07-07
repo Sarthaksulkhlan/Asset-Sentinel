@@ -14,17 +14,17 @@ for path in [
     ROOT_DIR / "backend" / "models",
     ROOT_DIR / "backend" / "services",
     ROOT_DIR / "agent" / "collectors",
+    ROOT_DIR / "agent" / "client",
 ]:
     path_text = str(path)
     if path_text not in sys.path:
         sys.path.insert(0, path_text)
 
-from database import database_host_for_display, init_db
 from collect_hardware import collect_hardware
 from active_application_monitor import _record_unlock_fallback_if_needed, collect_active_application_record
 from login_tracker import detect_login
 from service_logging import configure_logging
-from storage import resolve_device_uid, upsert_asset
+from api_client import client, resolve_device_uid, send_register
 
 
 logger = logging.getLogger("asset_sentinel.login_activity_agent")
@@ -33,16 +33,15 @@ LOGIN_POLL_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_LOGIN_POLL_SECO
 
 def run(stop_event: threading.Event) -> None:
     logger.info(
-        "Login activity agent starting: interval_seconds=%s database_host=%s",
+        "Login activity agent starting: interval_seconds=%s api_url=%s",
         LOGIN_POLL_INTERVAL_SECONDS,
-        database_host_for_display(),
+        client().base_url,
     )
-    init_db()
     try:
         hardware = collect_hardware()
         device_uid = resolve_device_uid(hardware)
         logger.info("Telemetry before insert: type=registration hostname=%s device_uid=%s", hardware.get("hostname"), device_uid)
-        upsert_asset(hardware)
+        send_register(hardware)
         logger.info("Telemetry after insert: type=registration hostname=%s device_uid=%s", hardware.get("hostname"), device_uid)
     except Exception as exc:
         logger.exception("Login activity agent registration failed; login tracker will continue: %s", exc)

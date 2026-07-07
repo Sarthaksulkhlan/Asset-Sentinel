@@ -11,6 +11,7 @@ for path in [
     ROOT_DIR / "agent" / "collectors",
     ROOT_DIR / "agent" / "detectors",
     ROOT_DIR / "agent" / "windows",
+    ROOT_DIR / "agent" / "client",
 ]:
     path_text = str(path)
     if path_text not in sys.path:
@@ -409,9 +410,10 @@ def get_device_status() -> str:
         str: 'Online' if latest heartbeat is fresh, 'Offline' otherwise
     """
     try:
-        from storage import get_asset_status
+        from api_client import list_assets
 
-        status = get_asset_status(get_current_hostname() or socket.gethostname()) or {}
+        hostname = get_current_hostname() or socket.gethostname()
+        status = next((asset for asset in list_assets() if asset.get("hostname") == hostname), {}) or {}
         return status.get("device_status") or "Offline"
     except Exception as exc:
         logger.warning("Could not resolve heartbeat-backed device status: %s", exc)

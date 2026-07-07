@@ -15,6 +15,7 @@ for path in [
     ROOT_DIR / "backend" / "core",
     ROOT_DIR / "backend" / "models",
     ROOT_DIR / "agent" / "collectors",
+    ROOT_DIR / "agent" / "client",
 ]:
     path_text = str(path)
     if path_text not in sys.path:
@@ -23,16 +24,15 @@ for path in [
 from collect_hardware import collect_current_active_path
 from login_tracker import close_active_sessions, detect_login, load_sessions, record_login, save_sessions
 from session_manager import get_current_session_info
-from storage import (
-    append_active_application,
-    append_alert,
-    append_session,
-    get_latest_active_application_for_host as get_latest_active_application_for_host_from_db,
-    get_latest_active_applications as get_latest_active_applications_from_db,
+from api_client import (
+    get_latest_active_application_for_host as get_latest_active_application_for_host_from_api,
     has_session_event_signature,
     list_active_applications_history,
-    record_activity_sample,
-    update_asset_heartbeat,
+    send_activity_sample,
+    send_alert,
+    send_application,
+    send_heartbeat,
+    send_session,
 )
 
 
@@ -116,7 +116,7 @@ def _write_activity_history(history: List[Dict[str, Any]]) -> None:
     if not history:
         return
     try:
-        append_active_application(history[-1])
+        send_application(history[-1], record_sample=False)
     except Exception as exc:
         print(f"[WARNING] Could not write active application history to PostgreSQL: {exc}")
 
@@ -242,7 +242,7 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
                     timestamp,
                 )
                 save_sessions(updated_sessions)
-                append_session(lock_record)
+                send_session(lock_record)
                 logger.info(
                     "Logout detected from LockApp fallback: user=%s host=%s record_id=%s",
                     session_info.get("username"),
@@ -279,7 +279,7 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
         "windows_event_id": "LOCKAPP_UNLOCK",
         "windows_event_record_id": synthetic_record_id,
     })
-    append_alert(
+    send_alert(
         "UNLOCK",
         session_info.get("hostname") or socket.gethostname(),
         "LOW",
@@ -334,11 +334,11 @@ def _monitor_loop() -> None:
         try:
             record = collect_active_application_record()
             cpu_usage, ram_usage = _usage_snapshot()
-            update_asset_heartbeat(socket.gethostname(), cpu_usage, ram_usage, record)
+            send_heartbeat(socket.gethostname(), cpu_usage, ram_usage, record)
             _record_unlock_fallback_if_needed(record)
             if record:
                 try:
-                    record_activity_sample(record)
+                    send_activity_sample(record)
                 except Exception as sample_exc:
                     logger.exception("Activity session sample failed and will continue: %s", sample_exc)
                 _append_if_changed(record)
@@ -391,7 +391,7 @@ def start_login_event_monitor() -> None:
 
 def get_latest_active_applications() -> List[Dict[str, Any]]:
     try:
-        return get_latest_active_applications_from_db()
+        return list_active_applications_history()
     except Exception as exc:
         print(f"[WARNING] Could not load latest active applications from PostgreSQL: {exc}")
         return []
@@ -399,7 +399,7 @@ def get_latest_active_applications() -> List[Dict[str, Any]]:
 
 def get_latest_active_application_for_host(hostname: str) -> Optional[Dict[str, Any]]:
     try:
-        return get_latest_active_application_for_host_from_db(hostname)
+        return get_latest_active_application_for_host_from_api(hostname)
     except Exception as exc:
         print(f"[WARNING] Could not load latest active application for {hostname}: {exc}")
         return None

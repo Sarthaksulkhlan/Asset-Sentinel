@@ -11,6 +11,7 @@ for path in [
     ROOT_DIR / "agent" / "collectors",
     ROOT_DIR / "agent" / "detectors",
     ROOT_DIR / "agent" / "windows",
+    ROOT_DIR / "agent" / "client",
 ]:
     path_text = str(path)
     if path_text not in sys.path:
@@ -48,15 +49,15 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 from session_manager import get_current_session_info
-from storage import (
+from api_client import (
     activate_session_event,
-    append_alert,
-    append_session,
     has_session_event_signature,
     list_active_applications_history,
     list_alerts,
     list_sessions,
     replace_sessions,
+    send_alert,
+    send_session,
     touch_active_session,
 )
 
@@ -159,13 +160,7 @@ def save_alert(alert_type: str, hostname: str, severity: str, details: Dict[str,
         bool: True if alert saved successfully
     """
     try:
-        append_alert(
-            alert_type=alert_type,
-            hostname=hostname,
-            severity=severity,
-            details=details,
-            timestamp=datetime.now(timezone.utc).isoformat(),
-        )
+        send_alert(alert_type, hostname, severity, details, datetime.now(timezone.utc).isoformat())
         logger.info(f"Alert saved: {alert_type} for {hostname}")
         return True
     except Exception as e:
@@ -486,7 +481,7 @@ def record_session_state_event(
         "windows_event_record_id": record_id,
         "recorded_at": timestamp,
     }
-    append_session(record)
+    send_session(record)
     return record
 
 
@@ -818,7 +813,7 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
         return login_record
 
     try:
-        append_session(login_record)
+        send_session(login_record)
     except Exception as exc:
         logger.exception("Login record insert failed in PostgreSQL: %s", exc)
         return login_record

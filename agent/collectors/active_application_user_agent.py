@@ -22,6 +22,7 @@ for path in [
     ROOT_DIR / "agent" / "collectors",
     ROOT_DIR / "agent" / "detectors",
     ROOT_DIR / "agent" / "windows",
+    ROOT_DIR / "agent" / "client",
 ]:
     path_text = str(path)
     if path_text not in sys.path:
@@ -34,10 +35,17 @@ from active_application_monitor import (
     collect_active_application_record,
 )
 from collect_hardware import collect_foreground_diagnostics, collect_hardware
-from database import database_host_for_display, init_db
 from monitoring_agent import TelemetrySpool
 from service_logging import LOG_DIR, configure_logging
-from storage import append_active_application, get_latest_active_application_for_host, record_activity_sample, resolve_device_uid, update_asset_heartbeat, upsert_asset
+from api_client import (
+    client,
+    get_latest_active_application_for_host,
+    resolve_device_uid,
+    send_activity_sample,
+    send_application,
+    send_heartbeat,
+    send_register,
+)
 
 
 logger = logging.getLogger("asset_sentinel.active_application_user_agent")
@@ -137,19 +145,13 @@ class ActiveApplicationUserAgent:
 
     def start(self) -> bool:
         logger.info("Active application user-session agent starting.")
-        logger.info("Database host: %s", database_host_for_display())
+        logger.info("Agent API URL: %s", client().base_url)
         logger.info("Foreground diagnostics at startup: %s", collect_foreground_diagnostics())
-        try:
-            init_db()
-        except Exception as exc:
-            logger.exception("Active application user-session startup database initialization failed; retrying: %s", exc)
-            self._write_status("startup_retry", error=str(exc))
-            return False
         try:
             hardware = collect_hardware()
             device_uid = resolve_device_uid(hardware)
             logger.info("Telemetry before insert: type=registration hostname=%s device_uid=%s", hardware.get("hostname"), device_uid)
-            upsert_asset(hardware)
+            send_register(hardware)
             logger.info("Telemetry after insert: type=registration hostname=%s device_uid=%s", hardware.get("hostname"), device_uid)
         except Exception as exc:
             logger.exception("Active application user-session registration failed; monitor will continue: %s", exc)
@@ -201,7 +203,7 @@ class ActiveApplicationUserAgent:
         self._flush_spool_periodically()
         record = collect_active_application_record()
         cpu_usage, ram_usage = _usage_snapshot()
-        update_asset_heartbeat(socket.gethostname(), cpu_usage, ram_usage, record)
+        send_heartbeat(socket.gethostname(), cpu_usage, ram_usage, record)
         try:
             _record_unlock_fallback_if_needed(record)
         except Exception as exc:
@@ -213,7 +215,7 @@ class ActiveApplicationUserAgent:
 
         hostname = record.get("hostname") or socket.gethostname()
         try:
-            record_activity_sample(record)
+            send_activity_sample(record)
         except Exception as exc:
             logger.exception("Activity session sample failed and will continue: %s", exc)
         signature = _record_signature(record)
@@ -238,7 +240,7 @@ class ActiveApplicationUserAgent:
             record.get("window_title"),
         )
         try:
-            append_active_application(record)
+            send_application(record, record_sample=False)
             self.last_signature_by_host[hostname] = signature
             self.last_activity_state_by_host[hostname] = activity_state
             logger.info("Telemetry after insert: type=active_application hostname=%s application=%s", hostname, record.get("application_name"))
@@ -264,7 +266,7 @@ class ActiveApplicationUserAgent:
                 if entry.get("event_type") != "active_application":
                     remaining.append(entry)
                     continue
-                append_active_application(entry.get("payload") or {})
+                send_application(entry.get("payload") or {}, record_sample=False)
                 uploaded += 1
             except Exception as exc:
                 entry["last_error"] = str(exc)
@@ -306,7 +308,7 @@ class ActiveApplicationUserAgent:
             "application": (record or {}).get("application_name") or (record or {}).get("application"),
             "window_title": (record or {}).get("window_title"),
             "timestamp": (record or {}).get("timestamp"),
-            "database_host": database_host_for_display(),
+            "api_url": client().base_url,
             "foreground_diagnostics": collect_foreground_diagnostics(),
             "error": error,
         }

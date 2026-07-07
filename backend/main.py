@@ -12,7 +12,6 @@ bootstrap_paths()
 from flask import Flask, g, jsonify, request
 from flask_cors import CORS
 from config import print_startup_environment_diagnostics
-from active_application_monitor import get_latest_active_applications
 
 # Import session tracking modules
 from activity_api import (
@@ -24,10 +23,10 @@ from activity_api import (
 )
 from database import database_host_for_display, init_db
 from service_logging import configure_logging, has_asset_sentinel_file_logging
-from storage import get_asset_details, list_alerts, list_assets, normalize_active_application_timestamps
+from storage import get_asset_details, get_latest_active_applications, list_alerts, list_assets, normalize_active_application_timestamps
 from startup_health import device_health_response, run_startup_checks, startup_health_response
 from registration import register_admin, submit_early_access
-from telemetry_bootstrap import bootstrap_local_telemetry
+from backend.api.agent import agent_api
 from auth import (
     ROLE_SUPER_ADMIN,
     authenticate_local,
@@ -51,6 +50,7 @@ from super_admin import all_support_tickets, company_detail, list_companies, sup
 
 app = Flask(__name__)
 CORS(app, supports_credentials=True, allow_headers=["Content-Type", "Authorization"])  # Allow React frontend auth headers
+app.register_blueprint(agent_api)
 
 
 @app.after_request
@@ -407,7 +407,6 @@ def initialize_backend_runtime(start_agent: bool = True, exit_on_error: bool = T
             print(f"[INFO] Corrected {corrected_app_timestamps} future active application timestamps.")
         ensure_auth_schema()
         bootstrap_admin_user()
-        bootstrap_local_telemetry()
     except RuntimeError as exc:
         print(exc)
         logging.getLogger("asset_sentinel.backend").exception("Backend runtime initialization failed: %s", exc)

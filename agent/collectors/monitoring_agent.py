@@ -21,6 +21,7 @@ for path in [
     ROOT_DIR / "agent" / "collectors",
     ROOT_DIR / "agent" / "detectors",
     ROOT_DIR / "agent" / "windows",
+    ROOT_DIR / "agent" / "client",
 ]:
     path_text = str(path)
     if path_text not in sys.path:
@@ -33,21 +34,18 @@ from active_application_monitor import (
     collect_active_application_record,
 )
 from collect_hardware import collect_hardware
-from config import Config
-from database import database_host_for_display, init_db
 from login_tracker import close_stale_sessions_from_previous_boot, detect_login
 from service_logging import LOG_DIR, configure_logging, ensure_log_dir
-from storage import (
-    append_active_application,
-    append_alert,
-    append_session,
-    normalize_active_application_timestamps,
-    record_activity_sample,
+from api_client import (
+    client,
     resolve_device_uid,
-    update_asset_heartbeat,
-    upsert_asset,
+    send_activity_sample,
+    send_alert,
+    send_application,
+    send_heartbeat,
+    send_register,
+    send_session,
 )
-from telemetry_bootstrap import _find_existing_asset, _record_change_if_needed
 
 
 logger = logging.getLogger("asset_sentinel.agent")
@@ -121,12 +119,7 @@ class AssetSentinelAgent:
 
     def start(self) -> None:
         logger.info("Asset Sentinel monitoring agent starting.")
-        logger.info("Database URL configured from ASSET_SENTINEL_DATABASE_URL: %s", bool(Config.SQLALCHEMY_DATABASE_URL))
-        logger.info("Database host: %s", database_host_for_display())
-        init_db()
-        corrected = normalize_active_application_timestamps()
-        if corrected:
-            logger.info("Corrected %s future active application timestamps.", corrected)
+        logger.info("Agent API URL: %s", client().base_url)
         closed_stale_sessions = close_stale_sessions_from_previous_boot(self.hostname)
         if closed_stale_sessions:
             logger.info("Stale session cleanup closed %s previous-boot sessions.", closed_stale_sessions)
@@ -215,7 +208,7 @@ class AssetSentinelAgent:
             try:
                 cpu_usage, ram_usage = self._usage_snapshot()
                 logger.info("Telemetry before insert: type=heartbeat hostname=%s device_uid=%s", self.hostname, self.device_uid)
-                update_asset_heartbeat(self.hostname, cpu_usage, ram_usage, {"device_uid": self.device_uid} if self.device_uid else None)
+                send_heartbeat(self.hostname, cpu_usage, ram_usage, {"device_uid": self.device_uid} if self.device_uid else None, self.device_uid)
                 self._log_heartbeat(cpu_usage, ram_usage, None)
                 logger.info("Telemetry after insert: type=heartbeat hostname=%s device_uid=%s", self.hostname, self.device_uid)
                 self._set_health("heartbeat", running=True, last_success_at=datetime.now(timezone.utc).isoformat(), last_error=None)
@@ -260,12 +253,12 @@ class AssetSentinelAgent:
             heartbeat_payload = {**(record or {})}
             if self.device_uid:
                 heartbeat_payload["device_uid"] = self.device_uid
-            update_asset_heartbeat(heartbeat_host, cpu_usage, ram_usage, heartbeat_payload or None)
+            send_heartbeat(heartbeat_host, cpu_usage, ram_usage, heartbeat_payload or None, self.device_uid)
             if not record:
                 logger.info("Unlock foreground refresh skipped: no foreground application visible yet.")
                 return
             try:
-                record_activity_sample(record)
+                send_activity_sample(record)
             except Exception as sample_exc:
                 logger.exception("Unlock activity session sample failed and will continue: %s", sample_exc)
             record["activity_state_changed"] = True
@@ -289,11 +282,11 @@ class AssetSentinelAgent:
                 heartbeat_payload = {**(record or {})}
                 if self.device_uid:
                     heartbeat_payload["device_uid"] = self.device_uid
-                update_asset_heartbeat(heartbeat_host, cpu_usage, ram_usage, heartbeat_payload or None)
+                send_heartbeat(heartbeat_host, cpu_usage, ram_usage, heartbeat_payload or None, self.device_uid)
                 _record_unlock_fallback_if_needed(record)
                 if record:
                     try:
-                        record_activity_sample(record)
+                        send_activity_sample(record)
                     except Exception as sample_exc:
                         logger.exception("Activity session sample failed and will continue: %s", sample_exc)
                 if record and self._is_new_active_application(record):
@@ -375,15 +368,15 @@ class AssetSentinelAgent:
 
     def _upload_event(self, event_type: str, payload: Dict[str, Any]) -> None:
         if event_type == "active_application":
-            append_active_application(payload)
+            send_application(payload, record_sample=False)
             return
         if event_type == "hardware_inventory":
             self._upload_hardware(payload)
             return
         if event_type == "session_record":
-            append_session(payload)
+            send_session(payload)
             if payload.get("event_type"):
-                append_alert(
+                send_alert(
                     payload.get("event_type"),
                     payload.get("hostname") or "Unknown",
                     "LOW" if payload.get("event_type") == "LOGOUT" else "MEDIUM",
@@ -400,9 +393,8 @@ class AssetSentinelAgent:
         raise ValueError(f"Unknown telemetry event type: {event_type}")
 
     def _upload_hardware(self, hardware: Dict[str, Any]) -> None:
-        existing = _find_existing_asset(resolve_device_uid(hardware), hardware.get("hostname"))
-        _record_change_if_needed(existing, hardware)
-        upsert_asset(hardware)
+        response = send_register(hardware)
+        self.device_uid = response.get("device_uid") or self.device_uid or resolve_device_uid(hardware)
 
     def flush_spool(self) -> None:
         entries = self.spool.read_all()

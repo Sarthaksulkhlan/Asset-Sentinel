@@ -11,6 +11,7 @@ for path in [
     ROOT_DIR / "agent" / "collectors",
     ROOT_DIR / "agent" / "detectors",
     ROOT_DIR / "agent" / "windows",
+    ROOT_DIR / "agent" / "client",
 ]:
     path_text = str(path)
     if path_text not in sys.path:
@@ -18,7 +19,7 @@ for path in [
 from datetime import datetime
 
 from notifications import send_alert_email
-from storage import append_alert, list_alerts, list_assets, record_hardware_change
+from api_client import list_alerts, list_assets, record_hardware_change, send_alert
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +46,7 @@ def save_alert(alert_type, hostname, severity, details):
         details    : dict - alert-specific data
     """
     try:
-        append_alert(alert_type, hostname, severity, details, datetime.now().isoformat())
+        send_alert(alert_type, hostname, severity, details, datetime.now().isoformat())
         print(f"[ALERT LOG] Incident saved to PostgreSQL")
     except Exception as e:
         print(f"[WARNING] Could not write alert to PostgreSQL: {e}")
