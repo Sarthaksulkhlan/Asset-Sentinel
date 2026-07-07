@@ -302,6 +302,7 @@ def serialize_alert(row: Alert) -> Dict[str, Any]:
 
 def serialize_session(row: SessionRecord) -> Dict[str, Any]:
     return {
+        "company_id": row.company_id,
         "event_type": row.event_type,
         "username": row.username,
         "hostname": row.hostname,
@@ -668,10 +669,13 @@ def _activity_summary(session, hostname: str, company_id: Optional[int] = None) 
 def replace_sessions(records: Iterable[Dict[str, Any]]) -> None:
     with get_db_session() as session:
         for record in records:
+            company_id = record.get("company_id") or _company_id_for_hostname(session, record.get("hostname"))
             existing = _find_existing_session_record(session, record)
             if existing is None:
-                session.add(_build_session_record(record))
+                session.add(_build_session_record(record, company_id))
                 continue
+            if existing.company_id is None and company_id is not None:
+                existing.company_id = int(company_id)
             existing.logout_timestamp = _parse_datetime(record.get("logout_timestamp"))
             existing.session_duration = record.get("session_duration")
             existing.active = bool(record.get("active", False))
