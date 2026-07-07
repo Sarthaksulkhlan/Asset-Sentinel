@@ -11,7 +11,7 @@ from sqlalchemy import delete, desc, func, or_, select, text
 
 from database import get_db_session
 from config import Config
-from models import ActiveApplication, ActiveApplicationHistory, ActivitySession, Alert, ApplicationUsageDaily, ApplicationUsageSegment, Asset, HardwareChange, SessionRecord
+from models import ActiveApplication, ActiveApplicationHistory, ActivitySession, Alert, ApplicationUsageDaily, ApplicationUsageSegment, Asset, Company, HardwareChange, SessionRecord
 
 
 logger = logging.getLogger("asset_sentinel.storage")
@@ -32,6 +32,7 @@ NON_COUNTABLE_LOGIN_SOURCES = {
 SESSION_STATE_SOURCES = NON_COUNTABLE_LOGIN_SOURCES | {"windows_logoff", "windows_user_logoff"}
 SESSION_STATE_EVENT_IDS = {"4800", "4801", "4779", "4778", "LOCKAPP_LOCK", "LOCKAPP_UNLOCK"}
 DEFAULT_IDLE_THRESHOLD_SECONDS = int(os.environ.get("IDLE_THRESHOLD_SECONDS") or os.environ.get("ASSET_SENTINEL_IDLE_THRESHOLD_SECONDS", "60"))
+DEFAULT_DEVELOPMENT_COMPANY_NAME = os.environ.get("ASSET_SENTINEL_DEFAULT_COMPANY", "Asset Sentinel Internal")
 
 
 def _parse_datetime(value: Any) -> Optional[datetime]:
@@ -59,6 +60,36 @@ def _parse_required_datetime(value: Any) -> datetime:
 def _parse_uuid(value: Any) -> Optional[UUID]:
     if value in (None, ""):
         return None
+
+
+def _default_company_id(session) -> Optional[int]:
+    preferred = session.execute(
+        select(Company.id)
+        .where(func.lower(Company.name) == DEFAULT_DEVELOPMENT_COMPANY_NAME.lower())
+        .limit(1)
+    ).scalar_one_or_none()
+    if preferred is not None:
+        return int(preferred)
+    only_company = session.execute(
+        select(Company.id)
+        .order_by(Company.id.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return int(only_company) if only_company is not None else None
+
+
+def _company_id_for_hostname(session, hostname: Optional[str]) -> Optional[int]:
+    if hostname:
+        company_id = session.execute(
+            select(Asset.company_id)
+            .where(Asset.hostname == hostname)
+            .where(Asset.company_id.is_not(None))
+            .order_by(Asset.last_seen.desc().nullslast(), Asset.collected_at.desc(), Asset.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if company_id is not None:
+            return int(company_id)
+    return _default_company_id(session)
     if isinstance(value, UUID):
         return value
     try:
@@ -370,6 +401,7 @@ def _apply_asset_record(row: Asset, record: Dict[str, Any]) -> Asset:
 def upsert_asset(record: Dict[str, Any]) -> None:
     device_uid = resolve_device_uid(record)
     with get_db_session() as session:
+        company_id = record.get("company_id") or _company_id_for_hostname(session, record.get("hostname"))
         row = _find_asset_row(session, record, device_uid)
         if row is None:
             logger.info("Creating PostgreSQL asset row for hostname=%s device_uid=%s", record.get("hostname"), device_uid)
@@ -382,6 +414,8 @@ def upsert_asset(record: Dict[str, Any]) -> None:
         else:
             logger.debug("Updating PostgreSQL asset row for hostname=%s device_uid=%s", record.get("hostname"), device_uid)
         _apply_asset_record(row, record)
+        if company_id is not None:
+            row.company_id = int(company_id)
         merge_duplicate_assets(session)
 
 
@@ -431,6 +465,7 @@ def list_alerts(company_id: Optional[int] = None) -> List[Dict[str, Any]]:
 
 def append_alert(alert_type: str, hostname: str, severity: str, details: Dict[str, Any], timestamp: Any = None) -> Dict[str, Any]:
     with get_db_session() as session:
+        company_id = (details or {}).get("company_id") or _company_id_for_hostname(session, hostname)
         event_record_id = (details or {}).get("windows_event_record_id")
         if event_record_id:
             existing = session.execute(
@@ -441,8 +476,11 @@ def append_alert(alert_type: str, hostname: str, severity: str, details: Dict[st
                 .limit(1)
             ).scalar_one_or_none()
             if existing is not None:
+                if existing.company_id is None and company_id is not None:
+                    existing.company_id = int(company_id)
                 return serialize_alert(existing)
         row = Alert(
+            company_id=company_id,
             alert_type=alert_type,
             hostname=hostname or "Unknown",
             severity=severity,
@@ -683,15 +721,18 @@ def append_session(record: Dict[str, Any]) -> None:
         record.get("windows_event_record_id"),
     )
     with get_db_session() as session:
+        company_id = record.get("company_id") or _company_id_for_hostname(session, record.get("hostname"))
         event_record_id = record.get("windows_event_record_id")
         if event_record_id:
             existing = session.execute(
-                select(SessionRecord.id)
+                select(SessionRecord)
                 .where(SessionRecord.hostname == (record.get("hostname") or "Unknown"))
                 .where(SessionRecord.windows_event_record_id == str(event_record_id))
                 .limit(1)
             ).scalar_one_or_none()
             if existing is not None:
+                if existing.company_id is None and company_id is not None:
+                    existing.company_id = int(company_id)
                 logger.info(
                     "Skipping duplicate session event: hostname=%s event_record_id=%s",
                     record.get("hostname"),
@@ -713,7 +754,7 @@ def append_session(record: Dict[str, Any]) -> None:
                 record.get("windows_event_id"),
             )
             return
-        session.add(_build_session_record(record))
+        session.add(_build_session_record(record, company_id))
         session.flush()
         logger.info(
             "%s detected and inserted: hostname=%s username=%s event_id=%s record_id=%s",
@@ -778,8 +819,9 @@ def touch_active_session(hostname: str, username: Optional[str], session_id: Opt
             row.session_duration = _duration(row.login_timestamp or row.recorded_at, now) or row.session_duration
 
 
-def _build_session_record(record: Dict[str, Any]) -> SessionRecord:
+def _build_session_record(record: Dict[str, Any], company_id: Optional[int] = None) -> SessionRecord:
     return SessionRecord(
+        company_id=company_id,
         event_type=record.get("event_type") or "LOGIN",
         username=record.get("username"),
         hostname=record.get("hostname") or "Unknown",
@@ -842,6 +884,7 @@ def _usage_day_start(value: datetime) -> datetime:
 def _increment_daily_usage(
     session,
     *,
+    company_id: Optional[int] = None,
     hostname: str,
     username: Optional[str],
     application_name: str,
@@ -860,6 +903,7 @@ def _increment_daily_usage(
     row = session.execute(
         select(ApplicationUsageDaily)
         .where(
+            ApplicationUsageDaily.company_id == company_id,
             ApplicationUsageDaily.date == day,
             ApplicationUsageDaily.hostname == hostname,
             ApplicationUsageDaily.username == aggregate_username,
@@ -870,6 +914,7 @@ def _increment_daily_usage(
     ).scalar_one_or_none()
     if row is None:
         session.add(ApplicationUsageDaily(
+            company_id=company_id,
             date=day,
             hostname=hostname,
             username=aggregate_username,
@@ -900,10 +945,12 @@ def _record_usage_segment(session, previous: ActiveApplicationHistory, end_time:
     idle_seconds = _event_idle_seconds(current_record, duration_seconds)
     active_seconds = max(0, duration_seconds - idle_seconds)
     device_id = _latest_asset_device_id(session, previous.hostname)
+    company_id = previous.company_id or _company_id_for_hostname(session, previous.hostname)
     app_name = previous.application or previous.window_title or previous.process_path or "Unknown"
     exists = session.execute(
         select(ApplicationUsageSegment.id)
         .where(
+            ApplicationUsageSegment.company_id == company_id,
             ApplicationUsageSegment.device_id == device_id,
             ApplicationUsageSegment.application_name == app_name,
             ApplicationUsageSegment.start_time == start_time,
@@ -914,6 +961,7 @@ def _record_usage_segment(session, previous: ActiveApplicationHistory, end_time:
     if exists:
         return
     session.add(ApplicationUsageSegment(
+        company_id=company_id,
         device_id=device_id,
         hostname=previous.hostname,
         username=previous.username,
@@ -972,9 +1020,11 @@ def record_activity_sample(record: Dict[str, Any]) -> None:
     created_date = _usage_day_start(sample_time)
 
     with get_db_session() as session:
+        company_id = record.get("company_id") or _company_id_for_hostname(session, hostname)
         latest = session.execute(
             select(ActivitySession)
             .where(ActivitySession.hostname == hostname)
+            .where(ActivitySession.company_id == company_id)
             .order_by(ActivitySession.end_time.desc(), ActivitySession.id.desc())
             .limit(1)
         ).scalar_one_or_none()
@@ -986,6 +1036,7 @@ def record_activity_sample(record: Dict[str, Any]) -> None:
             latest.end_time = max(latest_end, sample_time)
             _increment_daily_usage(
                 session,
+                company_id=latest.company_id or company_id,
                 hostname=latest.hostname,
                 username=latest.username,
                 application_name=latest.app_name,
@@ -1007,6 +1058,7 @@ def record_activity_sample(record: Dict[str, Any]) -> None:
                 latest.end_time = sample_time
                 _increment_daily_usage(
                     session,
+                    company_id=latest.company_id or company_id,
                     hostname=latest.hostname,
                     username=latest.username,
                     application_name=latest.app_name,
@@ -1020,6 +1072,7 @@ def record_activity_sample(record: Dict[str, Any]) -> None:
                 )
 
         session.add(ActivitySession(
+            company_id=company_id,
             hostname=hostname,
             username=username,
             app_name=app_name,
@@ -1051,9 +1104,11 @@ def append_active_application(record: Dict[str, Any]) -> None:
         record.get("timestamp"),
     )
     with get_db_session() as session:
+        company_id = record.get("company_id") or _company_id_for_hostname(session, hostname)
         latest = session.execute(
             select(ActiveApplicationHistory)
             .where(ActiveApplicationHistory.hostname == hostname)
+            .where(ActiveApplicationHistory.company_id == company_id)
             .order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc())
             .limit(1)
         ).scalar_one_or_none()
@@ -1074,6 +1129,7 @@ def append_active_application(record: Dict[str, Any]) -> None:
         if latest:
             _record_usage_segment(session, latest, event_timestamp, record)
         row = ActiveApplication(
+            company_id=company_id,
             hostname=hostname,
             username=username,
             application_name=application_name,
@@ -1083,6 +1139,7 @@ def append_active_application(record: Dict[str, Any]) -> None:
         )
         session.add(row)
         session.add(ActiveApplicationHistory(
+            company_id=company_id,
             hostname=hostname,
             username=username,
             application=application_name,
@@ -1102,6 +1159,7 @@ def append_active_application(record: Dict[str, Any]) -> None:
         old_rows = session.execute(
             select(ActiveApplicationHistory.id)
             .where(ActiveApplicationHistory.hostname == (record.get("hostname") or "Unknown"))
+            .where(ActiveApplicationHistory.company_id == company_id)
             .order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc())
             .offset(100)
         ).scalars().all()
@@ -1146,6 +1204,7 @@ def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any 
     )
     with get_db_session() as session:
         lookup_record = {"hostname": hostname, **(activity or {})}
+        company_id = lookup_record.get("company_id") or _company_id_for_hostname(session, hostname)
         row = _find_asset_row(session, lookup_record, lookup_record.get("device_uid") or "")
         if row is None and hostname:
             row = session.execute(
@@ -1157,11 +1216,14 @@ def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any 
         if row is None:
             logger.warning("Heartbeat auto-registering missing asset for hostname=%s.", hostname)
             row = Asset(
+                company_id=company_id,
                 device_uid=resolve_device_uid(lookup_record),
                 hostname=hostname or lookup_record.get("hostname") or "Unknown",
                 collected_at=now,
             )
             session.add(row)
+        elif row.company_id is None and company_id is not None:
+            row.company_id = int(company_id)
         previous_last_seen = row.last_seen
         heartbeat_interval = (
             round((now - previous_last_seen).total_seconds(), 3)
