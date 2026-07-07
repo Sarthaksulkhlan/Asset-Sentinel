@@ -472,6 +472,18 @@ def ensure_auth_schema() -> None:
     values. Keep this in sync with auth_login_activity_migration.sql.
     """
     with get_db_session() as session:
+        def column_exists(table_name: str, column_name: str) -> bool:
+            return bool(session.execute(text(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = :table_name
+                  AND column_name = :column_name
+                LIMIT 1
+                """
+            ), {"table_name": table_name, "column_name": column_name}).scalar_one_or_none())
+
         session.execute(text(
             """
             CREATE TABLE IF NOT EXISTS companies (
@@ -505,15 +517,21 @@ def ensure_auth_schema() -> None:
             "activity_sessions",
             "hardware_changes",
         ]:
-            session.execute(text(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS company_id BIGINT REFERENCES companies(id) ON DELETE SET NULL"))
+            if not column_exists(table_name, "company_id"):
+                session.execute(text(f"ALTER TABLE {table_name} ADD COLUMN company_id BIGINT REFERENCES companies(id) ON DELETE SET NULL"))
             session.execute(text(f"CREATE INDEX IF NOT EXISTS idx_{table_name}_company_id ON {table_name} (company_id)"))
-        session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS company_id BIGINT REFERENCES companies(id) ON DELETE SET NULL"))
+        if not column_exists("users", "company_id"):
+            session.execute(text("ALTER TABLE users ADD COLUMN company_id BIGINT REFERENCES companies(id) ON DELETE SET NULL"))
         session.execute(text("CREATE INDEX IF NOT EXISTS idx_users_company_id ON users (company_id)"))
-        session.execute(text("ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS company_id BIGINT REFERENCES companies(id) ON DELETE SET NULL"))
+        if not column_exists("admin_users", "company_id"):
+            session.execute(text("ALTER TABLE admin_users ADD COLUMN company_id BIGINT REFERENCES companies(id) ON DELETE SET NULL"))
         session.execute(text("CREATE INDEX IF NOT EXISTS idx_admin_users_company_id ON admin_users (company_id)"))
-        session.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS login_source VARCHAR(50)"))
-        session.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS windows_event_id VARCHAR(20)"))
-        session.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS windows_event_record_id VARCHAR(255)"))
+        if not column_exists("sessions", "login_source"):
+            session.execute(text("ALTER TABLE sessions ADD COLUMN login_source VARCHAR(50)"))
+        if not column_exists("sessions", "windows_event_id"):
+            session.execute(text("ALTER TABLE sessions ADD COLUMN windows_event_id VARCHAR(20)"))
+        if not column_exists("sessions", "windows_event_record_id"):
+            session.execute(text("ALTER TABLE sessions ADD COLUMN windows_event_record_id VARCHAR(255)"))
         session.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_sessions_windows_event_record_id "
             "ON sessions (windows_event_record_id)"
@@ -532,8 +550,16 @@ def ensure_auth_schema() -> None:
                 WHEN 'analyst' THEN 'IT Admin'
                 WHEN 'it admin' THEN 'IT Admin'
                 WHEN 'viewer' THEN 'Viewer'
-                ELSE 'Viewer'
+                ELSE role
             END
+            """
+        ))
+        session.execute(text(
+            """
+            UPDATE users
+            SET role = 'COMPANY_ADMIN'
+            WHERE company_id IS NOT NULL
+              AND role = 'Viewer'
             """
         ))
         session.execute(text(
@@ -580,17 +606,18 @@ def ensure_auth_schema() -> None:
         ]:
             session.execute(text(
                 f"""
-                WITH only_company AS (
+                WITH default_company AS (
                     SELECT id FROM companies
-                    WHERE (SELECT count(*) FROM companies) = 1
+                    WHERE lower(name) = lower(:default_company_name)
+                    ORDER BY id DESC
                     LIMIT 1
                 )
                 UPDATE {table_name}
-                SET company_id = (SELECT id FROM only_company)
+                SET company_id = (SELECT id FROM default_company)
                 WHERE company_id IS NULL
-                  AND EXISTS (SELECT 1 FROM only_company)
+                  AND EXISTS (SELECT 1 FROM default_company)
                 """
-            ))
+            ), {"default_company_name": "Asset Sentinel Internal"})
         session.execute(text(
             """
             CREATE TABLE IF NOT EXISTS refresh_tokens (
