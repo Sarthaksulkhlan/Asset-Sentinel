@@ -58,7 +58,7 @@ class Config:
     SQLALCHEMY_DATABASE_URL = _required_database_url()
     SQLALCHEMY_ECHO = os.environ.get("ASSET_SENTINEL_SQL_ECHO", "").lower() in {"1", "true", "yes"}
     SQLALCHEMY_POOL_PRE_PING = True
-    HEARTBEAT_TIMEOUT_SECONDS = int(os.environ.get("ASSET_SENTINEL_HEARTBEAT_TIMEOUT_SECONDS", "60"))
+    HEARTBEAT_TIMEOUT_SECONDS = int(os.environ.get("ASSET_SENTINEL_HEARTBEAT_TIMEOUT_SECONDS", "45"))
     HEARTBEAT_FUTURE_SKEW_SECONDS = int(os.environ.get("ASSET_SENTINEL_HEARTBEAT_FUTURE_SKEW_SECONDS", "10"))
     DISPLAY_TIMEZONE, DISPLAY_TZINFO = _display_tzinfo()
     JWT_SECRET_KEY = os.environ.get("ASSET_SENTINEL_JWT_SECRET", "your_secret_here")
