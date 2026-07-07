@@ -21,13 +21,14 @@ for path in [
 
 from database import database_host_for_display, init_db
 from collect_hardware import collect_hardware
+from active_application_monitor import _record_unlock_fallback_if_needed, collect_active_application_record
 from login_tracker import detect_login
 from service_logging import configure_logging
 from storage import resolve_device_uid, upsert_asset
 
 
 logger = logging.getLogger("asset_sentinel.login_activity_agent")
-LOGIN_POLL_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_LOGIN_POLL_SECONDS", "5"))
+LOGIN_POLL_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_LOGIN_POLL_SECONDS", "1"))
 
 
 def run(stop_event: threading.Event) -> None:
@@ -48,6 +49,10 @@ def run(stop_event: threading.Event) -> None:
     while not stop_event.is_set():
         try:
             logger.info("Telemetry before insert: type=login_activity")
+            try:
+                _record_unlock_fallback_if_needed(collect_active_application_record())
+            except Exception as fallback_exc:
+                logger.exception("Login activity lock/unlock fallback failed and will continue: %s", fallback_exc)
             record = detect_login()
             if record:
                 logger.info(
