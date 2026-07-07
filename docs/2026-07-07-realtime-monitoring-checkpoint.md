@@ -23,3 +23,9 @@ without hiding genuinely stale devices.
 A heartbeat stability migration prevents older collectors or skewed endpoint
 clocks from moving an asset heartbeat timestamp backward after a fresher
 heartbeat has already been stored.
+
+## Login Latency
+
+Login activity polling now runs on a shorter cadence, and lock or unlock
+fallback detection is invoked from the same path that already observes Windows
+Lock Screen transitions.
