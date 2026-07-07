@@ -78,6 +78,13 @@ def _default_company_id(session) -> Optional[int]:
     return int(only_company) if only_company is not None else None
 
 
+def _database_now(session) -> datetime:
+    try:
+        return _parse_required_datetime(session.execute(select(func.now())).scalar_one())
+    except Exception:
+        return datetime.now(timezone.utc)
+
+
 def _company_id_for_hostname(session, hostname: Optional[str]) -> Optional[int]:
     if hostname:
         company_id = session.execute(
@@ -159,13 +166,15 @@ def _asset_identity_candidates(row: Asset) -> List[tuple[str, str]]:
     })
 
 
-def _human_age(value: Optional[datetime]) -> Optional[str]:
+def _human_age(value: Optional[datetime], now: Optional[datetime] = None) -> Optional[str]:
     if not value:
         return None
-    now = datetime.now(value.tzinfo or timezone.utc)
+    now = now or datetime.now(value.tzinfo or timezone.utc)
+    if now.tzinfo and value.tzinfo:
+        now = now.astimezone(value.tzinfo)
     raw_seconds = int((now - value).total_seconds())
     if raw_seconds < -Config.HEARTBEAT_FUTURE_SKEW_SECONDS:
-        return f"clock skew: {-raw_seconds} seconds ahead"
+        return "0 seconds ago"
     seconds = max(0, raw_seconds)
     if seconds < 60:
         return f"{seconds} seconds ago"
@@ -178,23 +187,25 @@ def _human_age(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat()
 
 
-def _status_from_last_seen(value: Optional[datetime]) -> str:
+def _status_from_last_seen(value: Optional[datetime], now: Optional[datetime] = None) -> str:
     if not value:
         logger.info(
             "Dashboard status calculation: last_seen=None threshold=%s status=Offline reason=no_heartbeat",
             Config.HEARTBEAT_TIMEOUT_SECONDS,
         )
         return "Offline"
-    now = datetime.now(value.tzinfo or timezone.utc)
+    now = now or datetime.now(value.tzinfo or timezone.utc)
+    if now.tzinfo and value.tzinfo:
+        now = now.astimezone(value.tzinfo)
     seconds = (now - value).total_seconds()
     if seconds < -Config.HEARTBEAT_FUTURE_SKEW_SECONDS:
         logger.info(
-            "Dashboard status calculation: last_seen=%s age_seconds=%s threshold=%s status=Offline reason=future_clock_skew",
+            "Dashboard status calculation: last_seen=%s age_seconds=%s threshold=%s status=Online reason=future_clock_skew_grace",
             value.isoformat(),
             round(seconds, 3),
             Config.HEARTBEAT_TIMEOUT_SECONDS,
         )
-        return "Offline"
+        return "Online"
     if seconds <= max(1, Config.HEARTBEAT_TIMEOUT_SECONDS):
         logger.info(
             "Dashboard status calculation: last_seen=%s age_seconds=%s threshold=%s status=Online",
@@ -248,8 +259,8 @@ def _local_date(value: datetime):
     return value.astimezone(_local_tzinfo()).date()
 
 
-def serialize_asset(row: Asset) -> Dict[str, Any]:
-    live_status = _status_from_last_seen(row.last_seen)
+def serialize_asset(row: Asset, now: Optional[datetime] = None) -> Dict[str, Any]:
+    live_status = _status_from_last_seen(row.last_seen, now)
     ram_total = float(row.ram_total_gb) if row.ram_total_gb is not None else None
     ram_usage = float(row.ram_usage_percent) if row.ram_usage_percent is not None else None
     memory_used = round(ram_total * (ram_usage / 100), 2) if ram_total is not None and ram_usage is not None else None
@@ -283,7 +294,7 @@ def serialize_asset(row: Asset) -> Dict[str, Any]:
         "status": live_status,
         "device_status": live_status,
         "last_seen": _iso(row.last_seen),
-        "last_seen_human": _human_age(row.last_seen),
+        "last_seen_human": _human_age(row.last_seen, now),
         "collection_method": row.collection_method,
         "collected_at": _iso(row.collected_at),
         "collection_errors": row.collection_errors or [],
@@ -347,6 +358,7 @@ def serialize_active_application_history(row: ActiveApplicationHistory) -> Dict[
 
 def list_assets(company_id: Optional[int] = None) -> List[Dict[str, Any]]:
     with get_db_session() as session:
+        reference_now = _database_now(session)
         merge_duplicate_assets(session)
         query = select(Asset).order_by(Asset.hostname.asc())
         if company_id is not None:
@@ -354,7 +366,7 @@ def list_assets(company_id: Optional[int] = None) -> List[Dict[str, Any]]:
         rows = session.execute(query).scalars().all()
         assets = []
         for row in rows:
-            asset = serialize_asset(row)
+            asset = serialize_asset(row, reference_now)
             asset.update(_session_summary(session, row.hostname, company_id))
             asset.update(_alert_summary(session, row.hostname, company_id))
             asset.update(_activity_summary(session, row.hostname, company_id))
@@ -389,9 +401,11 @@ def _apply_asset_record(row: Asset, record: Dict[str, Any]) -> Asset:
     row.cpu_usage_percent = record.get("cpu_usage_percent")
     row.ram_usage_percent = record.get("ram_usage_percent")
     if record.get("last_seen"):
-        row.last_seen = _parse_required_datetime(record.get("last_seen"))
-        if (datetime.now(row.last_seen.tzinfo or timezone.utc) - row.last_seen).total_seconds() < -Config.HEARTBEAT_FUTURE_SKEW_SECONDS:
-            row.last_seen = datetime.now(timezone.utc)
+        incoming_last_seen = _parse_required_datetime(record.get("last_seen"))
+        if (datetime.now(incoming_last_seen.tzinfo or timezone.utc) - incoming_last_seen).total_seconds() < -Config.HEARTBEAT_FUTURE_SKEW_SECONDS:
+            incoming_last_seen = datetime.now(timezone.utc)
+        if row.last_seen is None or incoming_last_seen > row.last_seen:
+            row.last_seen = incoming_last_seen
     row.status = _status_from_last_seen(row.last_seen)
     row.collection_method = record.get("collection_method") or "none"
     row.collection_errors = record.get("collection_errors") or []
@@ -511,7 +525,11 @@ def _session_summary(session, hostname: str, company_id: Optional[int] = None) -
     countable_login_rows = [row for row in rows if _is_countable_login(row)]
     login_rows = _dedup_countable_login_rows(countable_login_rows)
     latest = rows[-1]
-    latest_login = countable_login_rows[-1] if countable_login_rows else latest
+    latest_login = max(
+        countable_login_rows,
+        key=lambda row: _parse_datetime(row.login_timestamp or row.recorded_at) or datetime.min.replace(tzinfo=timezone.utc),
+        default=latest,
+    )
     current_open_login = _current_open_login(rows)
     active_login = current_open_login or next((row for row in reversed(login_rows) if row.active), None)
     current_login = active_login or latest_login
@@ -522,11 +540,19 @@ def _session_summary(session, hostname: str, company_id: Optional[int] = None) -
     last_successful_login = None
     last_failed_login = None
     last_logout = None
-    for row in rows:
+    for row in sorted(
+        rows,
+        key=lambda item: (
+            _parse_datetime(item.login_timestamp or item.recorded_at) or datetime.min.replace(tzinfo=timezone.utc),
+            item.id or 0,
+        ),
+    ):
         stamp = row.login_timestamp or row.recorded_at
         stamp_date = _local_date(stamp) if stamp else None
         if _is_countable_login(row):
-            last_successful_login = stamp
+            parsed_stamp = _parse_datetime(stamp)
+            if parsed_stamp and (last_successful_login is None or parsed_stamp > last_successful_login):
+                last_successful_login = parsed_stamp
         if row in login_rows:
             if stamp_date == today:
                 logins_today += 1
@@ -624,7 +650,7 @@ def _current_open_login(rows: Iterable[SessionRecord]) -> Optional[SessionRecord
     return None
 
 
-def _dedup_countable_login_rows(rows: Iterable[SessionRecord], window_seconds: int = 120) -> List[SessionRecord]:
+def _dedup_countable_login_rows(rows: Iterable[SessionRecord], window_seconds: int = 3) -> List[SessionRecord]:
     deduped: List[SessionRecord] = []
     last_by_identity: Dict[tuple, datetime] = {}
     for row in sorted(
@@ -637,7 +663,17 @@ def _dedup_countable_login_rows(rows: Iterable[SessionRecord], window_seconds: i
         stamp = _parse_datetime(row.login_timestamp or row.recorded_at)
         if not stamp:
             continue
-        identity = (row.hostname, row.username, row.session_id)
+        event_record_id = str(row.windows_event_record_id or "")
+        identity = (
+            row.hostname,
+            row.username,
+            row.session_id,
+            row.login_source,
+            str(row.windows_event_id or ""),
+            event_record_id,
+        )
+        if event_record_id:
+            identity = (row.hostname, event_record_id)
         previous = last_by_identity.get(identity)
         if previous and abs((stamp - previous).total_seconds()) <= window_seconds:
             last_by_identity[identity] = stamp
@@ -1198,7 +1234,6 @@ def normalize_active_application_timestamps() -> int:
 
 
 def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any = None, activity: Optional[Dict[str, Any]] = None) -> None:
-    now = datetime.now(timezone.utc)
     logger.info(
         "Telemetry before insert: type=heartbeat hostname=%s device_uid=%s cpu=%s ram=%s",
         hostname,
@@ -1207,16 +1242,10 @@ def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any 
         ram_usage,
     )
     with get_db_session() as session:
+        now = _database_now(session)
         lookup_record = {"hostname": hostname, **(activity or {})}
         company_id = lookup_record.get("company_id") or _company_id_for_hostname(session, hostname)
-        row = _find_asset_row(session, lookup_record, lookup_record.get("device_uid") or "")
-        if row is None and hostname:
-            row = session.execute(
-                select(Asset)
-                .where(Asset.hostname == hostname)
-                .order_by(Asset.last_seen.desc().nullslast(), Asset.collected_at.desc(), Asset.id.desc())
-                .limit(1)
-            ).scalar_one_or_none()
+        row = _find_asset_row_for_heartbeat(session, hostname, company_id, lookup_record, lookup_record.get("device_uid") or "")
         if row is None:
             logger.warning("Heartbeat auto-registering missing asset for hostname=%s.", hostname)
             row = Asset(
@@ -1236,6 +1265,7 @@ def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any 
         )
         row.last_seen = now
         row.status = "Online"
+        row.collected_at = row.collected_at or now
         if cpu_usage is not None:
             row.cpu_usage_percent = cpu_usage
         if ram_usage is not None:
@@ -1294,10 +1324,11 @@ def get_latest_active_application_for_host(hostname: str) -> Optional[Dict[str, 
 
 def get_asset_status(hostname: str) -> Optional[Dict[str, Any]]:
     with get_db_session() as session:
+        reference_now = _database_now(session)
         row = _find_asset_by_public_identifier(session, hostname)
         if row is None:
             return None
-        asset = serialize_asset(row)
+        asset = serialize_asset(row, reference_now)
         return {
             "hostname": row.hostname,
             "device_uid": row.device_uid,
@@ -1790,13 +1821,14 @@ def get_asset_details(hostname: str, company_id: Optional[int] = None) -> Option
         return None
 
     with get_db_session() as session:
+        reference_now = _database_now(session)
         asset_row = _find_asset_by_public_identifier(session, hostname)
         if asset_row is None:
             return None
         if company_id is not None and asset_row.company_id != company_id:
             return None
 
-        asset = serialize_asset(asset_row)
+        asset = serialize_asset(asset_row, reference_now)
         hostname = asset_row.hostname
         sessions_query = select(SessionRecord).where(SessionRecord.hostname == hostname)
         sessions_usage_query = select(SessionRecord).where(SessionRecord.hostname == hostname)
@@ -1979,10 +2011,11 @@ def get_device_health(identifier: str) -> Optional[Dict[str, Any]]:
     if not identifier:
         return None
     with get_db_session() as session:
+        reference_now = _database_now(session)
         asset_row = _find_asset_by_public_identifier(session, identifier)
         if asset_row is None:
             return None
-        asset = serialize_asset(asset_row)
+        asset = serialize_asset(asset_row, reference_now)
         hostname = asset_row.hostname
         latest_session = session.execute(
             select(SessionRecord)
@@ -2049,6 +2082,39 @@ def _find_asset_row(session, record: Dict[str, Any], device_uid: str) -> Optiona
         select(Asset)
         .where(or_(*predicates))
         .order_by(Asset.last_seen.desc().nullslast(), Asset.collected_at.desc(), Asset.id.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _find_asset_row_for_heartbeat(
+    session,
+    hostname: Optional[str],
+    company_id: Optional[int],
+    record: Dict[str, Any],
+    device_uid: str,
+) -> Optional[Asset]:
+    if hostname:
+        query = select(Asset).where(Asset.hostname == hostname)
+        if company_id is not None:
+            query = query.where(Asset.company_id == company_id)
+        row = session.execute(
+            query.order_by(Asset.last_seen.desc().nullslast(), Asset.collected_at.desc(), Asset.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if row is not None:
+            return row
+
+    row = _find_asset_row(session, record, device_uid)
+    if row is not None:
+        return row
+
+    if not hostname:
+        return None
+
+    return session.execute(
+        select(Asset)
+        .where(Asset.hostname == hostname)
+        .order_by(Asset.last_seen.desc().nullslast(), Asset.collected_at.desc(), Asset.id.desc())
         .limit(1)
     ).scalar_one_or_none()
 
@@ -2146,6 +2212,8 @@ def _merge_asset_row(owner: Asset, duplicate: Asset) -> None:
     preferred = owner
     if duplicate.last_seen and (not owner.last_seen or duplicate.last_seen > owner.last_seen):
         preferred = duplicate
+    if owner.company_id is None and duplicate.company_id is not None:
+        owner.company_id = duplicate.company_id
     for attr in (
         "hostname", "ip_address", "mac_address", "bios_serial", "baseboard_serial", "uuid",
         "composite_id", "cpu_name", "ram_total_gb", "baseboard_manufacturer",
@@ -2156,3 +2224,4 @@ def _merge_asset_row(owner: Asset, duplicate: Asset) -> None:
         value = getattr(preferred, attr)
         if value not in (None, "", []):
             setattr(owner, attr, value)
+    owner.status = _status_from_last_seen(owner.last_seen)
