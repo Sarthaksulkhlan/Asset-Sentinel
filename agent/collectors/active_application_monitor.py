@@ -31,6 +31,7 @@ from storage import (
     get_latest_active_applications as get_latest_active_applications_from_db,
     has_session_event_signature,
     list_active_applications_history,
+    record_activity_sample,
     update_asset_heartbeat,
 )
 
@@ -66,6 +67,41 @@ def get_user_idle_seconds() -> Optional[int]:
         return None
 
 
+def is_windows_locked() -> Optional[bool]:
+    if os.name != "nt":
+        return None
+    try:
+        user32 = ctypes.windll.user32
+        DESKTOP_SWITCHDESKTOP = 0x0100
+        desktop = user32.OpenInputDesktop(0, False, DESKTOP_SWITCHDESKTOP)
+        if not desktop:
+            return True
+        try:
+            return not bool(user32.SwitchDesktop(desktop))
+        finally:
+            user32.CloseDesktop(desktop)
+    except Exception as exc:
+        logger.debug("Could not determine Windows lock state from input desktop: %s", exc)
+        return None
+
+
+def _locked_activity_record() -> Dict[str, Any]:
+    timestamp = datetime.now().astimezone().isoformat()
+    return {
+        "hostname": socket.gethostname(),
+        "username": _current_username(),
+        "application_name": "LockApp",
+        "executable_name": "LockApp.exe",
+        "window_title": "Windows Lock Screen",
+        "process_path": "Windows Lock Screen",
+        "timestamp": timestamp,
+        "user_idle_seconds": get_user_idle_seconds(),
+        "idle_threshold_seconds": IDLE_THRESHOLD_SECONDS,
+        "is_user_idle": False,
+        "windows_locked": True,
+    }
+
+
 def _read_activity_history() -> List[Dict[str, Any]]:
     try:
         return list_active_applications_history()
@@ -93,6 +129,10 @@ def _current_username() -> str:
 
 
 def collect_active_application_record() -> Optional[Dict[str, Any]]:
+    locked = is_windows_locked()
+    if locked is True:
+        return _locked_activity_record()
+
     activity = collect_current_active_path()
     executable_name = activity.get("active_process_name")
     window_title = activity.get("active_window_title")
@@ -116,7 +156,7 @@ def collect_active_application_record() -> Optional[Dict[str, Any]]:
         "user_idle_seconds": idle_seconds,
         "idle_threshold_seconds": IDLE_THRESHOLD_SECONDS,
         "is_user_idle": bool(idle_seconds is not None and idle_seconds >= IDLE_THRESHOLD_SECONDS),
-        "windows_locked": bool("lockapp" in (executable_name or "").lower() or "lock screen" in (window_title or "").lower()),
+        "windows_locked": bool(locked is True or "lockapp" in (executable_name or "").lower() or "lock screen" in (window_title or "").lower()),
     }
 
 
@@ -295,6 +335,10 @@ def _monitor_loop() -> None:
             update_asset_heartbeat(socket.gethostname(), cpu_usage, ram_usage, record)
             _record_unlock_fallback_if_needed(record)
             if record:
+                try:
+                    record_activity_sample(record)
+                except Exception as sample_exc:
+                    logger.exception("Activity session sample failed and will continue: %s", sample_exc)
                 _append_if_changed(record)
         except Exception as exc:
             print(f"[WARNING] Active application monitor error: {exc}")
