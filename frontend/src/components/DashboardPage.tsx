@@ -90,13 +90,21 @@ const formatUsageDuration = (seconds?: number | null) => {
   return `${totalSeconds}s`;
 };
 
-type UsagePeriod = "current_session" | "today" | "yesterday" | "last_4_days";
+type UsagePeriod = "current_session" | "today" | "yesterday" | "last_2_days";
+type TimelineHistoryPreset = "today" | "yesterday" | "last_2_days" | "custom";
 
 const usagePeriodLabels: Record<UsagePeriod, string> = {
   current_session: "Current Session",
   today: "Today",
   yesterday: "Yesterday",
-  last_4_days: "Last 4 Days",
+  last_2_days: "Last 2 Days",
+};
+
+const timelineHistoryLabels: Record<TimelineHistoryPreset, string> = {
+  today: "Today",
+  yesterday: "Yesterday",
+  last_2_days: "Last 2 Days",
+  custom: "Custom Range",
 };
 
 const appAccentClasses = [
@@ -500,18 +508,82 @@ const timeInputLabel = (value: string) => {
   return `${String(hours).padStart(2, "0")}:${String(minutesRaw).padStart(2, "0")} ${suffix}`;
 };
 
-const filterTimelineByTimeRange = (entries: TimelineEntry[], startTime: string, endTime: string) => {
-  if (!startTime || !endTime) return [];
-  const [startHours, startMinutes] = startTime.split(":").map(Number);
-  const [endHours, endMinutes] = endTime.split(":").map(Number);
-  if (![startHours, startMinutes, endHours, endMinutes].every(Number.isFinite)) return [];
+const toDateTimeInputValue = (date: Date) => {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+const datePartFromDateTimeValue = (value: string) => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return toDateTimeInputValue(new Date()).slice(0, 10);
+  return toDateTimeInputValue(parsed).slice(0, 10);
+};
+
+const timePartFromDateTimeValue = (value: string) => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "00:00";
+  return toDateTimeInputValue(parsed).slice(11, 16);
+};
+
+const withDatePart = (value: string, dateValue: string) => {
+  const timeValue = timePartFromDateTimeValue(value);
+  return `${dateValue}T${timeValue}`;
+};
+
+const withTimePart = (value: string, timeValue: string) => {
+  const dateValue = datePartFromDateTimeValue(value);
+  return `${dateValue}T${timeValue}`;
+};
+
+const historyRangeLabel = (startValue: string, endValue: string) => {
+  const start = new Date(startValue);
+  const end = new Date(endValue);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return "Selected range";
+  return `${formatTelemetryTimestamp(start.toISOString())} - ${formatTelemetryTimestamp(end.toISOString())}`;
+};
+
+const localDayBounds = (offsetDays: number) => {
+  const start = new Date();
+  start.setDate(start.getDate() - offsetDays);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { startMs: start.getTime(), endMs: end.getTime() };
+};
+
+const timelineHistoryBounds = (preset: TimelineHistoryPreset, customStart: string, customEnd: string) => {
+  if (preset === "custom") {
+    const start = new Date(customStart);
+    const end = new Date(customEnd);
+    return {
+      startMs: Number.isNaN(start.getTime()) ? 0 : start.getTime(),
+      endMs: Number.isNaN(end.getTime()) ? 0 : end.getTime(),
+      label: historyRangeLabel(customStart, customEnd),
+    };
+  }
+  if (preset === "yesterday") {
+    const bounds = localDayBounds(1);
+    return { ...bounds, label: "Yesterday" };
+  }
+  if (preset === "last_2_days") {
+    const yesterday = localDayBounds(1);
+    return { startMs: yesterday.startMs, endMs: Date.now(), label: "Last 2 Days" };
+  }
+  const bounds = localDayBounds(0);
+  return { startMs: bounds.startMs, endMs: Date.now(), label: "Today" };
+};
+
+const filterTimelineByHistoryRange = (
+  entries: TimelineEntry[],
+  preset: TimelineHistoryPreset,
+  customStart: string,
+  customEnd: string,
+) => {
+  const { startMs, endMs } = timelineHistoryBounds(preset, customStart, customEnd);
+  if (!startMs || !endMs || endMs < startMs) return [];
   return entries.filter((entry) => {
-    if (!entry.timestamp) return false;
-    const parsed = new Date(entry.timestamp);
-    if (Number.isNaN(parsed.getTime())) return false;
-    const local = new Date(parsed.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-    const minutes = local.getHours() * 60 + local.getMinutes();
-    return minutes >= startHours * 60 + startMinutes && minutes <= endHours * 60 + endMinutes;
+    const stamp = telemetryTimeMs(entry.timestamp);
+    return stamp >= startMs && stamp <= endMs;
   });
 };
 
@@ -538,21 +610,12 @@ const timelineIconFor = (appName: string) => {
   return <Activity className="h-4 w-4" />;
 };
 
-const buildTimelineIntervals = (entries: TimelineEntry[], endTime: string): TimelineInterval[] => {
+const buildTimelineIntervals = (entries: TimelineEntry[], fallbackEndMs: number): TimelineInterval[] => {
   const sorted = [...entries].sort((a, b) => telemetryTimeMs(a.timestamp) - telemetryTimeMs(b.timestamp));
-  const [endHours, endMinutes] = endTime.split(":").map(Number);
   return sorted.map((entry, index) => {
     const startMs = telemetryTimeMs(entry.timestamp);
     const nextMs = telemetryTimeMs(sorted[index + 1]?.timestamp);
-    let endMs = nextMs || 0;
-    if (!endMs && entry.timestamp && Number.isFinite(endHours) && Number.isFinite(endMinutes)) {
-      const parsed = new Date(entry.timestamp);
-      if (!Number.isNaN(parsed.getTime())) {
-        const localEnd = new Date(parsed.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-        localEnd.setHours(endHours, endMinutes, 0, 0);
-        endMs = localEnd.getTime();
-      }
-    }
+    const endMs = nextMs || fallbackEndMs || 0;
     const durationSeconds = startMs && endMs && endMs > startMs ? Math.floor((endMs - startMs) / 1000) : null;
     return {
       ...entry,
@@ -690,7 +753,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   const [assets, setAssets] = useState<Asset[]>(() => isDemoMode ? INITIAL_ASSETS : []);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [selectedAssetDetail, setSelectedAssetDetail] = useState<AssetDetailPayload | null>(null);
-  const [selectedUsagePeriod, setSelectedUsagePeriod] = useState<UsagePeriod>("today");
+  const [selectedUsagePeriod, setSelectedUsagePeriod] = useState<UsagePeriod>("current_session");
   const [assetDetailLoading, setAssetDetailLoading] = useState(false);
   const [isCriticalAlertsOpen, setIsCriticalAlertsOpen] = useState(false);
   const [selectedCriticalAlert, setSelectedCriticalAlert] = useState<BackendAlertRecord | null>(null);
@@ -698,10 +761,18 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   const [isMonitoringOpen, setIsMonitoringOpen] = useState(false);
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [timelineStartTime, setTimelineStartTime] = useState("14:00");
-  const [timelineEndTime, setTimelineEndTime] = useState("16:00");
-  const [historyStartTime, setHistoryStartTime] = useState("14:00");
-  const [historyEndTime, setHistoryEndTime] = useState("16:00");
+  const defaultHistoryEnd = useMemo(() => new Date(), []);
+  const defaultHistoryStart = useMemo(() => {
+    const value = new Date(defaultHistoryEnd);
+    value.setHours(Math.max(0, value.getHours() - 2), value.getMinutes(), 0, 0);
+    return value;
+  }, [defaultHistoryEnd]);
+  const [timelineHistoryPreset, setTimelineHistoryPreset] = useState<TimelineHistoryPreset>("today");
+  const [pendingTimelineHistoryPreset, setPendingTimelineHistoryPreset] = useState<TimelineHistoryPreset>("today");
+  const [customHistoryStart, setCustomHistoryStart] = useState(() => toDateTimeInputValue(defaultHistoryStart));
+  const [customHistoryEnd, setCustomHistoryEnd] = useState(() => toDateTimeInputValue(defaultHistoryEnd));
+  const [pendingCustomHistoryStart, setPendingCustomHistoryStart] = useState(() => toDateTimeInputValue(defaultHistoryStart));
+  const [pendingCustomHistoryEnd, setPendingCustomHistoryEnd] = useState(() => toDateTimeInputValue(defaultHistoryEnd));
   const [isTimelineSelectorOpen, setIsTimelineSelectorOpen] = useState(false);
   const [isTimelineHistoryOpen, setIsTimelineHistoryOpen] = useState(false);
   const [isSupportCenterOpen, setIsSupportCenterOpen] = useState(false);
@@ -751,13 +822,17 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     applicationTimelineEntries.slice(0, 60)
   ), [applicationTimelineEntries]);
 
+  const selectedTimelineHistoryBounds = useMemo(() => (
+    timelineHistoryBounds(timelineHistoryPreset, customHistoryStart, customHistoryEnd)
+  ), [timelineHistoryPreset, customHistoryStart, customHistoryEnd]);
+
   const filteredApplicationTimeline = useMemo(() => (
-    filterTimelineByTimeRange(applicationTimelineEntries, historyStartTime, historyEndTime)
-  ), [applicationTimelineEntries, historyStartTime, historyEndTime]);
+    filterTimelineByHistoryRange(applicationTimelineEntries, timelineHistoryPreset, customHistoryStart, customHistoryEnd)
+  ), [applicationTimelineEntries, timelineHistoryPreset, customHistoryStart, customHistoryEnd]);
 
   const filteredTimelineIntervals = useMemo(() => (
-    buildTimelineIntervals(filteredApplicationTimeline, historyEndTime)
-  ), [filteredApplicationTimeline, historyEndTime]);
+    buildTimelineIntervals(filteredApplicationTimeline, selectedTimelineHistoryBounds.endMs)
+  ), [filteredApplicationTimeline, selectedTimelineHistoryBounds.endMs]);
 
   useEffect(() => {
     if (isDemoMode) return;
@@ -1326,8 +1401,10 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     if (!selectedAsset || isDemoMode) return;
 
     let active = true;
+    let loadedOnce = false;
     const fetchAssetDetail = async () => {
-      setAssetDetailLoading(true);
+      if (isTimelineSelectorOpen || isTimelineHistoryOpen) return;
+      if (!loadedOnce) setAssetDetailLoading(true);
       try {
         const response = await apiFetch(`/api/assets/${encodeURIComponent(selectedAsset.deviceId || selectedAsset.hostname)}/details`);
         if (!response.ok) throw new Error("Asset detail endpoint error");
@@ -1367,6 +1444,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
           });
           setTelemetryCPU(Number(String(mappedAsset.cpuUsage || "0").replace("%", "")) || 0);
           setTelemetryRAM(Number(String(mappedAsset.ramUsage || "0").replace("%", "")) || 0);
+          loadedOnce = true;
         }
       } catch (err) {
         console.warn("[SENTINEL COMPLIANCE] Asset detail integration offline.", err);
@@ -1376,12 +1454,12 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     };
 
     fetchAssetDetail();
-    const timer = setInterval(fetchAssetDetail, 2000);
+    const timer = setInterval(fetchAssetDetail, 5000);
     return () => {
       active = false;
       clearInterval(timer);
     };
-  }, [selectedAsset?.deviceId, selectedAsset?.hostname, isDemoMode]);
+  }, [selectedAsset?.deviceId, selectedAsset?.hostname, isDemoMode, isTimelineSelectorOpen, isTimelineHistoryOpen]);
 
   // Search filter computes
   const filteredAssets = useMemo(() => {
@@ -3205,8 +3283,9 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       onClick={() => {
-                        setTimelineStartTime(historyStartTime);
-                        setTimelineEndTime(historyEndTime);
+                        setPendingTimelineHistoryPreset(timelineHistoryPreset);
+                        setPendingCustomHistoryStart(customHistoryStart);
+                        setPendingCustomHistoryEnd(customHistoryEnd);
                         setIsTimelineSelectorOpen(true);
                       }}
                       className="inline-flex h-9 w-fit items-center gap-2 rounded-full border border-amber-300/35 bg-amber-300/10 px-3 py-1.5 text-xs font-semibold text-amber-100 shadow-[0_0_18px_rgba(245,158,11,0.1)] transition-colors hover:border-amber-200/55 hover:bg-amber-300/15"
@@ -3467,10 +3546,57 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <ClockTimePicker label="Start Time" value={timelineStartTime} onChange={setTimelineStartTime} />
-                <ClockTimePicker label="End Time" value={timelineEndTime} onChange={setTimelineEndTime} />
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {(Object.keys(timelineHistoryLabels) as TimelineHistoryPreset[]).map((preset) => (
+                  <button
+                    key={preset}
+                    onClick={() => setPendingTimelineHistoryPreset(preset)}
+                    className={`inline-flex h-10 items-center justify-center rounded-lg border px-3 text-xs font-bold transition-colors ${
+                      pendingTimelineHistoryPreset === preset
+                        ? "border-amber-200/70 bg-amber-300/18 text-amber-50"
+                        : "border-[#2B3752] bg-[#0F1728] text-[#A8B3C7] hover:border-amber-300/45 hover:text-white"
+                    }`}
+                  >
+                    {timelineHistoryLabels[preset]}
+                  </button>
+                ))}
               </div>
+              {pendingTimelineHistoryPreset === "custom" ? (
+                <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  <div className="grid gap-3">
+                    <label className="grid gap-2 text-xs font-bold uppercase tracking-[0.16em] text-[#8EA0B8]">
+                      Start Date
+                      <input
+                        type="date"
+                        value={datePartFromDateTimeValue(pendingCustomHistoryStart)}
+                        onChange={(event) => setPendingCustomHistoryStart((value) => withDatePart(value, event.target.value))}
+                        className="h-10 rounded-lg border border-[#2B3752] bg-[#0F1728] px-3 text-sm font-semibold normal-case tracking-normal text-white outline-none transition-colors focus:border-amber-300/60"
+                      />
+                    </label>
+                    <ClockTimePicker
+                      label="Start Time"
+                      value={timePartFromDateTimeValue(pendingCustomHistoryStart)}
+                      onChange={(value) => setPendingCustomHistoryStart((current) => withTimePart(current, value))}
+                    />
+                  </div>
+                  <div className="grid gap-3">
+                    <label className="grid gap-2 text-xs font-bold uppercase tracking-[0.16em] text-[#8EA0B8]">
+                      End Date
+                      <input
+                        type="date"
+                        value={datePartFromDateTimeValue(pendingCustomHistoryEnd)}
+                        onChange={(event) => setPendingCustomHistoryEnd((value) => withDatePart(value, event.target.value))}
+                        className="h-10 rounded-lg border border-[#2B3752] bg-[#0F1728] px-3 text-sm font-semibold normal-case tracking-normal text-white outline-none transition-colors focus:border-amber-300/60"
+                      />
+                    </label>
+                    <ClockTimePicker
+                      label="End Time"
+                      value={timePartFromDateTimeValue(pendingCustomHistoryEnd)}
+                      onChange={(value) => setPendingCustomHistoryEnd((current) => withTimePart(current, value))}
+                    />
+                  </div>
+                </div>
+              ) : null}
               <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <button
                   onClick={() => setIsTimelineSelectorOpen(false)}
@@ -3480,8 +3606,9 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                 </button>
                 <button
                   onClick={() => {
-                    setHistoryStartTime(timelineStartTime);
-                    setHistoryEndTime(timelineEndTime);
+                    setTimelineHistoryPreset(pendingTimelineHistoryPreset);
+                    setCustomHistoryStart(pendingCustomHistoryStart);
+                    setCustomHistoryEnd(pendingCustomHistoryEnd);
                     setIsTimelineSelectorOpen(false);
                     setIsTimelineHistoryOpen(true);
                   }}
@@ -3502,7 +3629,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-[#7DD3FC]">Activity History</p>
                   <h3 className="mt-1 text-xl font-bold text-white">
-                    {timeInputLabel(historyStartTime)} - {timeInputLabel(historyEndTime)}
+                    {timelineHistoryPreset === "custom" ? selectedTimelineHistoryBounds.label : timelineHistoryLabels[timelineHistoryPreset]}
                   </h3>
                 </div>
                 <button
@@ -3515,30 +3642,35 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
               </div>
               <div className="overflow-y-auto p-5">
                 {filteredTimelineIntervals.length ? (
-                  <div className="space-y-3">
+                  <div className="relative space-y-0 pl-5 before:absolute before:left-4 before:top-2 before:h-[calc(100%-1rem)] before:w-px before:bg-[#2B3752]">
                     {filteredTimelineIntervals.map((entry, index) => {
                       const appName = appTimelineTitle(entry);
                       return (
-                        <div key={`filtered-${entry.timestamp}-${index}`} className={`rounded-xl border p-4 ${timelineAccentFor(appName)}`}>
-                          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                            <div className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-[#0B1220]/70 px-3 py-2 text-xs font-bold text-white">
-                              <Clock className="h-3.5 w-3.5 text-[#7DD3FC]" />
-                              {timeOnlyLabel(entry.timestamp)} - {entry.endTimestamp ? timeOnlyLabel(entry.endTimestamp) : timeInputLabel(historyEndTime)}
-                            </div>
-                            {entry.durationSeconds ? (
-                              <span className="rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#CBD5E1]">
-                                {formatUsageDuration(entry.durationSeconds)}
-                              </span>
-                            ) : null}
+                        <div key={`filtered-${entry.timestamp}-${index}`} className="relative pb-4 pl-6 last:pb-0">
+                          <div className="absolute left-[-0.15rem] top-4 flex h-5 w-5 items-center justify-center rounded-full border border-[#7DD3FC]/45 bg-[#0B1220] shadow-[0_0_18px_rgba(56,189,248,0.18)]">
+                            <span className="h-2 w-2 rounded-full bg-[#7DD3FC]" />
                           </div>
-                          <div className="grid grid-cols-[40px_1fr] gap-3">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-[#0B1220]/80">
-                              {timelineIconFor(appName)}
+                          <div className={`rounded-xl border p-4 ${timelineAccentFor(appName)}`}>
+                            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                              <div className="inline-flex items-center gap-2 text-xs font-bold text-white">
+                                <Clock className="h-3.5 w-3.5 text-[#7DD3FC]" />
+                                {timeOnlyLabel(entry.timestamp)} - {entry.endTimestamp ? timeOnlyLabel(entry.endTimestamp) : formatTelemetryTimestamp(new Date(selectedTimelineHistoryBounds.endMs).toISOString())}
+                              </div>
+                              {entry.durationSeconds ? (
+                                <span className="rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#CBD5E1]">
+                                  {formatUsageDuration(entry.durationSeconds)}
+                                </span>
+                              ) : null}
                             </div>
-                            <div className="min-w-0">
-                              <p className="truncate text-base font-bold text-white">{appName}</p>
-                              <p className="mt-1 truncate text-sm text-[#CBD5E1]" title={entry.window_title || ""}>{entry.window_title || "Unknown window title"}</p>
-                              <p className="mt-1 truncate text-[11px] text-[#8EA0B8]" title={entry.process_path || ""}>{entry.process_path || "No process path stored"}</p>
+                            <div className="grid grid-cols-[40px_1fr] gap-3">
+                              <div className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-[#0B1220]/80">
+                                {timelineIconFor(appName)}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="truncate text-base font-bold text-white">{appName}</p>
+                                <p className="mt-1 truncate text-sm text-[#CBD5E1]" title={entry.window_title || ""}>{entry.window_title || "Unknown window title"}</p>
+                                <p className="mt-1 truncate text-[11px] text-[#8EA0B8]" title={entry.process_path || ""}>{entry.process_path || "No process path stored"}</p>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -3547,7 +3679,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                   </div>
                 ) : (
                   <div className="rounded-xl border border-dashed border-[#2B3752] bg-[#0F1728]/70 p-5 text-sm text-[#8EA0B8]">
-                    No application events found between {historyStartTime} and {historyEndTime} for the loaded current-day history.
+                    No application events found for {selectedTimelineHistoryBounds.label}.
                   </div>
                 )}
               </div>

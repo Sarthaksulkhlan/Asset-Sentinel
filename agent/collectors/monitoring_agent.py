@@ -33,7 +33,7 @@ from active_application_monitor import (
     _record_unlock_fallback_if_needed,
     collect_active_application_record,
 )
-from collect_hardware import collect_hardware
+from collect_hardware import collect_foreground_diagnostics, collect_hardware
 from login_tracker import close_stale_sessions_from_previous_boot, detect_login
 from service_logging import LOG_DIR, configure_logging, ensure_log_dir
 from api_client import (
@@ -276,7 +276,7 @@ class AssetSentinelAgent:
     def _active_application_loop(self) -> None:
         while not self.stop_event.is_set():
             try:
-                record = collect_active_application_record()
+                record = collect_active_application_record() if self._can_collect_foreground_from_process_session() else None
                 cpu_usage, ram_usage = self._usage_snapshot()
                 heartbeat_host = (record or {}).get("hostname") or self.hostname
                 heartbeat_payload = {**(record or {})}
@@ -313,6 +313,16 @@ class AssetSentinelAgent:
                 logger.exception("Active application polling failed: %s", exc)
                 self._set_health("active-application", running=True, last_error=str(exc))
             self._wait(POLL_INTERVAL_SECONDS)
+
+    def _can_collect_foreground_from_process_session(self) -> bool:
+        diagnostics = collect_foreground_diagnostics()
+        current_session_id = diagnostics.get("current_session_id")
+        active_console_session_id = diagnostics.get("active_console_session_id")
+        return (
+            current_session_id is not None
+            and current_session_id == active_console_session_id
+            and int(current_session_id) > 0
+        )
 
     def _thread_watchdog_loop(self) -> None:
         while not self.stop_event.is_set():

@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from uuid import UUID
 
 from sqlalchemy import delete, desc, func, or_, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database import get_db_session
 from config import Config
@@ -525,11 +526,15 @@ def _session_summary(session, hostname: str, company_id: Optional[int] = None) -
     countable_login_rows = [row for row in rows if _is_countable_login(row)]
     login_rows = _dedup_countable_login_rows(countable_login_rows)
     latest = rows[-1]
-    latest_login = max(
-        countable_login_rows,
-        key=lambda row: _parse_datetime(row.login_timestamp or row.recorded_at) or datetime.min.replace(tzinfo=timezone.utc),
-        default=latest,
+    ordered_login_rows = sorted(
+        login_rows,
+        key=lambda row: (
+            _login_event_time(row) or datetime.min.replace(tzinfo=timezone.utc),
+            row.id or 0,
+        ),
+        reverse=True,
     )
+    latest_login = ordered_login_rows[0] if ordered_login_rows else latest
     current_open_login = _current_open_login(rows)
     active_login = current_open_login or next((row for row in reversed(login_rows) if row.active), None)
     current_login = active_login or latest_login
@@ -540,20 +545,13 @@ def _session_summary(session, hostname: str, company_id: Optional[int] = None) -
     last_successful_login = None
     last_failed_login = None
     last_logout = None
-    for row in sorted(
-        rows,
-        key=lambda item: (
-            _parse_datetime(item.login_timestamp or item.recorded_at) or datetime.min.replace(tzinfo=timezone.utc),
-            item.id or 0,
-        ),
-    ):
+    for row in sorted(rows, key=lambda item: (_login_event_time(item) or datetime.min.replace(tzinfo=timezone.utc), item.id or 0)):
         stamp = row.login_timestamp or row.recorded_at
         stamp_date = _local_date(stamp) if stamp else None
-        if _is_countable_login(row):
-            parsed_stamp = _parse_datetime(stamp)
+        if row in login_rows:
+            parsed_stamp = _login_event_time(row)
             if parsed_stamp and (last_successful_login is None or parsed_stamp > last_successful_login):
                 last_successful_login = parsed_stamp
-        if row in login_rows:
             if stamp_date == today:
                 logins_today += 1
             if stamp_date and stamp_date >= week_start:
@@ -650,36 +648,39 @@ def _current_open_login(rows: Iterable[SessionRecord]) -> Optional[SessionRecord
     return None
 
 
-def _dedup_countable_login_rows(rows: Iterable[SessionRecord], window_seconds: int = 3) -> List[SessionRecord]:
+def _login_event_time(row: SessionRecord) -> Optional[datetime]:
+    return _parse_datetime(row.login_timestamp or row.recorded_at)
+
+
+def _dedup_countable_login_rows(rows: Iterable[SessionRecord]) -> List[SessionRecord]:
     deduped: List[SessionRecord] = []
-    last_by_identity: Dict[tuple, datetime] = {}
+    seen_keys: set[tuple] = set()
     for row in sorted(
         list(rows),
         key=lambda item: (
-            _parse_datetime(item.login_timestamp or item.recorded_at) or datetime.min.replace(tzinfo=timezone.utc),
+            _login_event_time(item) or datetime.min.replace(tzinfo=timezone.utc),
             item.id or 0,
         ),
     ):
-        stamp = _parse_datetime(row.login_timestamp or row.recorded_at)
+        stamp = _login_event_time(row)
         if not stamp:
             continue
         event_record_id = str(row.windows_event_record_id or "")
-        identity = (
-            row.hostname,
-            row.username,
-            row.session_id,
-            row.login_source,
-            str(row.windows_event_id or ""),
-            event_record_id,
-        )
         if event_record_id:
             identity = (row.hostname, event_record_id)
-        previous = last_by_identity.get(identity)
-        if previous and abs((stamp - previous).total_seconds()) <= window_seconds:
-            last_by_identity[identity] = stamp
+        else:
+            identity = (
+                row.hostname,
+                row.username,
+                row.session_id,
+                row.login_source,
+                str(row.windows_event_id or ""),
+                stamp.isoformat(),
+            )
+        if identity in seen_keys:
             continue
         deduped.append(row)
-        last_by_identity[identity] = stamp
+        seen_keys.add(identity)
     return deduped
 
 
@@ -954,40 +955,33 @@ def _increment_daily_usage(
         return
     day = _usage_day_start(start_time)
     aggregate_username = username or "Unknown"
-    row = session.execute(
-        select(ApplicationUsageDaily)
-        .where(
-            ApplicationUsageDaily.company_id == company_id,
-            ApplicationUsageDaily.date == day,
-            ApplicationUsageDaily.hostname == hostname,
-            ApplicationUsageDaily.username == aggregate_username,
-            ApplicationUsageDaily.application_name == application_name,
-            ApplicationUsageDaily.window_title == window_title,
-        )
-        .limit(1)
-    ).scalar_one_or_none()
-    if row is None:
-        session.add(ApplicationUsageDaily(
-            company_id=company_id,
-            date=day,
-            hostname=hostname,
-            username=aggregate_username,
-            application_name=application_name,
-            window_title=window_title,
-            first_seen=start_time,
-            last_seen=end_time,
-            total_foreground_seconds=foreground_seconds,
-            active_seconds=active_seconds,
-            idle_seconds=idle_seconds,
-            locked_seconds=locked_seconds,
-        ))
-        return
-    row.first_seen = min(_parse_required_datetime(row.first_seen), start_time)
-    row.last_seen = max(_parse_required_datetime(row.last_seen), end_time)
-    row.total_foreground_seconds = int(row.total_foreground_seconds or 0) + foreground_seconds
-    row.active_seconds = int(row.active_seconds or 0) + active_seconds
-    row.idle_seconds = int(row.idle_seconds or 0) + idle_seconds
-    row.locked_seconds = int(row.locked_seconds or 0) + locked_seconds
+    stmt = pg_insert(ApplicationUsageDaily).values(
+        company_id=company_id,
+        date=day,
+        hostname=hostname,
+        username=aggregate_username,
+        application_name=application_name,
+        window_title=window_title,
+        first_seen=start_time,
+        last_seen=end_time,
+        total_foreground_seconds=foreground_seconds,
+        active_seconds=active_seconds,
+        idle_seconds=idle_seconds,
+        locked_seconds=locked_seconds,
+    )
+    session.execute(stmt.on_conflict_do_update(
+        constraint="uq_application_usage_daily_app",
+        set_={
+            "company_id": func.coalesce(ApplicationUsageDaily.company_id, company_id),
+            "first_seen": func.least(ApplicationUsageDaily.first_seen, start_time),
+            "last_seen": func.greatest(ApplicationUsageDaily.last_seen, end_time),
+            "total_foreground_seconds": ApplicationUsageDaily.total_foreground_seconds + foreground_seconds,
+            "active_seconds": ApplicationUsageDaily.active_seconds + active_seconds,
+            "idle_seconds": ApplicationUsageDaily.idle_seconds + idle_seconds,
+            "locked_seconds": ApplicationUsageDaily.locked_seconds + locked_seconds,
+            "updated_at": func.now(),
+        },
+    ))
 
 
 def _record_usage_segment(session, previous: ActiveApplicationHistory, end_time: datetime, current_record: Dict[str, Any]) -> None:
@@ -1516,8 +1510,8 @@ def _period_start(period: str, session_start: Optional[datetime], now: datetime)
         return session_start or today_start
     if period == "yesterday":
         return today_start - timedelta(days=1)
-    if period == "last_4_days":
-        return today_start - timedelta(days=3)
+    if period == "last_2_days":
+        return today_start - timedelta(days=1)
     return today_start
 
 
@@ -1616,8 +1610,8 @@ def _period_bounds(
         return now, now
     if period == "yesterday":
         return _session_window_for_local_days([today - timedelta(days=1)], sessions, app_history, activity_sessions, asset_last_seen, now)
-    if period == "last_4_days":
-        return _session_window_for_local_days([today - timedelta(days=offset) for offset in range(3, -1, -1)], sessions, app_history, activity_sessions, asset_last_seen, now)
+    if period == "last_2_days":
+        return _session_window_for_local_days([today - timedelta(days=offset) for offset in range(1, -1, -1)], sessions, app_history, activity_sessions, asset_last_seen, now)
     return _session_window_for_local_days([today], sessions, app_history, activity_sessions, asset_last_seen, now)
 
 
@@ -1995,7 +1989,7 @@ def get_asset_details(hostname: str, company_id: Optional[int] = None) -> Option
 
         session_start = _latest_session_start(sessions_for_usage)
         usage_periods = {}
-        for period in ("current_session", "today", "yesterday", "last_4_days"):
+        for period in ("current_session", "today", "yesterday", "last_2_days"):
             period_start, period_end = _period_bounds(
                 period,
                 sessions_for_usage,

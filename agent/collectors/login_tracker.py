@@ -756,15 +756,6 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
             session_info.get("login_source") in COUNTABLE_LOGIN_SOURCES
             or str(session_info.get("windows_event_id") or "") in COUNTABLE_LOGIN_EVENT_IDS
         ):
-            session_info = {**session_info, "force_close_active_sessions": True}
-            login_time = _parse_iso_timestamp(session_info.get("login_timestamp"))
-            latest_logout_time = _parse_iso_timestamp(session_info.get("latest_logout_timestamp"))
-            close_timestamp = (
-                session_info.get("latest_logout_timestamp")
-                if latest_logout_time and (login_time is None or latest_logout_time <= login_time)
-                else now
-            )
-            save_sessions(close_active_sessions(load_sessions(), session_info, close_timestamp))
             activate_session_event(hostname, event_record_id, now)
         touch_active_session(hostname, session_info.get("username"), session_info.get("session_id"))
         return {}
@@ -809,8 +800,7 @@ def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
     }
     
     if not save_sessions(sessions):
-        logger.error("Closed session updates were not persisted before login insert: %s", login_record)
-        return login_record
+        logger.warning("Closed session updates were not persisted before login insert; continuing with login event insert: %s", login_record)
 
     try:
         send_session(login_record)

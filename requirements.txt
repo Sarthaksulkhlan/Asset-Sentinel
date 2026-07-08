@@ -1,6 +1,7 @@
 Flask
 flask-cors
 requests>=2.31
+psutil>=5.9
 SQLAlchemy>=2.0
 psycopg2-binary
 PyJWT>=2.8
