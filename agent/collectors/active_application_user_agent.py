@@ -43,7 +43,6 @@ from api_client import (
     resolve_device_uid,
     send_activity_sample,
     send_application,
-    send_heartbeat,
     send_register,
 )
 
