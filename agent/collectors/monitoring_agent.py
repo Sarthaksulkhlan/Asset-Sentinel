@@ -208,7 +208,7 @@ class AssetSentinelAgent:
     def _heartbeat_loop(self) -> None:
         while not self.stop_event.is_set():
             try:
-                cpu_usage, ram_usage = self._usage_snapshot()
+                cpu_usage, ram_usage = self._resource_snapshot_if_due()
                 logger.info("Telemetry before insert: type=heartbeat hostname=%s device_uid=%s", self.hostname, self.device_uid)
                 send_heartbeat(self.hostname, cpu_usage, ram_usage, {"device_uid": self.device_uid} if self.device_uid else None, self.device_uid)
                 self._log_heartbeat(cpu_usage, ram_usage, None)
