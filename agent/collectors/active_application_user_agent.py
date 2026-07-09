@@ -202,8 +202,6 @@ class ActiveApplicationUserAgent:
     def _tick(self) -> None:
         self._flush_spool_periodically()
         record = collect_active_application_record()
-        cpu_usage, ram_usage = _usage_snapshot()
-        send_heartbeat(socket.gethostname(), cpu_usage, ram_usage, record)
         try:
             _record_unlock_fallback_if_needed(record)
         except Exception as exc:
