@@ -453,6 +453,13 @@ class AssetSentinelAgent:
         except Exception:
             return None, None
 
+    def _resource_snapshot_if_due(self) -> tuple:
+        now = time.monotonic()
+        if self._last_resource_telemetry_at and now - self._last_resource_telemetry_at < RESOURCE_TELEMETRY_INTERVAL_SECONDS:
+            return None, None
+        self._last_resource_telemetry_at = now
+        return self._usage_snapshot()
+
     def _log_heartbeat(self, cpu_usage: Any, ram_usage: Any, record: Optional[Dict[str, Any]]) -> None:
         logger.info(
             "Heartbeat uploaded: hostname=%s cpu=%s ram=%s active_app=%s",
