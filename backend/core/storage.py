@@ -1136,6 +1136,78 @@ def record_activity_sample(record: Dict[str, Any]) -> None:
         ))
 
 
+def record_activity_usage_aggregate(record: Dict[str, Any]) -> None:
+    start_time = _parse_datetime(record.get("start_time"))
+    end_time = _parse_datetime(record.get("end_time"))
+    duration_seconds = int(record.get("duration_seconds") or 0)
+    if not start_time or not end_time or duration_seconds <= 0:
+        return
+    if end_time <= start_time:
+        end_time = start_time + timedelta(seconds=duration_seconds)
+
+    hostname = record.get("hostname") or "Unknown"
+    username = record.get("username") or "Unknown"
+    app_name = record.get("application_name") or record.get("application") or "Unknown"
+    window_title = record.get("window_title") or "Unknown"
+    state = str(record.get("state") or "ACTIVE").upper()
+    created_date = _usage_day_start(start_time)
+    active_seconds = duration_seconds if state == "ACTIVE" else 0
+    idle_seconds = duration_seconds if state == "IDLE" else 0
+    locked_seconds = duration_seconds if state == "LOCKED" else 0
+
+    with get_db_session() as session:
+        company_id = record.get("company_id") or _company_id_for_hostname(session, hostname)
+        latest = session.execute(
+            select(ActivitySession)
+            .where(ActivitySession.hostname == hostname)
+            .where(ActivitySession.company_id == company_id)
+            .where(ActivitySession.app_name == app_name)
+            .where(ActivitySession.window_title == window_title)
+            .where(ActivitySession.created_date == created_date)
+            .order_by(ActivitySession.end_time.desc(), ActivitySession.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+        if latest and latest.last_state == state and _parse_required_datetime(latest.end_time) <= end_time:
+            latest.total_seconds = int(latest.total_seconds or 0) + duration_seconds
+            latest.active_seconds = int(latest.active_seconds or 0) + active_seconds
+            latest.idle_seconds = int(latest.idle_seconds or 0) + idle_seconds
+            latest.locked_seconds = int(latest.locked_seconds or 0) + locked_seconds
+            latest.end_time = max(_parse_required_datetime(latest.end_time), end_time)
+            latest.last_state = state
+        else:
+            session.add(ActivitySession(
+                company_id=company_id,
+                hostname=hostname,
+                username=username,
+                app_name=app_name,
+                window_title=window_title,
+                start_time=start_time,
+                end_time=end_time,
+                total_seconds=duration_seconds,
+                active_seconds=active_seconds,
+                idle_seconds=idle_seconds,
+                locked_seconds=locked_seconds,
+                created_date=created_date,
+                last_state=state,
+            ))
+
+        _increment_daily_usage(
+            session,
+            company_id=company_id,
+            hostname=hostname,
+            username=username,
+            application_name=app_name,
+            window_title=window_title,
+            start_time=start_time,
+            end_time=end_time,
+            foreground_seconds=duration_seconds,
+            active_seconds=active_seconds,
+            idle_seconds=idle_seconds,
+            locked_seconds=locked_seconds,
+        )
+
+
 def append_active_application(record: Dict[str, Any]) -> None:
     event_timestamp = _parse_datetime(record.get("timestamp")) or datetime.now(timezone.utc)
     hostname = record.get("hostname") or "Unknown"
