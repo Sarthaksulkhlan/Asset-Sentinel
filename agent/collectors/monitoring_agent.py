@@ -117,6 +117,7 @@ class AssetSentinelAgent:
         self.device_uid: Optional[str] = None
         self.hostname = socket.gethostname()
         self._last_activity_state_by_host: Dict[str, str] = {}
+        self._last_resource_telemetry_at = 0.0
 
     def start(self) -> None:
         logger.info("Asset Sentinel monitoring agent starting.")
