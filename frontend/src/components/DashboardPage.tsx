@@ -1359,7 +1359,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     fetchFleetData();
     fetchAlertData();
 
-    const assetsTimer = setInterval(fetchFleetData, 2000);
+    const assetsTimer = setInterval(fetchFleetData, 10000);
     const alertsTimer = setInterval(fetchAlertData, 5000);
 
     return () => {
