@@ -333,8 +333,6 @@ def _monitor_loop() -> None:
     while True:
         try:
             record = collect_active_application_record()
-            cpu_usage, ram_usage = _usage_snapshot()
-            send_heartbeat(socket.gethostname(), cpu_usage, ram_usage, record)
             _record_unlock_fallback_if_needed(record)
             if record:
                 try:
