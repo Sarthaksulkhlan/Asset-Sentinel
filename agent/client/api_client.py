@@ -166,6 +166,20 @@ def _buffer_activity_interval(previous: Dict[str, Any], current: Dict[str, Any])
     buffered["end_time"] = end.isoformat()
 
 
+def flush_activity_usage(force: bool = False) -> Dict[str, Any]:
+    global _last_activity_flush_at
+    now = time.monotonic()
+    if not force and now - _last_activity_flush_at < ACTIVITY_USAGE_SYNC_SECONDS:
+        return {"ok": True, "flushed": 0, "buffered": len(_activity_usage_buffer)}
+    if not _activity_usage_buffer:
+        _last_activity_flush_at = now
+        return {"ok": True, "flushed": 0, "buffered": 0}
+    records = list(_activity_usage_buffer.values())
+    _activity_usage_buffer.clear()
+    _last_activity_flush_at = now
+    return client().post("/api/agent/activity-usage", {"records": records})
+
+
 def send_activity_sample(payload: Dict[str, Any]) -> Dict[str, Any]:
     return client().post("/api/agent/activity-sample", payload)
 
