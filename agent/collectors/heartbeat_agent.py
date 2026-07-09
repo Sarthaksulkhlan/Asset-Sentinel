@@ -56,9 +56,15 @@ def run(stop_event: threading.Event) -> None:
         logger.info("Telemetry after insert: type=registration hostname=%s device_uid=%s", hostname, device_uid)
     except Exception as exc:
         logger.exception("Heartbeat agent registration failed; heartbeat will auto-register fallback asset: %s", exc)
+    last_resource_telemetry_at = 0.0
     while not stop_event.is_set():
         try:
-            cpu_usage, ram_usage = _usage_snapshot()
+            now = time.monotonic()
+            if not last_resource_telemetry_at or now - last_resource_telemetry_at >= RESOURCE_TELEMETRY_INTERVAL_SECONDS:
+                cpu_usage, ram_usage = _usage_snapshot()
+                last_resource_telemetry_at = now
+            else:
+                cpu_usage, ram_usage = None, None
             send_heartbeat(hostname, cpu_usage, ram_usage, {"device_uid": device_uid} if device_uid else None, device_uid)
             logger.info(
                 "Heartbeat sent: hostname=%s interval_seconds=%s cpu=%s ram=%s",
