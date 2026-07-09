@@ -181,7 +181,12 @@ def flush_activity_usage(force: bool = False) -> Dict[str, Any]:
 
 
 def send_activity_sample(payload: Dict[str, Any]) -> Dict[str, Any]:
-    return client().post("/api/agent/activity-sample", payload)
+    hostname = payload.get("hostname") or "Unknown"
+    previous = _last_activity_sample_by_host.get(hostname)
+    if previous:
+        _buffer_activity_interval(previous, payload)
+    _last_activity_sample_by_host[hostname] = dict(payload)
+    return flush_activity_usage()
 
 
 def send_alert(alert_type: str, hostname: str, severity: str, details: Dict[str, Any], timestamp: Any = None) -> Dict[str, Any]:
