@@ -29,7 +29,7 @@ from api_client import client, resolve_device_uid, send_heartbeat, send_register
 
 
 logger = logging.getLogger("asset_sentinel.heartbeat_agent")
-HEARTBEAT_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_HEARTBEAT_POLL_SECONDS", "2"))
+HEARTBEAT_INTERVAL_SECONDS = int(os.environ.get("ASSET_SENTINEL_HEARTBEAT_POLL_SECONDS", "15"))
 
 
 def _usage_snapshot() -> tuple[Any, Any]:
