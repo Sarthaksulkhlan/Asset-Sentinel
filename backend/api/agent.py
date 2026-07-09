@@ -16,6 +16,7 @@ from storage import (
     list_assets,
     list_sessions,
     record_activity_sample,
+    record_activity_usage_aggregate,
     record_hardware_change,
     replace_sessions,
     resolve_device_uid,
