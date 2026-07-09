@@ -162,14 +162,6 @@ def collect_active_application_record() -> Optional[Dict[str, Any]]:
     }
 
 
-def _usage_snapshot() -> tuple:
-    try:
-        import psutil
-        return round(float(psutil.cpu_percent(interval=None)), 2), round(float(psutil.virtual_memory().percent), 2)
-    except Exception:
-        return None, None
-
-
 def _record_signature(record: Dict[str, Any]) -> tuple:
     return (
         record.get("hostname"),
