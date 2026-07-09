@@ -128,6 +128,14 @@ def _parse_timestamp(value: Any) -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _activity_state(record: Dict[str, Any]) -> str:
+    if record.get("windows_locked"):
+        return "LOCKED"
+    if record.get("is_user_idle"):
+        return "IDLE"
+    return "ACTIVE"
+
+
 def send_activity_sample(payload: Dict[str, Any]) -> Dict[str, Any]:
     return client().post("/api/agent/activity-sample", payload)
 
