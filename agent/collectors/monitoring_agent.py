@@ -250,12 +250,7 @@ class AssetSentinelAgent:
             return
         try:
             record = collect_active_application_record()
-            cpu_usage, ram_usage = self._usage_snapshot()
             heartbeat_host = (record or {}).get("hostname") or login_record.get("hostname") or self.hostname
-            heartbeat_payload = {**(record or {})}
-            if self.device_uid:
-                heartbeat_payload["device_uid"] = self.device_uid
-            send_heartbeat(heartbeat_host, cpu_usage, ram_usage, heartbeat_payload or None, self.device_uid)
             if not record:
                 logger.info("Unlock foreground refresh skipped: no foreground application visible yet.")
                 return
