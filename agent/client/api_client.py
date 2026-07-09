@@ -73,6 +73,9 @@ class AgentApiClient:
 
 
 _client: Optional[AgentApiClient] = None
+_last_activity_sample_by_host: Dict[str, Dict[str, Any]] = {}
+_activity_usage_buffer: Dict[tuple, Dict[str, Any]] = {}
+_last_activity_flush_at = time.monotonic()
 
 
 def client() -> AgentApiClient:
