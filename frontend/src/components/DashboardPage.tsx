@@ -1454,7 +1454,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     };
 
     fetchAssetDetail();
-    const timer = setInterval(fetchAssetDetail, 5000);
+    const timer = setInterval(fetchAssetDetail, 15000);
     return () => {
       active = false;
       clearInterval(timer);
