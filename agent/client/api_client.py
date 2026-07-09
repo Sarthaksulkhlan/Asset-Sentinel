@@ -14,6 +14,7 @@ DEFAULT_API_URL = "http://127.0.0.1:5000"
 DEFAULT_DEVELOPMENT_AGENT_TOKEN = "asset-sentinel-development-agent-token"
 DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("ASSET_SENTINEL_AGENT_API_TIMEOUT_SECONDS", "2"))
 DEFAULT_RETRIES = int(os.environ.get("ASSET_SENTINEL_AGENT_API_RETRIES", "1"))
+ACTIVITY_USAGE_SYNC_SECONDS = int(os.environ.get("ASSET_SENTINEL_ACTIVITY_USAGE_SYNC_SECONDS", "15"))
 
 
 def _api_url() -> str:
