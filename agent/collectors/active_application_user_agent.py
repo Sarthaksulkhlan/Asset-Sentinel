@@ -60,15 +60,6 @@ LOCK_PATH = LOG_DIR / "active_application_user_agent.lock"
 _LOCK_FILE = None
 
 
-def _usage_snapshot() -> tuple[Any, Any]:
-    try:
-        import psutil
-
-        return round(float(psutil.cpu_percent(interval=None)), 2), round(float(psutil.virtual_memory().percent), 2)
-    except Exception:
-        return None, None
-
-
 def _pid_is_running(pid: int) -> bool:
     if pid <= 0:
         return False
