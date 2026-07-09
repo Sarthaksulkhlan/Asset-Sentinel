@@ -31,7 +31,6 @@ from api_client import (
     send_activity_sample,
     send_alert,
     send_application,
-    send_heartbeat,
     send_session,
 )
 
