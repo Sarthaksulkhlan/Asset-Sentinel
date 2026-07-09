@@ -274,12 +274,6 @@ class AssetSentinelAgent:
         while not self.stop_event.is_set():
             try:
                 record = collect_active_application_record() if self._can_collect_foreground_from_process_session() else None
-                cpu_usage, ram_usage = self._usage_snapshot()
-                heartbeat_host = (record or {}).get("hostname") or self.hostname
-                heartbeat_payload = {**(record or {})}
-                if self.device_uid:
-                    heartbeat_payload["device_uid"] = self.device_uid
-                send_heartbeat(heartbeat_host, cpu_usage, ram_usage, heartbeat_payload or None, self.device_uid)
                 _record_unlock_fallback_if_needed(record)
                 if record:
                     try:
