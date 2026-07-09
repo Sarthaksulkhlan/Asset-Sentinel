@@ -136,6 +136,36 @@ def _activity_state(record: Dict[str, Any]) -> str:
     return "ACTIVE"
 
 
+def _buffer_activity_interval(previous: Dict[str, Any], current: Dict[str, Any]) -> None:
+    start = _parse_timestamp(previous.get("timestamp"))
+    end = _parse_timestamp(current.get("timestamp"))
+    seconds = max(0, int((end - start).total_seconds()))
+    if seconds <= 0:
+        return
+    hostname = previous.get("hostname") or current.get("hostname") or "Unknown"
+    username = previous.get("username") or current.get("username") or "Unknown"
+    app_name = previous.get("application_name") or previous.get("application") or "Unknown"
+    window_title = previous.get("window_title") or "Unknown"
+    state = _activity_state(previous)
+    key = (hostname, username, app_name, window_title, state, start.date().isoformat())
+    buffered = _activity_usage_buffer.setdefault(
+        key,
+        {
+            "hostname": hostname,
+            "username": username,
+            "application_name": app_name,
+            "window_title": window_title,
+            "process_path": previous.get("process_path") or previous.get("active_process_path") or previous.get("executable_name"),
+            "state": state,
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+            "duration_seconds": 0,
+        },
+    )
+    buffered["duration_seconds"] = int(buffered.get("duration_seconds") or 0) + seconds
+    buffered["end_time"] = end.isoformat()
+
+
 def send_activity_sample(payload: Dict[str, Any]) -> Dict[str, Any]:
     return client().post("/api/agent/activity-sample", payload)
 
