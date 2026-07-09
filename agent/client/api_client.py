@@ -116,6 +116,18 @@ def send_application(payload: Dict[str, Any], record_sample: bool = True) -> Dic
     return client().post("/api/agent/application-event", payload)
 
 
+def _parse_timestamp(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc)
+
+
 def send_activity_sample(payload: Dict[str, Any]) -> Dict[str, Any]:
     return client().post("/api/agent/activity-sample", payload)
 
