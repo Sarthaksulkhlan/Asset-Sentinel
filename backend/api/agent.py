@@ -185,6 +185,19 @@ def activity_sample():
     return jsonify({"ok": True})
 
 
+@agent_api.route("/activity-usage", methods=["POST"])
+@require_agent_token
+def activity_usage():
+    payload = _json_payload()
+    records = payload.get("records")
+    if not isinstance(records, list):
+        records = []
+    for record in records:
+        if isinstance(record, dict):
+            record_activity_usage_aggregate(record)
+    return jsonify({"ok": True, "count": len(records)})
+
+
 @agent_api.route("/alert", methods=["POST"])
 @require_agent_token
 def alert_event():
