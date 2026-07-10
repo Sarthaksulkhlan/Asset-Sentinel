@@ -32,6 +32,7 @@ from active_application_monitor import (
     POLL_INTERVAL_SECONDS,
     _record_signature,
     _record_unlock_fallback_if_needed,
+    _log_activity_sample_state,
     collect_active_application_record,
 )
 from collect_hardware import collect_foreground_diagnostics, collect_hardware
