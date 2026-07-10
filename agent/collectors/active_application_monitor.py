@@ -141,6 +141,25 @@ def activity_state_from_record(record: Optional[Dict[str, Any]]) -> str:
     return "active"
 
 
+def _log_activity_sample_state(
+    record: Dict[str, Any],
+    source: str,
+    heartbeat_sent: str = "separate_15s_loop",
+    usage_sync_sent: str = "attempting",
+) -> None:
+    logger.info(
+        "Activity sample state: source=%s foreground_app=%s windows_idle_seconds=%s idle_threshold=%s is_locked=%s final_activity_state=%s heartbeat_sent=%s usage_sync_sent=%s",
+        source,
+        record.get("executable_name") or record.get("application_name"),
+        record.get("user_idle_seconds"),
+        record.get("idle_threshold_seconds"),
+        bool(record.get("windows_locked")),
+        activity_state_from_record(record),
+        heartbeat_sent,
+        usage_sync_sent,
+    )
+
+
 def collect_active_application_record() -> Optional[Dict[str, Any]]:
     locked = is_windows_locked()
     if locked is True:
