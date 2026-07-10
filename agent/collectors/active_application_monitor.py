@@ -61,6 +61,7 @@ def get_user_idle_seconds() -> Optional[int]:
         info.cbSize = ctypes.sizeof(info)
         if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
             return None
+        ctypes.windll.kernel32.GetTickCount.restype = ctypes.c_uint32
         tick_count = ctypes.windll.kernel32.GetTickCount()
         return max(0, int((tick_count - info.dwTime) / 1000))
     except Exception as exc:
