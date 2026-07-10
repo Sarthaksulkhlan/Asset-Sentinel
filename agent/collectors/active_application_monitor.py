@@ -358,6 +358,7 @@ def _monitor_loop() -> None:
             _record_unlock_fallback_if_needed(record)
             if record:
                 try:
+                    _log_activity_sample_state(record, "active_application_monitor")
                     send_activity_sample(record)
                 except Exception as sample_exc:
                     logger.exception("Activity session sample failed and will continue: %s", sample_exc)
