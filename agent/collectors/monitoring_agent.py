@@ -32,6 +32,7 @@ from active_application_monitor import (
     _record_signature,
     _record_unlock_fallback_if_needed,
     _log_activity_sample_state,
+    activity_state_from_record,
     collect_active_application_record,
 )
 from collect_hardware import collect_foreground_diagnostics, collect_hardware
