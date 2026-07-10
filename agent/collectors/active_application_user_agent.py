@@ -205,6 +205,7 @@ class ActiveApplicationUserAgent:
 
         hostname = record.get("hostname") or socket.gethostname()
         try:
+            _log_activity_sample_state(record, "active_application_user_agent")
             send_activity_sample(record)
         except Exception as exc:
             logger.exception("Activity session sample failed and will continue: %s", exc)
