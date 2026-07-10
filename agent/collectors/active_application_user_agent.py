@@ -210,7 +210,7 @@ class ActiveApplicationUserAgent:
         except Exception as exc:
             logger.exception("Activity session sample failed and will continue: %s", exc)
         signature = _record_signature(record)
-        activity_state = "idle" if record.get("is_user_idle") else "active"
+        activity_state = activity_state_from_record(record)
         same_foreground = self.last_signature_by_host.get(hostname) == signature
         same_activity_state = self.last_activity_state_by_host.get(hostname) == activity_state
         if same_foreground and same_activity_state:
