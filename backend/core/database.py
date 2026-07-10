@@ -13,6 +13,10 @@ engine = create_engine(
     Config.SQLALCHEMY_DATABASE_URL,
     echo=Config.SQLALCHEMY_ECHO,
     pool_pre_ping=Config.SQLALCHEMY_POOL_PRE_PING,
+    pool_size=Config.SQLALCHEMY_POOL_SIZE,
+    max_overflow=Config.SQLALCHEMY_MAX_OVERFLOW,
+    pool_timeout=Config.SQLALCHEMY_POOL_TIMEOUT,
+    pool_recycle=Config.SQLALCHEMY_POOL_RECYCLE,
     future=True,
 )
 
@@ -50,7 +54,7 @@ def _database_connection_error_message() -> str:
         "\n[DATABASE] Could not connect to PostgreSQL.\n"
         f"[DATABASE] SQLAlchemy URL: {_database_url_for_display()}\n\n"
         "Asset Sentinel now requires ASSET_SENTINEL_DATABASE_URL for every "
-        "SQLAlchemy connection. Confirm the Neon PostgreSQL URL is present, "
+        "SQLAlchemy connection. Confirm the PostgreSQL URL is present, "
         "reachable, and includes the required SSL options.\n"
     )
 
