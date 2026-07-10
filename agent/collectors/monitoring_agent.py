@@ -257,6 +257,7 @@ class AssetSentinelAgent:
                 logger.info("Unlock foreground refresh skipped: no foreground application visible yet.")
                 return
             try:
+                _log_activity_sample_state(record, "monitoring_agent_unlock_refresh")
                 send_activity_sample(record)
             except Exception as sample_exc:
                 logger.exception("Unlock activity session sample failed and will continue: %s", sample_exc)
