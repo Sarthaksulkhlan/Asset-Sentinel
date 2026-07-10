@@ -131,6 +131,16 @@ def _current_username() -> str:
     )
 
 
+def activity_state_from_record(record: Optional[Dict[str, Any]]) -> str:
+    if not record:
+        return "active"
+    if record.get("windows_locked"):
+        return "locked"
+    if record.get("is_user_idle"):
+        return "idle"
+    return "active"
+
+
 def collect_active_application_record() -> Optional[Dict[str, Any]]:
     locked = is_windows_locked()
     if locked is True:
