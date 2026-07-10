@@ -425,7 +425,7 @@ class AssetSentinelAgent:
     def _is_new_active_application(self, record: Dict[str, Any]) -> bool:
         hostname = record.get("hostname") or socket.gethostname()
         signature = _record_signature(record)
-        activity_state = "locked" if record.get("windows_locked") else "idle" if record.get("is_user_idle") else "active"
+        activity_state = activity_state_from_record(record)
         if (
             self._last_active_signature_by_host.get(hostname) == signature
             and self._last_activity_state_by_host.get(hostname) == activity_state
