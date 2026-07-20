@@ -16,6 +16,7 @@ for path in [
     ROOT_DIR / "agent" / "collectors",
     ROOT_DIR / "agent" / "detectors",
     ROOT_DIR / "agent" / "windows",
+    ROOT_DIR / "agent" / "client",
 ]:
     path_text = str(path)
     if path_text not in sys.path:
@@ -25,14 +26,44 @@ import servicemanager
 import win32event
 import win32service
 import win32serviceutil
-from werkzeug.serving import make_server
 
 from service_logging import configure_logging
 
 
 SERVICE_NAME = "AssetSentinelMonitoringService"
-SERVICE_DISPLAY_NAME = "NEXIS Asset Sentinel Backend Service"
-SERVICE_DESCRIPTION = "Runs the Asset Sentinel/NEXIS backend API and supervised endpoint telemetry workers."
+SERVICE_DISPLAY_NAME = "NEXIS Asset Sentinel Windows Agent"
+SERVICE_DESCRIPTION = "Runs the Asset Sentinel Windows telemetry agent and sends endpoint telemetry to the Render backend."
+RENDER_API_URL = "https://asset-sentinel-backend.onrender.com"
+DEFAULT_DEVELOPMENT_AGENT_TOKEN = "asset-sentinel-development-agent-token"
+
+
+def load_service_env(force: bool = True) -> None:
+    env_path = ROOT_DIR / ".env"
+    if not env_path.exists():
+        return
+    with env_path.open("r", encoding="utf-8-sig") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and (force or not os.environ.get(key)):
+                os.environ[key] = value
+
+
+def validate_agent_environment() -> None:
+    load_service_env(force=True)
+    api_url = (os.environ.get("ASSET_SENTINEL_API_URL") or "").strip().rstrip("/")
+    token = (os.environ.get("ASSET_SENTINEL_AGENT_TOKEN") or "").strip()
+    if api_url != RENDER_API_URL:
+        raise RuntimeError(
+            f"ASSET_SENTINEL_API_URL must be {RENDER_API_URL}. "
+            "The Windows Service must not target localhost or a local backend."
+        )
+    if not token or token == DEFAULT_DEVELOPMENT_AGENT_TOKEN:
+        raise RuntimeError("ASSET_SENTINEL_AGENT_TOKEN must be configured with the Render agent token.")
 
 
 class AssetSentinelMonitoringService(win32serviceutil.ServiceFramework):
@@ -43,18 +74,18 @@ class AssetSentinelMonitoringService(win32serviceutil.ServiceFramework):
     def __init__(self, args):
         super().__init__(args)
         self.stop_event_handle = win32event.CreateEvent(None, 0, 0, None)
-        self.server = None
-        self.server_thread = None
-        self.flask_app = None
+        self.agent_stop_event = threading.Event()
+        self.agent = None
 
     def SvcStop(self):
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         logging.getLogger("asset_sentinel.service").info("Windows Service stop requested.")
-        if self.server is not None:
+        self.agent_stop_event.set()
+        if self.agent is not None:
             try:
-                self.server.shutdown()
+                self.agent.stop()
             except Exception as exc:
-                logging.getLogger("asset_sentinel.service").exception("API server shutdown failed: %s", exc)
+                logging.getLogger("asset_sentinel.service").exception("Agent shutdown failed: %s", exc)
         win32event.SetEvent(self.stop_event_handle)
 
     def SvcDoRun(self):
@@ -65,27 +96,27 @@ class AssetSentinelMonitoringService(win32serviceutil.ServiceFramework):
         servicemanager.LogInfoMsg(f"{self._svc_display_name_} starting")
         try:
             self._log_preflight(root_dir)
-            from app import app, initialize_backend_runtime
+            validate_agent_environment()
+            from monitoring_agent import AssetSentinelAgent
+            from api_client import client
 
-            self.flask_app = app
-            initialized = initialize_backend_runtime(start_agent=True, exit_on_error=False)
-            if not initialized:
-                logger.error("Backend runtime initialization reported failures; API server will still start for diagnostics.")
-            self._start_api_server(logger)
-            self._log_startup_health(logger)
+            logger.info("[OK] Agent API URL: %s", client().base_url)
+            logger.info("[OK] Backend mode: Render API only; local PostgreSQL/backend startup skipped.")
+            self.agent = AssetSentinelAgent(stop_event=self.agent_stop_event)
+            self.agent.start()
+            self._log_agent_health(logger)
             win32event.WaitForSingleObject(self.stop_event_handle, win32event.INFINITE)
         except Exception as exc:
             logger.exception("Windows Service crashed: %s", exc)
             servicemanager.LogErrorMsg(f"{self._svc_display_name_} crashed: {exc}")
             raise
         finally:
-            if self.server is not None:
+            self.agent_stop_event.set()
+            if self.agent is not None:
                 try:
-                    self.server.shutdown()
+                    self.agent.stop()
                 except Exception:
                     pass
-            if self.server_thread is not None:
-                self.server_thread.join(timeout=15)
             logger.info("Windows Service stopped.")
             servicemanager.LogInfoMsg(f"{self._svc_display_name_} stopped")
 
@@ -97,37 +128,21 @@ class AssetSentinelMonitoringService(win32serviceutil.ServiceFramework):
         else:
             logger.error("[FAIL] .env exists: missing at %s", env_path)
 
-    def _start_api_server(self, logger: logging.Logger) -> None:
-        host = os.environ.get("ASSET_SENTINEL_BACKEND_HOST", "0.0.0.0")
-        port = int(os.environ.get("ASSET_SENTINEL_BACKEND_PORT", "5000"))
-        if self.flask_app is None:
-            raise RuntimeError("Flask app was not loaded before API server startup.")
-        self.server = make_server(host, port, self.flask_app, threaded=True)
-        self.server_thread = threading.Thread(
-            target=self.server.serve_forever,
-            name="nexis-backend-api-server",
-            daemon=True,
-        )
-        self.server_thread.start()
-        logger.info("[OK] API server started: http://%s:%s", host, port)
-
-    def _log_startup_health(self, logger: logging.Logger) -> None:
-        from startup_health import startup_health_response
-
-        health = startup_health_response()
-        details = health.get("details") or {}
+    def _log_agent_health(self, logger: logging.Logger) -> None:
+        snapshot = self.agent.health_snapshot() if self.agent is not None else {}
+        threads = snapshot.get("threads") or {}
         checks = [
-            ("database", "Database connection successful"),
-            ("database", "Neon connection successful"),
             ("heartbeat", "Heartbeat thread started"),
-            ("login_tracker", "Login tracker started"),
-            ("active_application", "Active Application Monitor started"),
-            ("telemetry_pipeline", "Scheduler started"),
+            ("login-activity", "Login tracker started"),
+            ("active-application", "Active Application Monitor started"),
+            ("spool-retry", "Telemetry spool retry started"),
+            ("hardware-inventory", "Hardware inventory scheduler started"),
+            ("thread-watchdog", "Thread watchdog started"),
         ]
         for key, label in checks:
-            item = details.get(key) or {}
-            ok = health.get(key) == "OK"
-            reason = item.get("error") or item.get("last_error") or item.get("reason")
+            item = threads.get(key) or {}
+            ok = bool(item.get("alive"))
+            reason = None
             if ok:
                 logger.info("[OK] %s", label)
             else:
@@ -163,6 +178,7 @@ def _install_frozen_service() -> None:
     if not (root_dir / ".env").exists():
         logger.error(".env file is missing at %s. Configure .env before installing the service.", root_dir / ".env")
         raise SystemExit(1)
+    validate_agent_environment()
 
     exe_path = str(Path(sys.executable).resolve())
     logger.info("Installing frozen NEXIS service from %s", exe_path)

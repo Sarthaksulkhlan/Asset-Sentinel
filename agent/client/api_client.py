@@ -3,12 +3,41 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
-
 import requests
 
 
 logger = logging.getLogger("asset_sentinel.agent_api_client")
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+_ENV_LOADED = False
+
+
+def load_agent_env(force: bool = False) -> None:
+    """Load agent .env values without importing backend database settings."""
+    global _ENV_LOADED
+    if _ENV_LOADED and not force:
+        return
+    _ENV_LOADED = True
+
+    env_path = ROOT_DIR / ".env"
+    if not env_path.exists():
+        return
+
+    with env_path.open("r", encoding="utf-8-sig") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and (force or not os.environ.get(key)):
+                os.environ[key] = value
+
+
+load_agent_env()
 
 DEFAULT_API_URL = "http://127.0.0.1:5000"
 DEFAULT_DEVELOPMENT_AGENT_TOKEN = "asset-sentinel-development-agent-token"
@@ -22,7 +51,7 @@ def _api_url() -> str:
 
 
 def _agent_token() -> str:
-    return os.environ.get("AGENT_TOKEN") or os.environ.get("ASSET_SENTINEL_AGENT_TOKEN") or DEFAULT_DEVELOPMENT_AGENT_TOKEN
+    return os.environ.get("ASSET_SENTINEL_AGENT_TOKEN") or os.environ.get("AGENT_TOKEN") or DEFAULT_DEVELOPMENT_AGENT_TOKEN
 
 
 def resolve_device_uid(record: Dict[str, Any]) -> str:
