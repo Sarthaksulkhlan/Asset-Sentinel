@@ -4,7 +4,7 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: >-
-      python -c "from backend.main import initialize_backend_runtime; initialize_backend_runtime(start_agent=False)"
+      python -m backend.render_start
       && gunicorn --bind 0.0.0.0:$PORT --workers 1 app:app
     envVars:
       - key: ASSET_SENTINEL_DATABASE_URL

@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import traceback
 
 if __package__ in {None, ""}:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -409,28 +410,63 @@ def sessions_count():
 def initialize_backend_runtime(start_agent: bool = True, exit_on_error: bool = True) -> bool:
     if not has_asset_sentinel_file_logging():
         configure_logging("app", console=True)
-    print_startup_environment_diagnostics()
+    startup_logger = logging.getLogger("asset_sentinel.backend")
+    current_step = "Environment"
     try:
+        print(f"[STARTUP] {current_step}: checking configuration", flush=True)
+        print_startup_environment_diagnostics()
+
+        current_step = "Database"
+        print(f"[STARTUP] {current_step}: creating/verifying tables", flush=True)
         init_db()
+        print(f"[STARTUP] {current_step}: ready", flush=True)
+
+        current_step = "Application Data"
+        print(f"[STARTUP] {current_step}: normalizing timestamps", flush=True)
         corrected_app_timestamps = normalize_active_application_timestamps()
         if corrected_app_timestamps:
-            print(f"[INFO] Corrected {corrected_app_timestamps} future active application timestamps.")
+            print(f"[INFO] Corrected {corrected_app_timestamps} future active application timestamps.", flush=True)
+
+        current_step = "Auth"
+        print(f"[STARTUP] {current_step}: ensuring schema", flush=True)
         ensure_auth_schema()
+        print(f"[STARTUP] {current_step}: ready", flush=True)
+
+        current_step = "Admin"
+        print(f"[STARTUP] {current_step}: bootstrapping super admin", flush=True)
         bootstrap_admin_user()
-    except RuntimeError as exc:
-        print(exc)
-        logging.getLogger("asset_sentinel.backend").exception("Backend runtime initialization failed: %s", exc)
+        print(f"[STARTUP] {current_step}: ready", flush=True)
+
+        current_step = "SMTP"
+        smtp_configured = bool(os.environ.get("SMTP_USERNAME") and os.environ.get("SMTP_PASSWORD"))
+        print(
+            f"[STARTUP] {current_step}: {'configured' if smtp_configured else 'not configured (optional)'}",
+            flush=True,
+        )
+
+        current_step = "Routes"
+        print(f"[STARTUP] {current_step}: {len(list(app.url_map.iter_rules()))} registered", flush=True)
+    except Exception as exc:
+        print(f"[STARTUP] FAILED at step: {current_step}", file=sys.stderr, flush=True)
+        print(f"[STARTUP] {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
+        startup_logger.exception("Backend runtime initialization failed at step %s", current_step)
         if exit_on_error:
-            sys.exit(1)
+            raise
         return False
     if os.environ.get("WERKZEUG_RUN_MAIN") in {None, "true"}:
         start_local_agent = (
             start_agent
             and os.environ.get("ASSET_SENTINEL_DISABLE_LOCAL_AGENT", "").lower() not in {"1", "true", "yes"}
         )
-        run_startup_checks(start_agent=start_local_agent)
+        if start_local_agent:
+            print("[STARTUP] Local Agent: starting Windows telemetry checks", flush=True)
+            run_startup_checks(start_agent=True)
+        else:
+            print("[STARTUP] Local Agent: disabled; local hardware and Windows checks skipped", flush=True)
     else:
-        print("[INFO] Flask reloader parent process skipped local telemetry startup.")
+        print("[INFO] Flask reloader parent process skipped local telemetry startup.", flush=True)
+    print("[STARTUP] App Ready", flush=True)
     return True
 
 
