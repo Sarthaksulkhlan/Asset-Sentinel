@@ -8,6 +8,11 @@ dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const BACKEND_API_BASE_URL = (
+  process.env.VITE_API_BASE_URL ||
+  process.env.ASSET_SENTINEL_API_URL ||
+  "https://asset-sentinel-backend.onrender.com"
+).replace(/\/+$/, "");
 
 async function startServer() {
   const app = express();
@@ -174,7 +179,6 @@ async function startServer() {
     data: unknown;
   };
 
-  // Helper to fetch from backend trying IPv4 loopback first (robust for Node 18+ environments), then localhost
   async function fetchFromBackend(endpoint: string, init: RequestInit = {}): Promise<BackendProxyResult | null> {
     const requestInit: RequestInit = {
       ...init,
@@ -183,22 +187,14 @@ async function startServer() {
         ...(init.headers || {}),
       },
     };
+    const normalizedEndpoint = endpoint.replace(/^\/+/, "");
 
     try {
-      // Try 127.0.0.1 explicitly to bypass IPv6 DNS resolution issues
-      const response = await fetch(`http://127.0.0.1:5000/api/${endpoint}`, requestInit);
+      const response = await fetch(`${BACKEND_API_BASE_URL}/api/${normalizedEndpoint}`, requestInit);
       const data = await response.json().catch(() => ({}));
       return { ok: response.ok, status: response.status, data };
-    } catch {
-      // silent fallback to localhost
-    }
-
-    try {
-      const response = await fetch(`http://localhost:5000/api/${endpoint}`, requestInit);
-      const data = await response.json().catch(() => ({}));
-      return { ok: response.ok, status: response.status, data };
-    } catch {
-      // silent
+    } catch (error) {
+      console.warn(`[SENTINEL CORE] Backend proxy unavailable: ${BACKEND_API_BASE_URL}/api/${normalizedEndpoint}`, error);
     }
 
     return null;
