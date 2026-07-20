@@ -49,7 +49,17 @@ from super_admin import all_support_tickets, company_detail, list_companies, sup
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__)
-CORS(app, supports_credentials=True, allow_headers=["Content-Type", "Authorization"])  # Allow React frontend auth headers
+cors_origins = [
+    origin.strip()
+    for origin in os.environ.get("ASSET_SENTINEL_CORS_ORIGINS", "*").split(",")
+    if origin.strip()
+]
+CORS(
+    app,
+    origins=cors_origins or ["*"],
+    supports_credentials=True,
+    allow_headers=["Content-Type", "Authorization"],
+)  # Allow configured React frontend origins and auth headers
 app.register_blueprint(agent_api)
 
 

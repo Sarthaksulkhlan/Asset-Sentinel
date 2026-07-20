@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: asset-sentinel-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: >-
+      python -c "from backend.main import initialize_backend_runtime; initialize_backend_runtime(start_agent=False)"
+      && gunicorn --bind 0.0.0.0:$PORT --workers 1 app:app
+    envVars:
+      - key: ASSET_SENTINEL_DATABASE_URL
+        sync: false
+      - key: ASSET_SENTINEL_JWT_SECRET
+        generateValue: true
+      - key: ASSET_SENTINEL_AGENT_TOKEN
+        sync: false
+      - key: ASSET_SENTINEL_DISABLE_LOCAL_AGENT
+        value: "true"
+      - key: ASSET_SENTINEL_CORS_ORIGINS
+        sync: false
+      - key: SUPER_ADMIN_USERNAME
+        sync: false
+      - key: SUPER_ADMIN_EMAIL
+        sync: false
+      - key: SUPER_ADMIN_PASSWORD
+        sync: false
