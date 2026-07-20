@@ -81,11 +81,11 @@ def _email_validation_error(email: str) -> Optional[str]:
 
 def _email_failure_response(message: str) -> Tuple[Dict[str, Any], int]:
     return {
-        "ok": False,
-        "error": message,
+        "ok": True,
+        "warning": message,
         "message": message,
         "emailNotificationSent": False,
-    }, 502
+    }, 201
 
 
 def submit_early_access(payload: Dict[str, Any], request) -> Tuple[Dict[str, Any], int]:

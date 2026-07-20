@@ -1,5 +1,6 @@
 import smtplib
 from email.message import EmailMessage
+import errno
 import logging
 from typing import Any, Dict, Optional
 
@@ -102,6 +103,16 @@ def _send_email(to_email: str, subject: str, body: str) -> bool:
     except smtplib.SMTPException as exc:
         _set_last_email_error(f"SMTP send failed via {Config.SMTP_HOST}:{Config.SMTP_PORT} using tls={Config.SMTP_USE_TLS} ssl={Config.SMTP_USE_SSL}: {exc}")
         logger.exception("SMTP send failed via %s:%s using tls=%s ssl=%s: %s", Config.SMTP_HOST, Config.SMTP_PORT, Config.SMTP_USE_TLS, Config.SMTP_USE_SSL, exc)
+        return False
+    except OSError as exc:
+        detail = f"Unexpected email failure via {Config.SMTP_HOST}:{Config.SMTP_PORT}: {exc}"
+        if getattr(exc, "errno", None) == errno.ENETUNREACH:
+            detail = (
+                f"{detail}. Network route is unavailable from this backend host; "
+                "Render free web services block outbound SMTP ports 25, 465, and 587."
+            )
+        _set_last_email_error(detail)
+        logger.exception("Email notification failed at network layer for subject %s via %s:%s: %s", subject, Config.SMTP_HOST, Config.SMTP_PORT, exc)
         return False
     except Exception as exc:
         _set_last_email_error(f"Unexpected email failure via {Config.SMTP_HOST}:{Config.SMTP_PORT}: {exc}")

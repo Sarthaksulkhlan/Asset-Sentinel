@@ -381,6 +381,24 @@ def list_assets(company_id: Optional[int] = None) -> List[Dict[str, Any]]:
         return assets
 
 
+def find_asset_for_registration(device_uid: str, hostname: Optional[str]) -> Optional[Dict[str, Any]]:
+    with get_db_session() as session:
+        conditions = []
+        if device_uid:
+            conditions.append(func.lower(Asset.device_uid) == str(device_uid).lower())
+        if hostname:
+            conditions.append(Asset.hostname == hostname)
+        if not conditions:
+            return None
+        row = session.execute(
+            select(Asset)
+            .where(or_(*conditions))
+            .order_by(Asset.last_seen.desc().nullslast(), Asset.collected_at.desc(), Asset.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        return serialize_asset(row) if row else None
+
+
 def _apply_asset_record(row: Asset, record: Dict[str, Any]) -> Asset:
     row.device_uid = resolve_device_uid(record)
     row.hostname = record.get("hostname") or row.hostname or "Unknown"
@@ -724,10 +742,40 @@ def _activity_summary(session, hostname: str, company_id: Optional[int] = None) 
 
 
 def replace_sessions(records: Iterable[Dict[str, Any]]) -> None:
+    records = [record for record in records if isinstance(record, dict)]
+    if not records:
+        return
     with get_db_session() as session:
+        hostnames = {record.get("hostname") or "Unknown" for record in records}
+        event_record_ids = {
+            str(record.get("windows_event_record_id"))
+            for record in records
+            if record.get("windows_event_record_id")
+        }
+        existing_by_event: Dict[tuple[str, str], SessionRecord] = {}
+        if hostnames and event_record_ids:
+            existing_rows = session.execute(
+                select(SessionRecord)
+                .where(SessionRecord.hostname.in_(hostnames))
+                .where(SessionRecord.windows_event_record_id.in_(event_record_ids))
+            ).scalars().all()
+            existing_by_event = {
+                (row.hostname or "Unknown", str(row.windows_event_record_id)): row
+                for row in existing_rows
+                if row.windows_event_record_id
+            }
+        company_id_by_hostname: Dict[str, Optional[int]] = {}
         for record in records:
-            company_id = record.get("company_id") or _company_id_for_hostname(session, record.get("hostname"))
-            existing = _find_existing_session_record(session, record)
+            hostname = record.get("hostname") or "Unknown"
+            if hostname not in company_id_by_hostname:
+                company_id_by_hostname[hostname] = _company_id_for_hostname(session, hostname)
+            company_id = record.get("company_id") or company_id_by_hostname[hostname]
+            event_record_id = record.get("windows_event_record_id")
+            existing = (
+                existing_by_event.get((hostname, str(event_record_id)))
+                if event_record_id
+                else _find_existing_session_record(session, record)
+            )
             if existing is None:
                 session.add(_build_session_record(record, company_id))
                 continue
@@ -1156,12 +1204,12 @@ def record_activity_sample(record: Dict[str, Any]) -> None:
         ))
 
 
-def record_activity_usage_aggregate(record: Dict[str, Any]) -> None:
+def _record_activity_usage_aggregate_in_session(session, record: Dict[str, Any]) -> bool:
     start_time = _parse_datetime(record.get("start_time"))
     end_time = _parse_datetime(record.get("end_time"))
     duration_seconds = int(record.get("duration_seconds") or 0)
     if not start_time or not end_time or duration_seconds <= 0:
-        return
+        return False
     if end_time <= start_time:
         end_time = start_time + timedelta(seconds=duration_seconds)
 
@@ -1175,57 +1223,71 @@ def record_activity_usage_aggregate(record: Dict[str, Any]) -> None:
     idle_seconds = duration_seconds if state == "IDLE" else 0
     locked_seconds = duration_seconds if state == "LOCKED" else 0
 
-    with get_db_session() as session:
-        company_id = record.get("company_id") or _company_id_for_hostname(session, hostname)
-        latest = session.execute(
-            select(ActivitySession)
-            .where(ActivitySession.hostname == hostname)
-            .where(ActivitySession.company_id == company_id)
-            .where(ActivitySession.app_name == app_name)
-            .where(ActivitySession.window_title == window_title)
-            .where(ActivitySession.created_date == created_date)
-            .order_by(ActivitySession.end_time.desc(), ActivitySession.id.desc())
-            .limit(1)
-        ).scalar_one_or_none()
+    company_id = record.get("company_id") or _company_id_for_hostname(session, hostname)
+    latest = session.execute(
+        select(ActivitySession)
+        .where(ActivitySession.hostname == hostname)
+        .where(ActivitySession.company_id == company_id)
+        .where(ActivitySession.app_name == app_name)
+        .where(ActivitySession.window_title == window_title)
+        .where(ActivitySession.created_date == created_date)
+        .order_by(ActivitySession.end_time.desc(), ActivitySession.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
 
-        if latest and latest.last_state == state and _parse_required_datetime(latest.end_time) <= end_time:
-            latest.total_seconds = int(latest.total_seconds or 0) + duration_seconds
-            latest.active_seconds = int(latest.active_seconds or 0) + active_seconds
-            latest.idle_seconds = int(latest.idle_seconds or 0) + idle_seconds
-            latest.locked_seconds = int(latest.locked_seconds or 0) + locked_seconds
-            latest.end_time = max(_parse_required_datetime(latest.end_time), end_time)
-            latest.last_state = state
-        else:
-            session.add(ActivitySession(
-                company_id=company_id,
-                hostname=hostname,
-                username=username,
-                app_name=app_name,
-                window_title=window_title,
-                start_time=start_time,
-                end_time=end_time,
-                total_seconds=duration_seconds,
-                active_seconds=active_seconds,
-                idle_seconds=idle_seconds,
-                locked_seconds=locked_seconds,
-                created_date=created_date,
-                last_state=state,
-            ))
-
-        _increment_daily_usage(
-            session,
+    if latest and latest.last_state == state and _parse_required_datetime(latest.end_time) <= end_time:
+        latest.total_seconds = int(latest.total_seconds or 0) + duration_seconds
+        latest.active_seconds = int(latest.active_seconds or 0) + active_seconds
+        latest.idle_seconds = int(latest.idle_seconds or 0) + idle_seconds
+        latest.locked_seconds = int(latest.locked_seconds or 0) + locked_seconds
+        latest.end_time = max(_parse_required_datetime(latest.end_time), end_time)
+        latest.last_state = state
+    else:
+        session.add(ActivitySession(
             company_id=company_id,
             hostname=hostname,
             username=username,
-            application_name=app_name,
+            app_name=app_name,
             window_title=window_title,
             start_time=start_time,
             end_time=end_time,
-            foreground_seconds=duration_seconds,
+            total_seconds=duration_seconds,
             active_seconds=active_seconds,
             idle_seconds=idle_seconds,
             locked_seconds=locked_seconds,
-        )
+            created_date=created_date,
+            last_state=state,
+        ))
+
+    _increment_daily_usage(
+        session,
+        company_id=company_id,
+        hostname=hostname,
+        username=username,
+        application_name=app_name,
+        window_title=window_title,
+        start_time=start_time,
+        end_time=end_time,
+        foreground_seconds=duration_seconds,
+        active_seconds=active_seconds,
+        idle_seconds=idle_seconds,
+        locked_seconds=locked_seconds,
+    )
+    return True
+
+
+def record_activity_usage_aggregate(record: Dict[str, Any]) -> None:
+    with get_db_session() as session:
+        _record_activity_usage_aggregate_in_session(session, record)
+
+
+def record_activity_usage_aggregates(records: Iterable[Dict[str, Any]]) -> int:
+    saved = 0
+    with get_db_session() as session:
+        for record in records:
+            if isinstance(record, dict) and _record_activity_usage_aggregate_in_session(session, record):
+                saved += 1
+    return saved
 
 
 def append_active_application(record: Dict[str, Any]) -> None:

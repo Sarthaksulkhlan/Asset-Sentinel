@@ -38,6 +38,7 @@ Requires: pywin32, psutil (Windows only)
 import socket
 import logging
 import ctypes
+from ctypes import wintypes
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 import os
@@ -71,6 +72,10 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("session_manager")
+WTS_CURRENT_SERVER_HANDLE = 0
+WTS_USER_NAME = 5
+WTS_DOMAIN_NAME = 7
+WTS_NO_ACTIVE_SESSION = 0xFFFFFFFF
 
 
 def _coinitialize_for_wmi() -> bool:
@@ -83,6 +88,57 @@ def _coinitialize_for_wmi() -> bool:
     except Exception as exc:
         logger.warning("pythoncom.CoInitialize failed before WMI session lookup: %s", exc)
         return False
+
+
+def _active_console_session_id() -> Optional[int]:
+    if os.name != "nt":
+        return None
+    try:
+        session_id = ctypes.windll.kernel32.WTSGetActiveConsoleSessionId()
+        if session_id == WTS_NO_ACTIVE_SESSION:
+            return None
+        return int(session_id)
+    except Exception as exc:
+        logger.debug("Could not resolve active console session id: %s", exc)
+        return None
+
+
+def _query_wts_session_string(session_id: int, info_class: int) -> Optional[str]:
+    if os.name != "nt":
+        return None
+    buffer = wintypes.LPWSTR()
+    byte_count = wintypes.DWORD()
+    try:
+        succeeded = ctypes.windll.wtsapi32.WTSQuerySessionInformationW(
+            WTS_CURRENT_SERVER_HANDLE,
+            session_id,
+            info_class,
+            ctypes.byref(buffer),
+            ctypes.byref(byte_count),
+        )
+        if not succeeded or not buffer.value:
+            return None
+        return buffer.value.strip()
+    except Exception as exc:
+        logger.debug("Could not query WTS session info class %s for session %s: %s", info_class, session_id, exc)
+        return None
+    finally:
+        if buffer:
+            try:
+                ctypes.windll.wtsapi32.WTSFreeMemory(buffer)
+            except Exception:
+                pass
+
+
+def _active_console_username() -> Optional[str]:
+    session_id = _active_console_session_id()
+    if session_id is None:
+        return None
+    username = _query_wts_session_string(session_id, WTS_USER_NAME)
+    if not username:
+        return None
+    domain = _query_wts_session_string(session_id, WTS_DOMAIN_NAME)
+    return f"{domain}\\{username}" if domain else username
 
 
 # ============================================================================
@@ -101,7 +157,11 @@ def get_current_username() -> Optional[str]:
         None: If unable to determine username
     """
     try:
-        # Windows API approach - gets domain\username format if on domain
+        active_username = _active_console_username()
+        if active_username:
+            return active_username
+
+        # Environment fallback. Windows services may report the service account here.
         username = os.environ.get("USERNAME")
         if username:
             return username.strip()
@@ -211,6 +271,9 @@ def get_session_id_via_wmi() -> Optional[str]:
 
 def get_session_id_via_windows_api() -> Optional[str]:
     try:
+        active_session_id = _active_console_session_id()
+        if active_session_id is not None:
+            return str(active_session_id)
         session_id = ctypes.c_ulong()
         process_id = os.getpid()
         if ctypes.windll.kernel32.ProcessIdToSessionId(process_id, ctypes.byref(session_id)):

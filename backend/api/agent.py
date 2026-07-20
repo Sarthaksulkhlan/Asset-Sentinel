@@ -1,5 +1,7 @@
 import os
+import time
 from functools import wraps
+import logging
 from typing import Any, Dict, Optional
 
 from flask import Blueprint, jsonify, request
@@ -9,6 +11,7 @@ from storage import (
     append_active_application,
     append_alert,
     append_session,
+    find_asset_for_registration,
     get_latest_active_application_for_host,
     has_session_event_signature,
     list_active_applications_history,
@@ -16,7 +19,7 @@ from storage import (
     list_assets,
     list_sessions,
     record_activity_sample,
-    record_activity_usage_aggregate,
+    record_activity_usage_aggregates,
     record_hardware_change,
     replace_sessions,
     resolve_device_uid,
@@ -28,10 +31,11 @@ from storage import (
 
 agent_api = Blueprint("agent_api", __name__, url_prefix="/api/agent")
 DEFAULT_DEVELOPMENT_AGENT_TOKEN = "asset-sentinel-development-agent-token"
+logger = logging.getLogger("asset_sentinel.agent_api")
 
 
 def _agent_token() -> Optional[str]:
-    return os.environ.get("AGENT_TOKEN") or os.environ.get("ASSET_SENTINEL_AGENT_TOKEN") or DEFAULT_DEVELOPMENT_AGENT_TOKEN
+    return os.environ.get("ASSET_SENTINEL_AGENT_TOKEN") or os.environ.get("AGENT_TOKEN") or DEFAULT_DEVELOPMENT_AGENT_TOKEN
 
 
 def _json_payload() -> Dict[str, Any]:
@@ -42,6 +46,7 @@ def _json_payload() -> Dict[str, Any]:
 def require_agent_token(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
+        started_at = time.monotonic()
         expected = _agent_token()
         if not expected:
             return jsonify({"error": "Agent token is not configured"}), 503
@@ -49,16 +54,22 @@ def require_agent_token(fn):
         scheme, _, token = auth_header.partition(" ")
         if scheme.lower() != "bearer" or token != expected:
             return jsonify({"error": "Unauthorized agent request"}), 401
-        return fn(*args, **kwargs)
+        response = fn(*args, **kwargs)
+        elapsed_seconds = time.monotonic() - started_at
+        if elapsed_seconds >= 1.0:
+            logger.info(
+                "Slow agent request: method=%s path=%s elapsed_seconds=%.3f",
+                request.method,
+                request.path,
+                elapsed_seconds,
+            )
+        return response
 
     return wrapper
 
 
 def _find_existing_asset(device_uid: str, hostname: Optional[str]) -> Optional[Dict[str, Any]]:
-    for asset in list_assets():
-        if asset.get("device_uid") == device_uid or (hostname and asset.get("hostname") == hostname):
-            return asset
-    return None
+    return find_asset_for_registration(device_uid, hostname)
 
 
 def _record_hardware_change_if_needed(existing: Optional[Dict[str, Any]], current: Dict[str, Any]) -> None:
@@ -192,10 +203,8 @@ def activity_usage():
     records = payload.get("records")
     if not isinstance(records, list):
         records = []
-    for record in records:
-        if isinstance(record, dict):
-            record_activity_usage_aggregate(record)
-    return jsonify({"ok": True, "count": len(records)})
+    saved = record_activity_usage_aggregates(record for record in records if isinstance(record, dict))
+    return jsonify({"ok": True, "count": saved})
 
 
 @agent_api.route("/alert", methods=["POST"])

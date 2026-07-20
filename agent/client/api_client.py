@@ -41,8 +41,8 @@ load_agent_env()
 
 DEFAULT_API_URL = "http://127.0.0.1:5000"
 DEFAULT_DEVELOPMENT_AGENT_TOKEN = "asset-sentinel-development-agent-token"
-DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("ASSET_SENTINEL_AGENT_API_TIMEOUT_SECONDS", "2"))
-DEFAULT_RETRIES = int(os.environ.get("ASSET_SENTINEL_AGENT_API_RETRIES", "1"))
+DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("ASSET_SENTINEL_AGENT_API_TIMEOUT_SECONDS", "10"))
+DEFAULT_RETRIES = int(os.environ.get("ASSET_SENTINEL_AGENT_API_RETRIES", "2"))
 ACTIVITY_USAGE_SYNC_SECONDS = int(os.environ.get("ASSET_SENTINEL_ACTIVITY_USAGE_SYNC_SECONDS", "15"))
 
 
@@ -203,10 +203,17 @@ def flush_activity_usage(force: bool = False) -> Dict[str, Any]:
     if not _activity_usage_buffer:
         _last_activity_flush_at = now
         return {"ok": True, "flushed": 0, "buffered": 0}
-    records = list(_activity_usage_buffer.values())
-    _activity_usage_buffer.clear()
+    pending_items = list(_activity_usage_buffer.items())
+    records = [dict(record) for _, record in pending_items]
+    try:
+        response = client().post("/api/agent/activity-usage", {"records": records})
+    except Exception:
+        _last_activity_flush_at = now
+        raise
+    for key, _ in pending_items:
+        _activity_usage_buffer.pop(key, None)
     _last_activity_flush_at = now
-    return client().post("/api/agent/activity-usage", {"records": records})
+    return response
 
 
 def send_activity_sample(payload: Dict[str, Any]) -> Dict[str, Any]:
