@@ -536,15 +536,17 @@ def _session_summary(session, hostname: str, company_id: Optional[int] = None) -
     )
     latest_login = ordered_login_rows[0] if ordered_login_rows else latest
     current_open_login = _current_open_login(rows)
-    active_login = current_open_login
-    current_login = active_login or latest_login
+    # Login Activity is anchored to the newest distinct Windows login record.
+    # Do not let an older row that was left active replace the latest login in
+    # the widget; previous sessions remain available in session history.
+    current_login = latest_login
     today = datetime.now(_local_tzinfo()).date()
     week_start = today - timedelta(days=today.weekday())
     logins_today = 0
     logins_this_week = 0
     last_successful_login = None
     last_failed_login = None
-    last_logout = None
+    completed_logout_times: List[datetime] = []
     for row in sorted(rows, key=lambda item: (_login_event_time(item) or datetime.min.replace(tzinfo=timezone.utc), item.id or 0)):
         stamp = row.login_timestamp or row.recorded_at
         stamp_date = _local_date(stamp) if stamp else None
@@ -556,12 +558,19 @@ def _session_summary(session, hostname: str, company_id: Optional[int] = None) -
                 logins_today += 1
             if stamp_date and stamp_date >= week_start:
                 logins_this_week += 1
-        if row.event_type == "LOGOUT":
-            last_logout = row.logout_timestamp or row.recorded_at
+        if _is_completed_logout(row):
+            completed_at = _parse_datetime(row.logout_timestamp or row.recorded_at)
+            if completed_at:
+                completed_logout_times.append(completed_at)
         details = getattr(row, "details", None) or {}
         if isinstance(details, dict) and details.get("failed_login_timestamp"):
             last_failed_login = _parse_datetime(details.get("failed_login_timestamp"))
 
+    last_logout = max(completed_logout_times) if completed_logout_times else None
+    latest_is_active = bool(
+        (current_open_login and current_open_login is latest_login)
+        or latest_login.active
+    )
     summary = {
         "current_user": current_login.username or latest_login.username,
         "username": current_login.username or latest_login.username,
@@ -569,11 +578,11 @@ def _session_summary(session, hostname: str, company_id: Optional[int] = None) -
         "login_timestamp": _iso(current_login.login_timestamp or current_login.recorded_at),
         "last_login": _iso(current_login.login_timestamp or current_login.recorded_at),
         "current_login_time": _iso(current_login.login_timestamp or current_login.recorded_at),
-        "logout_timestamp": _iso(last_logout or latest.logout_timestamp),
-        "last_logout": _iso(last_logout or latest.logout_timestamp),
+        "logout_timestamp": _iso(last_logout),
+        "last_logout": _iso(last_logout),
         "session_duration": (
-            _duration(active_login.login_timestamp or active_login.recorded_at)
-            if active_login
+            _duration(latest_login.login_timestamp or latest_login.recorded_at)
+            if latest_is_active
             else (latest_login.session_duration or "Ended")
         ),
         "total_logins": len(login_rows),
@@ -581,7 +590,7 @@ def _session_summary(session, hostname: str, company_id: Optional[int] = None) -
         "logins_this_week": logins_this_week,
         "last_successful_login": _iso(last_successful_login),
         "last_failed_login": _iso(last_failed_login),
-        "active_session": bool(current_open_login),
+        "active_session": latest_is_active,
     }
     logger.info(
         "Dashboard login summary for hostname=%s: total=%s today=%s week=%s last_success=%s",
@@ -630,6 +639,17 @@ def _is_lock_or_logout(row: SessionRecord) -> bool:
     source = row.login_source or ""
     event_id = str(row.windows_event_id or "")
     return source in NON_COUNTABLE_LOGIN_SOURCES or event_id in {"4800", "4779", "LOCKAPP_LOCK"}
+
+
+def _is_completed_logout(row: SessionRecord) -> bool:
+    """Return true for an actual Windows logoff, never for lock/disconnect."""
+    if row.event_type != "LOGOUT":
+        return False
+    source = row.login_source or ""
+    event_id = str(row.windows_event_id or "")
+    if source in NON_COUNTABLE_LOGIN_SOURCES or event_id in {"4800", "4779", "LOCKAPP_LOCK"}:
+        return False
+    return source in {"windows_logoff", "windows_user_logoff"} or event_id in {"4634", "4647"} or not (source or event_id)
 
 
 def _current_open_login(rows: Iterable[SessionRecord]) -> Optional[SessionRecord]:
@@ -684,64 +704,6 @@ def _dedup_countable_login_rows(rows: Iterable[SessionRecord]) -> List[SessionRe
     return deduped
 
 
-def _record_login_event_time(record: Dict[str, Any]) -> Optional[datetime]:
-    return _parse_datetime(record.get("login_timestamp") or record.get("recorded_at") or record.get("last_seen"))
-
-
-def _record_logout_event_time(record: Dict[str, Any]) -> Optional[datetime]:
-    return _parse_datetime(record.get("logout_timestamp") or record.get("recorded_at") or record.get("last_seen"))
-
-
-def _is_countable_login_record(record: Dict[str, Any]) -> bool:
-    if record.get("event_type") != "LOGIN":
-        return False
-    source = record.get("login_source")
-    event_id = str(record.get("windows_event_id") or "")
-    return source in REAL_LOGIN_SOURCES or event_id in REAL_LOGIN_EVENT_IDS
-
-
-def _is_lock_or_logout_record(record: Dict[str, Any]) -> bool:
-    if record.get("event_type") == "LOGOUT":
-        return True
-    source = record.get("login_source") or ""
-    event_id = str(record.get("windows_event_id") or "")
-    return source in SESSION_STATE_SOURCES or event_id in {"4800", "4779", "LOCKAPP_LOCK"}
-
-
-def _close_active_login_rows(
-    session,
-    *,
-    hostname: str,
-    company_id: Optional[int],
-    closed_at: datetime,
-) -> int:
-    query = (
-        select(SessionRecord)
-        .where(SessionRecord.hostname == hostname)
-        .where(SessionRecord.event_type == "LOGIN")
-        .where(SessionRecord.active.is_(True))
-    )
-    if company_id is not None:
-        query = query.where(or_(SessionRecord.company_id == company_id, SessionRecord.company_id.is_(None)))
-    rows = session.execute(query).scalars().all()
-    closed = 0
-    for row in rows:
-        login_at = _parse_datetime(row.login_timestamp or row.recorded_at)
-        if login_at and login_at > closed_at:
-            continue
-        row.logout_timestamp = closed_at
-        row.session_duration = _duration(login_at or row.recorded_at, closed_at) or row.session_duration or "Ended"
-        row.active = False
-        row.device_status = None
-        row.last_seen = closed_at
-        if row.company_id is None and company_id is not None:
-            row.company_id = int(company_id)
-        closed += 1
-    if closed:
-        logger.info("Closed %s active login row(s) for hostname=%s at %s", closed, hostname, closed_at.isoformat())
-    return closed
-
-
 def _activity_summary(session, hostname: str, company_id: Optional[int] = None) -> Dict[str, Any]:
     query = select(ActiveApplicationHistory).where(ActiveApplicationHistory.hostname == hostname)
     if company_id is not None:
@@ -765,15 +727,6 @@ def replace_sessions(records: Iterable[Dict[str, Any]]) -> None:
     with get_db_session() as session:
         for record in records:
             company_id = record.get("company_id") or _company_id_for_hostname(session, record.get("hostname"))
-            if _is_lock_or_logout_record(record):
-                closed_at = _record_logout_event_time(record) or _parse_datetime(record.get("recorded_at"))
-                if closed_at:
-                    _close_active_login_rows(
-                        session,
-                        hostname=record.get("hostname") or "Unknown",
-                        company_id=company_id,
-                        closed_at=closed_at,
-                    )
             existing = _find_existing_session_record(session, record)
             if existing is None:
                 session.add(_build_session_record(record, company_id))
@@ -876,24 +829,6 @@ def append_session(record: Dict[str, Any]) -> None:
                 record.get("windows_event_id"),
             )
             return
-        hostname = record.get("hostname") or "Unknown"
-        if _is_lock_or_logout_record(record):
-            closed_at = _record_logout_event_time(record) or _parse_required_datetime(record.get("recorded_at"))
-            _close_active_login_rows(
-                session,
-                hostname=hostname,
-                company_id=company_id,
-                closed_at=closed_at,
-            )
-        elif _is_countable_login_record(record):
-            login_at = _record_login_event_time(record) or _parse_required_datetime(record.get("recorded_at"))
-            _close_active_login_rows(
-                session,
-                hostname=hostname,
-                company_id=company_id,
-                closed_at=login_at,
-            )
-
         session.add(_build_session_record(record, company_id))
         session.flush()
         logger.info(
@@ -1606,7 +1541,42 @@ def _inferred_active_session_start(
     now: Optional[datetime] = None,
 ) -> Optional[datetime]:
     session_rows = list(sessions)
-    return _latest_active_session_start(session_rows)
+    active_start = _latest_active_session_start(session_rows)
+    if active_start:
+        return active_start
+
+    latest_close = _latest_lock_or_logout_time(session_rows)
+    latest_login = _latest_session_start(session_rows)
+    if not latest_close or (latest_login and latest_login > latest_close):
+        return None
+
+    now = now or datetime.now(timezone.utc)
+    last_seen = _parse_datetime(asset_last_seen)
+    if last_seen and last_seen <= latest_close:
+        return None
+
+    candidates: List[datetime] = []
+    for row in app_history or []:
+        stamp = _parse_datetime(row.timestamp)
+        if not stamp or stamp <= latest_close or stamp > now:
+            continue
+        if _is_lock_app_label(row.application, row.window_title, row.process_path):
+            continue
+        candidates.append(stamp)
+
+    for row in activity_sessions or []:
+        if _is_lock_app_label(row.app_name, row.window_title):
+            continue
+        start = _parse_datetime(row.start_time)
+        end = _parse_datetime(row.end_time)
+        if start and start > latest_close and start <= now:
+            candidates.append(start)
+        elif start and end and start <= latest_close < end:
+            candidates.append(latest_close)
+
+    if not candidates:
+        return None
+    return sorted(candidates)[0]
 
 
 class LASTINPUTINFO(ctypes.Structure):
@@ -1988,6 +1958,8 @@ def _application_usage_analytics(
         _overlap_seconds(started_at, ended_at, locked_intervals),
     )
     locked_seconds = min(session_duration, locked_seconds)
+    missing_seconds = max(0, session_duration - active_seconds - idle_seconds - locked_seconds)
+    active_seconds += missing_seconds
     if active_seconds + idle_seconds + locked_seconds > session_duration:
         overflow = active_seconds + idle_seconds + locked_seconds - session_duration
         idle_reduction = min(idle_seconds, overflow)
