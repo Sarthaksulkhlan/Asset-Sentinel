@@ -5,7 +5,8 @@ import sys
 import threading
 import time
 import ctypes
-from datetime import datetime
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -37,6 +38,7 @@ LOCK_FALLBACK_DEBOUNCE_SECONDS = 2
 UNLOCK_FALLBACK_DEBOUNCE_SECONDS = 2
 IDLE_THRESHOLD_SECONDS = int(os.environ.get("IDLE_THRESHOLD_SECONDS") or os.environ.get("ASSET_SENTINEL_IDLE_THRESHOLD_SECONDS", "60"))
 logger = logging.getLogger("asset_sentinel.active_application_monitor")
+WORKSTATION_STATE_PATH = ROOT_DIR / "logs" / "workstation_state.json"
 
 _monitor_lock = threading.Lock()
 _monitor_started = False
@@ -45,6 +47,63 @@ _last_signature_by_host: Dict[str, tuple] = {}
 _lock_screen_observed = False
 _last_lock_fallback_at = 0.0
 _last_unlock_fallback_at = 0.0
+
+
+def _load_workstation_state() -> Dict[str, Any]:
+    try:
+        if WORKSTATION_STATE_PATH.exists():
+            with WORKSTATION_STATE_PATH.open("r", encoding="utf-8") as handle:
+                state = json.load(handle)
+                return state if isinstance(state, dict) else {}
+    except Exception as exc:
+        logger.warning("Could not read workstation state file %s: %s", WORKSTATION_STATE_PATH, exc)
+    return {}
+
+
+def _save_workstation_state(state: Dict[str, Any]) -> None:
+    try:
+        WORKSTATION_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with WORKSTATION_STATE_PATH.open("w", encoding="utf-8") as handle:
+            json.dump(state, handle, indent=2, sort_keys=True)
+    except Exception as exc:
+        logger.warning("Could not persist workstation state file %s: %s", WORKSTATION_STATE_PATH, exc)
+
+
+def _state_key(hostname: Optional[str]) -> str:
+    return hostname or socket.gethostname() or "Unknown"
+
+
+def _apply_workstation_state(hostname: Optional[str], locked: bool) -> bool:
+    """
+    Persist the workstation lock state and return true only for real transitions.
+
+    Unknown -> locked initializes state without creating a LockApp event because
+    a startup/polling race is not proof that Windows just entered the lock
+    screen. Unlocked -> locked is the only transition that emits LockApp.
+    """
+    state = _load_workstation_state()
+    key = _state_key(hostname)
+    previous = (state.get(key) or {}).get("state")
+    current = "locked" if locked else "unlocked"
+    if previous == current:
+        return False
+
+    state[key] = {
+        "state": current,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _save_workstation_state(state)
+
+    if previous is None:
+        logger.info(
+            "Workstation state initialized: hostname=%s state=%s; no synthetic transition event emitted.",
+            key,
+            current,
+        )
+        return not locked
+
+    logger.info("Workstation state transition: hostname=%s %s -> %s", key, previous, current)
+    return previous == "unlocked" and current == "locked"
 
 
 class LASTINPUTINFO(ctypes.Structure):
@@ -71,10 +130,15 @@ def is_windows_locked() -> Optional[bool]:
         return None
     try:
         user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
         DESKTOP_SWITCHDESKTOP = 0x0100
         desktop = user32.OpenInputDesktop(0, False, DESKTOP_SWITCHDESKTOP)
         if not desktop:
-            return True
+            logger.info(
+                "Windows lock probe inconclusive: OpenInputDesktop returned no handle error=%s; not emitting LockApp.",
+                kernel32.GetLastError(),
+            )
+            return None
         try:
             return not bool(user32.SwitchDesktop(desktop))
         finally:
@@ -130,7 +194,7 @@ def _current_username() -> str:
 def activity_state_from_record(record: Optional[Dict[str, Any]]) -> str:
     if not record:
         return "active"
-    if record.get("windows_locked"):
+    if record.get("windows_locked") or _is_lock_app(record):
         return "locked"
     if record.get("is_user_idle"):
         return "idle"
@@ -159,7 +223,11 @@ def _log_activity_sample_state(
 def collect_active_application_record() -> Optional[Dict[str, Any]]:
     locked = is_windows_locked()
     if locked is True:
-        return _locked_activity_record()
+        record = _locked_activity_record()
+        if _apply_workstation_state(record.get("hostname"), True):
+            return record
+        logger.debug("Workstation remains locked; no duplicate LockApp active-application event emitted.")
+        return None
 
     activity = collect_current_active_path()
     executable_name = activity.get("active_process_name")
@@ -173,7 +241,7 @@ def collect_active_application_record() -> Optional[Dict[str, Any]]:
     process_path = activity.get("active_process_path")
     idle_seconds = get_user_idle_seconds()
 
-    return {
+    record = {
         "hostname": socket.gethostname(),
         "username": _current_username(),
         "application_name": application_name,
@@ -184,8 +252,11 @@ def collect_active_application_record() -> Optional[Dict[str, Any]]:
         "user_idle_seconds": idle_seconds,
         "idle_threshold_seconds": IDLE_THRESHOLD_SECONDS,
         "is_user_idle": bool(idle_seconds is not None and idle_seconds >= IDLE_THRESHOLD_SECONDS),
-        "windows_locked": bool(locked is True or "lockapp" in (executable_name or "").lower() or "lock screen" in (window_title or "").lower()),
+        "windows_locked": False,
     }
+    if locked is False:
+        _apply_workstation_state(record.get("hostname"), False)
+    return record
 
 
 def _record_signature(record: Dict[str, Any]) -> tuple:
@@ -202,6 +273,7 @@ def _is_lock_app(record: Optional[Dict[str, Any]]) -> bool:
         return False
     values = [
         record.get("application_name"),
+        record.get("application"),
         record.get("executable_name"),
         record.get("window_title"),
         record.get("process_path"),

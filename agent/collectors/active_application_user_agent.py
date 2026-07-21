@@ -188,6 +188,7 @@ class ActiveApplicationUserAgent:
             return
         if latest:
             self.last_signature_by_host[hostname] = _record_signature(latest)
+            self.last_activity_state_by_host[hostname] = activity_state_from_record(latest)
             logger.info(
                 "Seeded latest active application signature: hostname=%s application=%s timestamp=%s",
                 hostname,

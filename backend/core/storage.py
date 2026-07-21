@@ -355,6 +355,29 @@ def serialize_active_application_history(row: ActiveApplicationHistory) -> Dict[
     }
 
 
+def _is_lock_screen_application_record(record: Dict[str, Any]) -> bool:
+    values = [
+        record.get("application_name"),
+        record.get("application"),
+        record.get("executable_name"),
+        record.get("window_title"),
+        record.get("process_path"),
+        record.get("active_process_path"),
+    ]
+    return bool(record.get("windows_locked")) or any(
+        "lockapp" in str(value or "").lower() or "lock screen" in str(value or "").lower()
+        for value in values
+    )
+
+
+def _is_lock_screen_history_row(row: ActiveApplicationHistory) -> bool:
+    values = [row.application, row.window_title, row.process_path]
+    return any(
+        "lockapp" in str(value or "").lower() or "lock screen" in str(value or "").lower()
+        for value in values
+    )
+
+
 def list_assets(company_id: Optional[int] = None) -> List[Dict[str, Any]]:
     with get_db_session() as session:
         reference_now = _database_now(session)
@@ -1356,6 +1379,14 @@ def append_active_application(record: Dict[str, Any]) -> None:
         ):
             logger.info(
                 "Application event skipped as duplicate: hostname=%s application=%s window=%s",
+                hostname,
+                application_name,
+                window_title,
+            )
+            return
+        if latest and _is_lock_screen_history_row(latest) and _is_lock_screen_application_record(record):
+            logger.info(
+                "Lock screen application event skipped as duplicate state: hostname=%s application=%s window=%s",
                 hostname,
                 application_name,
                 window_title,
