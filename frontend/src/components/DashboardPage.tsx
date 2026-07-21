@@ -16,9 +16,8 @@ import {
   Server, 
   CheckCircle2, 
   Activity, 
-  Clock, 
+  Clock,
   Database,
-  RefreshCw,
   Cpu,
   MapPin,
   X,
@@ -26,7 +25,6 @@ import {
   Zap,
   Lock,
   RotateCcw,
-  Sparkles,
   Sliders,
   HardDrive,
   Layers,
@@ -883,11 +881,6 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   const [chartWavePath, setChartWavePath] = useState("");
   const [chartGridCells, setChartGridCells] = useState<string[]>([]);
 
-  // AI Forensics audit states
-  const [auditLoading, setAuditLoading] = useState(false);
-  const [auditReport, setAuditReport] = useState<string | null>(null);
-  const [auditRiskScore, setAuditRiskScore] = useState<number | null>(null);
-  const [auditSeverity, setAuditSeverity] = useState<string | null>(null);
   const assetsTableRef = useRef<HTMLDivElement | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const assetDetailDrawerRef = useRef<HTMLDivElement | null>(null);
@@ -1565,59 +1558,6 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
       securityIncidents: overload + (idle > 1 ? 1 : 0),
     };
   }, [assets, liveLogs]);
-
-  // AI Compliance Audit request using full-stack Gemini API endpoint
-  const handleAICorporateAudit = async (asset: Asset) => {
-    setAuditLoading(true);
-    setAuditReport(null);
-    setAuditRiskScore(null);
-    setAuditSeverity(null);
-
-    const padZero = (n: number) => n.toString().padStart(2, '0');
-    const now = new Date();
-    const timeStr = `${padZero(now.getHours())}:${padZero(now.getMinutes())}:${padZero(now.getSeconds())}`;
-
-    // Append trigger statement in logs console
-    setLocalLogs((prev: SecurityFeedItem[]) => [
-      { timestamp: timeStr, node: "AI-FORENSIC-CORE", message: `Initiating deep digital compliance scan on endpoint ${asset.hostname}...`, type: "info" },
-      ...prev
-    ]);
-
-    try {
-      const response = await apiFetch("/api/audit-asset", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(asset)
-      });
-      
-      if (!response.ok) {
-        throw new Error("Terminal link refused or timed out during compliance query.");
-      }
-
-      const reportData = await response.json();
-      
-      // Update states with beautiful AI forensic results
-      setAuditReport(reportData.analysis);
-      setAuditRiskScore(reportData.riskScore);
-      setAuditSeverity(reportData.severity);
-
-      // Append result log
-      setLocalLogs((prev: SecurityFeedItem[]) => [
-        { 
-          timestamp: timeStr, 
-          node: "AI-FORENSIC-CORE", 
-          message: `Audit completed on ${asset.hostname}. Severity: ${reportData.severity.toUpperCase()}. Risk Factor: ${reportData.riskScore}/100.`, 
-          type: reportData.severity === "critical" ? "critical" : reportData.severity === "warning" ? "warning" : "info" 
-        },
-        ...prev
-      ]);
-    } catch (err: any) {
-      console.error(err);
-      setAuditReport(`### CONNECTION ERROR\n\nFailed to establish diagnostic telemetry handshake with Sentinel AI Forensics Server. Ensure your Gemini API service key is bound in settings correctly.\n\n*Error details: ${err.message || "Endpoint error - Host refused connect"}`);
-    } finally {
-      setAuditLoading(false);
-    }
-  };
 
   // Tactical Operations Handler: Trigger Simulated Alert Swap
   const handleTriggerTelemetryAlert = (asset: Asset) => {
@@ -3262,9 +3202,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap xl:justify-end">
-                    <button onClick={() => handleAICorporateAudit(selectedAsset)} disabled={auditLoading || selectedAsset.status === "Offline"} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#38BDF8]/35 bg-[#38BDF8] px-3.5 py-2.5 text-[11px] font-bold uppercase tracking-wider text-[#07111F] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_0_24px_rgba(56,189,248,0.32)] disabled:cursor-not-allowed disabled:opacity-40">
-                      <Sparkles className="h-4 w-4" />{auditLoading ? "Scanning" : "AI Audit"}
-                    </button>
+                    {/* TODO: Re-enable AI Audit after its Flask backend endpoint is implemented. */}
                     {!isDemoMode && (
                       <button onClick={() => handleTriggerTelemetryAlert(selectedAsset)} disabled={selectedAsset.status === "Offline" || selectedAsset.status === "Overload"} className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-500/35 bg-red-500/10 px-3.5 py-2.5 text-[11px] font-bold uppercase tracking-wider text-red-300 transition-all duration-200 hover:-translate-y-0.5 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-35">
                         <AlertTriangle className="h-4 w-4" />Tamper
@@ -3518,46 +3456,6 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                   )}
                 </div>
               </DetailSection>
-
-              {/* AI Forensic results window output */}
-              {(auditLoading || auditReport) && (
-                <div className="bg-[#0D1117] border border-white/5 p-4 rounded-xl flex flex-col gap-3 font-sans shadow-inner selection:bg-[#00d1ff]/20">
-                  
-                  {/* Headline item */}
-                  <div className="flex items-center justify-between border-b border-[#3c494e]/30 pb-2 mb-1">
-                    <span className="text-xs uppercase font-black text-[#00d1ff] tracking-widest flex items-center gap-1.5 font-mono">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      Sentinel Forensic AI Analyst
-                    </span>
-                    {auditRiskScore !== null && (
-                      <span className={`text-[10px] font-mono font-extrabold px-2.5 py-0.5 rounded-full ${auditRiskScore > 70 ? "bg-red-950/40 text-red-400 border border-red-500/30" : auditRiskScore > 30 ? "bg-amber-950/40 text-amber-400 border border-amber-500/30" : "bg-emerald-992/30 text-emerald-400 border border-emerald-500/30"}`}>
-                        Risk Index: {auditRiskScore}/100
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Loading Scanline Sequencer */}
-                  {auditLoading ? (
-                    <div className="flex flex-col gap-3 py-6 items-center justify-center text-center select-none font-mono text-[11px] text-[#00d1ff]">
-                      <RefreshCw className="w-8 h-8 animate-spin text-[#00d1ff]" />
-                      <div className="flex flex-col gap-1 mt-2">
-                        <span className="animate-pulse">Handshaking cryptographic node signatures...</span>
-                        <span className="text-[#bbc9cf] text-[9px] font-light">Querying secure full-stack forensic intelligence model [gemini-3.5-flash]</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div id="ai-forensic-report-markdown" className="text-xs text-[#bbc9cf] leading-relaxed select-text space-y-3 prose prose-invert font-light max-w-none">
-                      
-                      {/* Formatted markdown text box */}
-                      <div className="whitespace-pre-line font-mono text-[11px] text-[#dae3ee]">
-                        {auditReport}
-                      </div>
-
-                    </div>
-                  )}
-
-                </div>
-              )}
 
               {/* Asset Historical logs list panel */}
               <div className="flex flex-col gap-2.5 border-t border-[#3c494e]/20 pt-4 selection:bg-[#00d1ff]/10">
