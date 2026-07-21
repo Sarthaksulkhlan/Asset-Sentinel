@@ -536,6 +536,33 @@ def ensure_auth_schema() -> None:
             "CREATE INDEX IF NOT EXISTS idx_sessions_windows_event_record_id "
             "ON sessions (windows_event_record_id)"
         ))
+        session.execute(text(
+            """
+            WITH duplicate_session_events AS (
+                SELECT
+                    id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY hostname, windows_event_record_id
+                        ORDER BY recorded_at ASC, id ASC
+                    ) AS duplicate_rank
+                FROM sessions
+                WHERE windows_event_record_id IS NOT NULL
+            )
+            DELETE FROM sessions
+            WHERE id IN (
+                SELECT id
+                FROM duplicate_session_events
+                WHERE duplicate_rank > 1
+            )
+            """
+        ))
+        session.execute(text(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_sessions_hostname_windows_event_record_id
+            ON sessions (hostname, windows_event_record_id)
+            WHERE windows_event_record_id IS NOT NULL
+            """
+        ))
         session.execute(text("ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_users_role"))
         session.execute(text("ALTER TABLE users ALTER COLUMN role SET DEFAULT 'COMPANY_ADMIN'"))
         session.execute(text(

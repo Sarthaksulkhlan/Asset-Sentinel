@@ -113,6 +113,13 @@ class SessionRecord(Base):
         Index("idx_sessions_event_type", "event_type"),
         Index("idx_sessions_login_timestamp", login_timestamp.desc()),
         Index("idx_sessions_windows_event_record_id", "windows_event_record_id"),
+        Index(
+            "uq_sessions_hostname_windows_event_record_id",
+            "hostname",
+            "windows_event_record_id",
+            unique=True,
+            postgresql_where=windows_event_record_id.is_not(None),
+        ),
     )
 
 

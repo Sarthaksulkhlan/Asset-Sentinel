@@ -248,7 +248,7 @@ class AssetSentinelAgent:
     def _refresh_active_application_after_unlock(self, login_record: Dict[str, Any]) -> None:
         event_id = str(login_record.get("windows_event_id") or "")
         source = str(login_record.get("login_source") or "")
-        if event_id not in {"4801", "4778", "LOCKAPP_UNLOCK"} and "unlock" not in source and "reconnect" not in source:
+        if event_id not in {"4801", "4778"} and "unlock" not in source and "reconnect" not in source:
             return
         try:
             record = collect_active_application_record()

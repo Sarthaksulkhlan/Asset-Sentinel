@@ -22,16 +22,12 @@ for path in [
         sys.path.insert(0, path_text)
 
 from collect_hardware import collect_current_active_path
-from login_tracker import close_active_sessions, detect_login, load_sessions, record_login, save_sessions
-from session_manager import get_current_session_info
+from login_tracker import detect_login
 from api_client import (
     get_latest_active_application_for_host as get_latest_active_application_for_host_from_api,
-    has_session_event_signature,
     list_active_applications_history,
     send_activity_sample,
-    send_alert,
     send_application,
-    send_session,
 )
 
 
@@ -215,63 +211,19 @@ def _is_lock_app(record: Optional[Dict[str, Any]]) -> bool:
 
 def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
     """
-    Non-admin fallback for Windows unlocks.
+    Track LockApp observations without creating session records.
 
-    Security 4624/4634 remains the preferred source, but normal desktop
-    processes often cannot open the Security log. The foreground monitor can
-    still observe LockApp during Win+L; the transition from LockApp to the next
-    user application is a real lock/unlock boundary.
+    Login Activity must only be driven by real Windows authentication/session
+    events. Foreground LockApp transitions are useful for activity state, but
+    they are not a durable authentication signal and must never create LOGIN
+    rows.
     """
     global _lock_screen_observed, _last_lock_fallback_at, _last_unlock_fallback_at
 
     if _is_lock_app(record):
-        now = time.time()
-        if not _lock_screen_observed and now - _last_lock_fallback_at >= LOCK_FALLBACK_DEBOUNCE_SECONDS:
-            session_info = get_current_session_info()
-            timestamp = str(record.get("timestamp") or datetime.now().astimezone().isoformat())
-            synthetic_record_id = (
-                f"lockapp-lock:{session_info.get('hostname')}:"
-                f"{session_info.get('username')}:{int(now)}"
-            )
-            if not has_session_event_signature(session_info.get("hostname"), synthetic_record_id):
-                lock_record = {
-                    "event_type": "LOGOUT",
-                    "username": session_info.get("username"),
-                    "hostname": session_info.get("hostname") or socket.gethostname(),
-                    "ip_address": session_info.get("ip_address"),
-                    "session_id": session_info.get("session_id"),
-                    "login_timestamp": session_info.get("login_timestamp"),
-                    "logout_timestamp": timestamp,
-                    "session_duration": "Locked",
-                    "active": False,
-                    "device_status": None,
-                    "last_seen": timestamp,
-                    "login_source": "windows_lock_observed",
-                    "windows_event_id": "LOCKAPP_LOCK",
-                    "windows_event_record_id": synthetic_record_id,
-                    "recorded_at": timestamp,
-                }
-                active_sessions = load_sessions()
-                updated_sessions = close_active_sessions(
-                    active_sessions,
-                    {
-                        **session_info,
-                        "force_close_active_sessions": True,
-                        "latest_logout_timestamp": timestamp,
-                        "latest_logout_event_id": "LOCKAPP_LOCK",
-                        "latest_logout_event_record_id": synthetic_record_id,
-                    },
-                    timestamp,
-                )
-                save_sessions(updated_sessions)
-                send_session(lock_record)
-                logger.info(
-                    "Logout detected from LockApp fallback: user=%s host=%s record_id=%s",
-                    session_info.get("username"),
-                    session_info.get("hostname"),
-                    synthetic_record_id,
-                )
-                _last_lock_fallback_at = now
+        if not _lock_screen_observed:
+            logger.info("LockApp observed; waiting for Windows Event Log lock/unlock records.")
+            _last_lock_fallback_at = time.time()
         _lock_screen_observed = True
         return
 
@@ -283,42 +235,9 @@ def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
         _lock_screen_observed = False
         return
 
-    session_info = get_current_session_info()
-    timestamp = str(record.get("timestamp") or datetime.now().astimezone().isoformat())
-    synthetic_record_id = (
-        f"lockapp-unlock:{session_info.get('hostname')}:"
-        f"{session_info.get('username')}:{int(now)}"
-    )
-    if has_session_event_signature(session_info.get("hostname"), synthetic_record_id):
-        _lock_screen_observed = False
-        return
-
-    record_login({
-        **session_info,
-        "hostname": session_info.get("hostname") or socket.gethostname(),
-        "login_timestamp": timestamp,
-        "login_source": "windows_unlock_observed",
-        "windows_event_id": "LOCKAPP_UNLOCK",
-        "windows_event_record_id": synthetic_record_id,
-    })
-    send_alert(
-        "UNLOCK",
-        session_info.get("hostname") or socket.gethostname(),
-        "LOW",
-        {
-            "username": session_info.get("username"),
-            "login_source": "windows_unlock_observed",
-            "windows_event_id": "LOCKAPP_UNLOCK",
-            "windows_event_record_id": synthetic_record_id,
-            "description": "Windows unlock observed from LockApp transition.",
-        },
-        timestamp,
-    )
     logger.info(
-        "Unlock detected from LockApp fallback and started a new current session: user=%s host=%s record_id=%s",
-        session_info.get("username"),
-        session_info.get("hostname"),
-        synthetic_record_id,
+        "LockApp transition observed to %s; no Login Activity row created without a Windows unlock event.",
+        record.get("application_name") or record.get("executable_name") or record.get("window_title"),
     )
     _last_unlock_fallback_at = now
     _lock_screen_observed = False

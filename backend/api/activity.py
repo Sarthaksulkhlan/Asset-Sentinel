@@ -39,7 +39,6 @@ from storage import get_asset_status
 
 NON_COUNTABLE_LOGIN_SOURCES = {
     "windows_lock",
-    "windows_lock_observed",
     "windows_session_disconnect",
 }
 

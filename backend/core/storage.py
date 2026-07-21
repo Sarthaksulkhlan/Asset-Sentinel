@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from uuid import UUID
 
 from sqlalchemy import delete, desc, func, or_, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database import get_db_session
@@ -19,19 +20,16 @@ logger = logging.getLogger("asset_sentinel.storage")
 
 REAL_LOGIN_SOURCES = {
     "windows_interactive_logon",
-    "windows_session_observed",
     "windows_unlock",
-    "windows_unlock_observed",
     "windows_session_reconnect",
 }
-REAL_LOGIN_EVENT_IDS = {"4624", "4801", "4778", "LOCKAPP_UNLOCK", "SESSION_OBSERVED"}
+REAL_LOGIN_EVENT_IDS = {"4624", "4801", "4778"}
 NON_COUNTABLE_LOGIN_SOURCES = {
     "windows_lock",
-    "windows_lock_observed",
     "windows_session_disconnect",
 }
 SESSION_STATE_SOURCES = NON_COUNTABLE_LOGIN_SOURCES | {"windows_logoff", "windows_user_logoff"}
-SESSION_STATE_EVENT_IDS = {"4800", "4801", "4779", "4778", "LOCKAPP_LOCK", "LOCKAPP_UNLOCK"}
+SESSION_STATE_EVENT_IDS = {"4800", "4634", "4647", "4779", "4801", "4778"}
 DEFAULT_IDLE_THRESHOLD_SECONDS = int(os.environ.get("IDLE_THRESHOLD_SECONDS") or os.environ.get("ASSET_SENTINEL_IDLE_THRESHOLD_SECONDS", "60"))
 DEFAULT_DEVELOPMENT_COMPANY_NAME = os.environ.get("ASSET_SENTINEL_DEFAULT_COMPANY", "Asset Sentinel Internal")
 
@@ -656,7 +654,7 @@ def _is_lock_or_logout(row: SessionRecord) -> bool:
         return True
     source = row.login_source or ""
     event_id = str(row.windows_event_id or "")
-    return source in NON_COUNTABLE_LOGIN_SOURCES or event_id in {"4800", "4779", "LOCKAPP_LOCK"}
+    return source in NON_COUNTABLE_LOGIN_SOURCES or event_id in {"4800", "4779"}
 
 
 def _is_completed_logout(row: SessionRecord) -> bool:
@@ -665,7 +663,7 @@ def _is_completed_logout(row: SessionRecord) -> bool:
         return False
     source = row.login_source or ""
     event_id = str(row.windows_event_id or "")
-    if source in NON_COUNTABLE_LOGIN_SOURCES or event_id in {"4800", "4779", "LOCKAPP_LOCK"}:
+    if source in NON_COUNTABLE_LOGIN_SOURCES or event_id in {"4800", "4779"}:
         return False
     return source in {"windows_logoff", "windows_user_logoff"} or event_id in {"4634", "4647"} or not (source or event_id)
 
@@ -878,7 +876,16 @@ def append_session(record: Dict[str, Any]) -> None:
             )
             return
         session.add(_build_session_record(record, company_id))
-        session.flush()
+        try:
+            session.flush()
+        except IntegrityError:
+            session.rollback()
+            logger.info(
+                "Skipping duplicate session event rejected by database uniqueness: hostname=%s event_record_id=%s",
+                record.get("hostname"),
+                event_record_id,
+            )
+            return
         logger.info(
             "%s detected and inserted: hostname=%s username=%s event_id=%s record_id=%s",
             record.get("event_type") or "LOGIN",
@@ -1858,9 +1865,9 @@ def _locked_intervals(sessions: Iterable[SessionRecord], window_start: datetime,
             continue
         source = row.login_source or ""
         event_id = str(row.windows_event_id or "")
-        if source in {"windows_lock", "windows_lock_observed", "windows_session_disconnect"} or event_id in {"4800", "4779", "LOCKAPP_LOCK"}:
+        if source in {"windows_lock", "windows_session_disconnect"} or event_id in {"4800", "4779"}:
             events.append(("lock", stamp))
-        elif source in {"windows_unlock", "windows_unlock_observed", "windows_session_reconnect"} or event_id in {"4801", "4778", "LOCKAPP_UNLOCK"}:
+        elif source in {"windows_unlock", "windows_session_reconnect"} or event_id in {"4801", "4778"}:
             events.append(("unlock", stamp))
         elif row.event_type == "LOGIN" and _is_countable_login(row):
             events.append(("unlock", stamp))
