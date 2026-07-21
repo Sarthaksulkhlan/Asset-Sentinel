@@ -22,7 +22,7 @@ for path in [
     if path_text not in sys.path:
         sys.path.insert(0, path_text)
 
-from collect_hardware import collect_current_active_path
+from collect_hardware import collect_current_active_path, collect_foreground_diagnostics
 from login_tracker import detect_login
 from session_manager import get_latest_windows_logout_event, get_latest_windows_unlock_event
 from api_client import (
@@ -241,9 +241,24 @@ def is_windows_locked() -> Optional[bool]:
         DESKTOP_SWITCHDESKTOP = 0x0100
         desktop = user32.OpenInputDesktop(0, False, DESKTOP_SWITCHDESKTOP)
         if not desktop:
+            error_code = kernel32.GetLastError()
+            if error_code == 5:
+                diagnostics = collect_foreground_diagnostics()
+                current_session_id = diagnostics.get("current_session_id")
+                active_console_session_id = diagnostics.get("active_console_session_id")
+                if (
+                    current_session_id is not None
+                    and current_session_id == active_console_session_id
+                    and int(current_session_id) > 0
+                ):
+                    logger.info(
+                        "Windows lock probe confirmed locked: OpenInputDesktop denied in active console session. diagnostics=%s",
+                        diagnostics,
+                    )
+                    return True
             logger.info(
                 "Windows lock probe inconclusive: OpenInputDesktop returned no handle error=%s; not emitting LockApp.",
-                kernel32.GetLastError(),
+                error_code,
             )
             return None
         try:

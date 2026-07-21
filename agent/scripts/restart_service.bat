@@ -7,9 +7,11 @@ if errorlevel 1 exit /b 1
 
 echo Restarting Asset Sentinel Monitoring Service...
 "%PYTHON_EXE%" agent\windows\asset_sentinel_service.py --wait 30 stop
+call "%CD%\agent\scripts\stop_active_app_agent.bat"
 "%PYTHON_EXE%" agent\windows\asset_sentinel_service.py --wait 30 start
 sc.exe query AssetSentinelMonitoringService | find "RUNNING" >nul
 if errorlevel 1 goto :error
+call "%CD%\agent\scripts\start_active_app_agent.bat"
 
 echo Asset Sentinel Monitoring Service restarted.
 exit /b 0
