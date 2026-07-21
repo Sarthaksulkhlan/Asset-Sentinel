@@ -21,7 +21,6 @@ for path in [
         sys.path.insert(0, path_text)
 
 from collect_hardware import collect_hardware
-from active_application_monitor import _record_unlock_fallback_if_needed, collect_active_application_record
 from login_tracker import detect_login
 from service_logging import configure_logging
 from api_client import client, resolve_device_uid, send_register
@@ -48,10 +47,6 @@ def run(stop_event: threading.Event) -> None:
     while not stop_event.is_set():
         try:
             logger.info("Telemetry before insert: type=login_activity")
-            try:
-                _record_unlock_fallback_if_needed(collect_active_application_record())
-            except Exception as fallback_exc:
-                logger.exception("Login activity lock/unlock fallback failed and will continue: %s", fallback_exc)
             record = detect_login()
             if record:
                 logger.info(

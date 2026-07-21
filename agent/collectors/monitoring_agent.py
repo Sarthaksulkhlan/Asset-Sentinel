@@ -226,10 +226,6 @@ class AssetSentinelAgent:
         while not self.stop_event.is_set():
             try:
                 logger.info("Telemetry before insert: type=login_activity hostname=%s", self.hostname)
-                try:
-                    _record_unlock_fallback_if_needed(collect_active_application_record())
-                except Exception as fallback_exc:
-                    logger.exception("Login loop lock/unlock fallback failed and will continue: %s", fallback_exc)
                 record = detect_login()
                 if record:
                     logger.info(

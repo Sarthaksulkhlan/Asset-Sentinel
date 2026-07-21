@@ -324,6 +324,17 @@ def _parse_iso_utc(value: Optional[str]) -> Optional[datetime]:
     return parsed.replace(tzinfo=datetime.now().astimezone().tzinfo).astimezone(timezone.utc)
 
 
+def _event_target_user_matches(event_id: int, inserts: list[str], normalized_user: str) -> bool:
+    if not normalized_user:
+        return False
+    if event_id == 4624 and len(inserts) > 5:
+        return _normalize_windows_username(inserts[5]) == normalized_user
+    if event_id in {4634, 4647, 4779, 4800, 4801} and len(inserts) > 1:
+        return _normalize_windows_username(inserts[1]) == normalized_user
+    lowered = [_normalize_windows_username(value) for value in inserts]
+    return normalized_user in lowered
+
+
 def _read_latest_windows_security_event(
     username: Optional[str],
     event_ids: set[int],
@@ -379,16 +390,16 @@ def _read_latest_windows_security_event(
                     return None
 
                 inserts = [str(value) for value in (event.StringInserts or [])]
-                lowered = [_normalize_windows_username(value) for value in inserts]
+                user_matches = _event_target_user_matches(event_id, inserts, normalized_user)
                 logger.info(
                     "Windows login event received: event_id=%s record_id=%s timestamp=%s user_match=%s inserts=%s",
                     event_id,
                     event.RecordNumber,
                     generated_at.isoformat(),
-                    normalized_user in lowered,
+                    user_matches,
                     inserts,
                 )
-                if normalized_user not in lowered:
+                if not user_matches:
                     logger.info(
                         "Windows login event rejected: event_id=%s record_id=%s reason=username_not_matched expected=%s",
                         event_id,

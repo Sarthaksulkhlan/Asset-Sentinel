@@ -1903,16 +1903,22 @@ def _add_usage_duration(
 def _locked_intervals(sessions: Iterable[SessionRecord], window_start: datetime, window_end: datetime) -> List[tuple[datetime, datetime]]:
     events = []
     for row in sessions:
-        stamp = _parse_datetime(row.login_timestamp or row.logout_timestamp or row.recorded_at)
-        if not stamp:
-            continue
         source = row.login_source or ""
         event_id = str(row.windows_event_id or "")
         if source in {"windows_lock", "windows_session_disconnect"} or event_id in {"4800", "4779"}:
+            stamp = _parse_datetime(row.logout_timestamp or row.recorded_at or row.login_timestamp)
+            if not stamp:
+                continue
             events.append(("lock", stamp))
         elif source in {"windows_unlock", "windows_session_reconnect"} or event_id in {"4801", "4778"}:
+            stamp = _parse_datetime(row.login_timestamp or row.recorded_at or row.logout_timestamp)
+            if not stamp:
+                continue
             events.append(("unlock", stamp))
         elif row.event_type == "LOGIN" and _is_countable_login(row):
+            stamp = _parse_datetime(row.login_timestamp or row.recorded_at or row.logout_timestamp)
+            if not stamp:
+                continue
             events.append(("unlock", stamp))
     events.sort(key=lambda item: item[1])
 
@@ -1932,6 +1938,58 @@ def _locked_intervals(sessions: Iterable[SessionRecord], window_start: datetime,
         if window_end > start:
             intervals.append((start, window_end))
     return intervals
+
+
+def _locked_intervals_from_app_history(
+    app_history: Iterable[ActiveApplicationHistory],
+    window_start: datetime,
+    window_end: datetime,
+) -> List[tuple[datetime, datetime]]:
+    events = []
+    for row in app_history:
+        stamp = _parse_datetime(row.timestamp)
+        if not stamp or stamp > window_end:
+            continue
+        events.append((
+            "lock" if _is_lock_app_label(row.application, row.window_title, row.process_path) else "unlock",
+            stamp,
+        ))
+    events.sort(key=lambda item: item[1])
+
+    intervals: List[tuple[datetime, datetime]] = []
+    locked_at: Optional[datetime] = None
+    for event_type, stamp in events:
+        if event_type == "lock":
+            locked_at = stamp
+            continue
+        if event_type == "unlock" and locked_at:
+            if stamp > window_start:
+                start = max(locked_at, window_start)
+                end = min(stamp, window_end)
+                if end > start:
+                    intervals.append((start, end))
+            locked_at = None
+        elif event_type == "unlock":
+            locked_at = None
+    if locked_at:
+        start = max(locked_at, window_start)
+        if window_end > start:
+            intervals.append((start, window_end))
+    return intervals
+
+
+def _merge_time_intervals(intervals: Iterable[tuple[datetime, datetime]]) -> List[tuple[datetime, datetime]]:
+    ordered = sorted((start, end) for start, end in intervals if end > start)
+    if not ordered:
+        return []
+    merged = [ordered[0]]
+    for start, end in ordered[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end:
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def _overlap_seconds(start: datetime, end: datetime, intervals: Iterable[tuple[datetime, datetime]]) -> int:
@@ -2236,7 +2294,10 @@ def get_asset_details(hostname: str, company_id: Optional[int] = None) -> Option
                 period,
                 period_start,
                 period_end,
-                _locked_intervals(sessions_for_usage, period_start, period_end),
+                _merge_time_intervals([
+                    *_locked_intervals(sessions_for_usage, period_start, period_end),
+                    *_locked_intervals_from_app_history(app_history_for_usage, period_start, period_end),
+                ]),
             )
         usage_analytics = usage_periods["today"]
 

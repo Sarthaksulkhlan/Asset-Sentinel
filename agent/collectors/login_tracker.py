@@ -121,7 +121,8 @@ def _event_state_key(hostname: Optional[str]) -> str:
 
 
 def _event_log_name(event_id: Optional[str]) -> str:
-    return "security"
+    event_text = str(event_id or "unknown").strip() or "unknown"
+    return f"security:{event_text}"
 
 
 def _is_event_already_processed(hostname: Optional[str], event_id: Optional[str], record_id: Optional[str]) -> bool:
