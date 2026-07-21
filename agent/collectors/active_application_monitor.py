@@ -24,6 +24,7 @@ for path in [
 
 from collect_hardware import collect_current_active_path
 from login_tracker import detect_login
+from session_manager import get_latest_windows_logout_event
 from api_client import (
     get_latest_active_application_for_host as get_latest_active_application_for_host_from_api,
     list_active_applications_history,
@@ -39,6 +40,7 @@ UNLOCK_FALLBACK_DEBOUNCE_SECONDS = 2
 IDLE_THRESHOLD_SECONDS = int(os.environ.get("IDLE_THRESHOLD_SECONDS") or os.environ.get("ASSET_SENTINEL_IDLE_THRESHOLD_SECONDS", "60"))
 logger = logging.getLogger("asset_sentinel.active_application_monitor")
 WORKSTATION_STATE_PATH = ROOT_DIR / "logs" / "workstation_state.json"
+WINDOWS_LOCK_EVENT_IDS = {"4800", "4779"}
 
 _monitor_lock = threading.Lock()
 _monitor_started = False
@@ -73,6 +75,15 @@ def _state_key(hostname: Optional[str]) -> str:
     return hostname or socket.gethostname() or "Unknown"
 
 
+def _current_workstation_state(hostname: Optional[str]) -> Optional[str]:
+    state = _load_workstation_state()
+    current = state.get(_state_key(hostname)) or {}
+    if not isinstance(current, dict):
+        return None
+    value = current.get("state")
+    return str(value) if value else None
+
+
 def _apply_workstation_state(hostname: Optional[str], locked: bool) -> bool:
     """
     Persist the workstation lock state and return true only for real transitions.
@@ -104,6 +115,51 @@ def _apply_workstation_state(hostname: Optional[str], locked: bool) -> bool:
 
     logger.info("Workstation state transition: hostname=%s %s -> %s", key, previous, current)
     return previous == "unlocked" and current == "locked"
+
+
+def _latest_confirmed_windows_lock_event(username: Optional[str]) -> Optional[Dict[str, Any]]:
+    try:
+        event = get_latest_windows_logout_event(username)
+    except Exception as exc:
+        logger.debug("Could not read latest Windows lock event for LockApp timeline proof: %s", exc)
+        return None
+    if not event or str(event.get("event_id") or "") not in WINDOWS_LOCK_EVENT_IDS:
+        return None
+    return event
+
+
+def _lock_event_already_emitted(hostname: Optional[str], event: Optional[Dict[str, Any]]) -> bool:
+    if not event:
+        return False
+    record_id = str(event.get("event_record_id") or "")
+    event_id = str(event.get("event_id") or "")
+    if not record_id:
+        return False
+    state = _load_workstation_state()
+    current = state.get(_state_key(hostname)) or {}
+    return (
+        str(current.get("last_lock_event_record_id") or "") == record_id
+        and str(current.get("last_lock_event_id") or "") == event_id
+    )
+
+
+def _remember_lock_event_emitted(hostname: Optional[str], event: Optional[Dict[str, Any]]) -> None:
+    if not event:
+        return
+    record_id = str(event.get("event_record_id") or "")
+    if not record_id:
+        return
+    state = _load_workstation_state()
+    key = _state_key(hostname)
+    current = state.get(key) if isinstance(state.get(key), dict) else {}
+    current.update({
+        "state": "locked",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "last_lock_event_id": str(event.get("event_id") or ""),
+        "last_lock_event_record_id": record_id,
+    })
+    state[key] = current
+    _save_workstation_state(state)
 
 
 class LASTINPUTINFO(ctypes.Structure):
@@ -148,8 +204,8 @@ def is_windows_locked() -> Optional[bool]:
         return None
 
 
-def _locked_activity_record() -> Dict[str, Any]:
-    timestamp = datetime.now().astimezone().isoformat()
+def _locked_activity_record(lock_event: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    timestamp = (lock_event or {}).get("event_timestamp") or datetime.now().astimezone().isoformat()
     return {
         "hostname": socket.gethostname(),
         "username": _current_username(),
@@ -163,6 +219,8 @@ def _locked_activity_record() -> Dict[str, Any]:
         "is_user_idle": False,
         "windows_locked": True,
         "lock_state_transition": True,
+        "windows_event_id": (lock_event or {}).get("event_id"),
+        "windows_event_record_id": (lock_event or {}).get("event_record_id"),
     }
 
 
@@ -224,8 +282,24 @@ def _log_activity_sample_state(
 def collect_active_application_record() -> Optional[Dict[str, Any]]:
     locked = is_windows_locked()
     if locked is True:
-        record = _locked_activity_record()
+        username = _current_username()
+        lock_event = _latest_confirmed_windows_lock_event(username)
+        record = _locked_activity_record(lock_event)
+        previous_state = _current_workstation_state(record.get("hostname"))
         if _apply_workstation_state(record.get("hostname"), True):
+            _remember_lock_event_emitted(record.get("hostname"), lock_event)
+            return record
+        if (
+            previous_state is None
+            and lock_event
+            and not _lock_event_already_emitted(record.get("hostname"), lock_event)
+        ):
+            logger.info(
+                "Confirmed Windows lock event emitted to active application timeline: event_id=%s record_id=%s",
+                lock_event.get("event_id"),
+                lock_event.get("event_record_id"),
+            )
+            _remember_lock_event_emitted(record.get("hostname"), lock_event)
             return record
         logger.debug("Workstation remains locked; no duplicate LockApp active-application event emitted.")
         return None

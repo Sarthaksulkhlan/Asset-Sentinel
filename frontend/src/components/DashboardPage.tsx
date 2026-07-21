@@ -107,6 +107,7 @@ const timelineHistoryLabels: Record<TimelineHistoryPreset, string> = {
   custom: "Custom Range",
 };
 const LIVE_APPLICATION_TIMELINE_POLL_MS = 3000;
+const ASSET_DETAIL_POLL_MS = 5000;
 
 const appAccentClasses = [
   "from-[#38BDF8] to-[#2563EB] text-sky-100",
@@ -1455,7 +1456,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     };
 
     fetchAssetDetail();
-    const timer = setInterval(fetchAssetDetail, 15000);
+    const timer = setInterval(fetchAssetDetail, ASSET_DETAIL_POLL_MS);
     return () => {
       active = false;
       clearInterval(timer);
