@@ -106,6 +106,7 @@ const timelineHistoryLabels: Record<TimelineHistoryPreset, string> = {
   last_2_days: "Last 2 Days",
   custom: "Custom Range",
 };
+const LIVE_APPLICATION_TIMELINE_POLL_MS = 3000;
 
 const appAccentClasses = [
   "from-[#38BDF8] to-[#2563EB] text-sky-100",
@@ -1455,6 +1456,51 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
 
     fetchAssetDetail();
     const timer = setInterval(fetchAssetDetail, 15000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [selectedAsset?.deviceId, selectedAsset?.hostname, isDemoMode, isTimelineSelectorOpen, isTimelineHistoryOpen]);
+
+  useEffect(() => {
+    if (!selectedAsset || isDemoMode) return;
+
+    let active = true;
+    const fetchLiveApplicationTimeline = async () => {
+      if (isTimelineSelectorOpen || isTimelineHistoryOpen) return;
+      try {
+        const identifier = selectedAsset.deviceId || selectedAsset.hostname;
+        const response = await apiFetch(`/api/active-application-history/${encodeURIComponent(identifier)}?limit=100`);
+        if (!response.ok) throw new Error("Active application history endpoint error");
+        const payload = await response.json();
+        const timeline = sortNewestTelemetry(
+          Array.isArray(payload.application_timeline) ? payload.application_timeline : []
+        );
+        if (!active || timeline.length === 0) return;
+
+        const latestApplicationEntry = newestApplicationEntry(timeline as Array<Record<string, any>>);
+        setSelectedAssetDetail((current) => current ? {
+          ...current,
+          application_timeline: timeline,
+        } : current);
+        setSelectedAsset((current) => {
+          if (assetIdentity(current) !== assetIdentity(selectedAsset)) return current;
+          const activeApplicationPatch = latestApplicationEntry ? {
+            activeApplication: latestApplicationEntry.application || latestApplicationEntry.application_name || current?.activeApplication,
+            activeWindow: latestApplicationEntry.window_title || current?.activeWindow,
+            currentWebsite: latestApplicationEntry.process_path || current?.currentWebsite,
+            lastActiveTime: latestApplicationEntry.timestamp || current?.lastActiveTime,
+            applicationHistory: timeline,
+          } : {};
+          return current ? { ...current, ...activeApplicationPatch } : current;
+        });
+      } catch (err) {
+        console.warn("[SENTINEL COMPLIANCE] Live application timeline integration offline.", err);
+      }
+    };
+
+    fetchLiveApplicationTimeline();
+    const timer = setInterval(fetchLiveApplicationTimeline, LIVE_APPLICATION_TIMELINE_POLL_MS);
     return () => {
       active = false;
       clearInterval(timer);

@@ -2,6 +2,7 @@ import os
 import time
 from functools import wraps
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from flask import Blueprint, jsonify, request
@@ -41,6 +42,20 @@ def _agent_token() -> Optional[str]:
 def _json_payload() -> Dict[str, Any]:
     payload = request.get_json(silent=True)
     return payload if isinstance(payload, dict) else {}
+
+
+def _parse_event_timestamp(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return None
 
 
 def require_agent_token(fn):
@@ -185,7 +200,23 @@ def application_event():
 @agent_api.route("/application-event", methods=["POST"])
 @require_agent_token
 def application_history_event():
-    append_active_application(_json_payload())
+    received_at = datetime.now(timezone.utc)
+    payload = _json_payload()
+    event_timestamp = _parse_event_timestamp(payload.get("timestamp"))
+    write_started_at = time.monotonic()
+    append_active_application(payload)
+    write_elapsed = time.monotonic() - write_started_at
+    total_elapsed = (datetime.now(timezone.utc) - received_at).total_seconds()
+    receive_lag = (received_at - event_timestamp).total_seconds() if event_timestamp else None
+    logger.info(
+        "Active application pipeline: hostname=%s application=%s event_timestamp=%s receive_lag_seconds=%s db_write_seconds=%.3f response_seconds=%.3f",
+        payload.get("hostname"),
+        payload.get("application_name") or payload.get("application"),
+        payload.get("timestamp"),
+        round(receive_lag, 3) if receive_lag is not None else None,
+        write_elapsed,
+        total_elapsed,
+    )
     return jsonify({"ok": True})
 
 

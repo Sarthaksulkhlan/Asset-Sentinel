@@ -976,6 +976,32 @@ def list_active_applications_history(company_id: Optional[int] = None) -> List[D
         return [serialize_active_application_history(row) for row in rows]
 
 
+def list_active_application_history_for_asset(
+    identifier: str,
+    company_id: Optional[int] = None,
+    limit: int = 100,
+) -> Optional[List[Dict[str, Any]]]:
+    if not identifier:
+        return None
+    limit = max(1, min(int(limit or 100), 200))
+    with get_db_session() as session:
+        asset_row = _find_asset_by_public_identifier(session, identifier)
+        if asset_row is None:
+            return None
+        if company_id is not None and asset_row.company_id != company_id:
+            return None
+        query = (
+            select(ActiveApplicationHistory)
+            .where(ActiveApplicationHistory.hostname == asset_row.hostname)
+            .order_by(ActiveApplicationHistory.timestamp.desc(), ActiveApplicationHistory.id.desc())
+            .limit(limit)
+        )
+        if company_id is not None:
+            query = query.where(ActiveApplicationHistory.company_id == company_id)
+        rows = session.execute(query).scalars().all()
+        return [serialize_active_application_history(row) for row in rows]
+
+
 def _latest_asset_device_id(session, hostname: str) -> str:
     row = session.execute(
         select(Asset)

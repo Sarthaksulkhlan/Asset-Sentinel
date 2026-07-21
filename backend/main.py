@@ -24,7 +24,14 @@ from activity_api import (
 )
 from database import database_host_for_display, init_db
 from service_logging import configure_logging, has_asset_sentinel_file_logging
-from storage import get_asset_details, get_latest_active_applications, list_alerts, list_assets, normalize_active_application_timestamps
+from storage import (
+    get_asset_details,
+    get_latest_active_applications,
+    list_active_application_history_for_asset,
+    list_alerts,
+    list_assets,
+    normalize_active_application_timestamps,
+)
 from startup_health import device_health_response, run_startup_checks, startup_health_response
 from registration import register_admin, submit_early_access
 from backend.api.agent import agent_api
@@ -68,6 +75,7 @@ app.register_blueprint(agent_api)
 def add_live_api_cache_headers(response):
     if (
         request.path.startswith("/api/assets")
+        or request.path.startswith("/api/active-application-history")
         or request.path in {"/api/active-applications", "/api/sessions", "/api/sessions/count"}
         or request.path in {"/sessions", "/sessions/count", "/device-status", "/current-session", "/current-user"}
     ):
@@ -139,6 +147,24 @@ def get_active_applications():
     Returns the latest active Windows application seen for each monitored host.
     """
     return jsonify(get_latest_active_applications(_request_company_scope()))
+
+
+@app.route("/api/active-application-history/<path:hostname>", methods=["GET"])
+@require_auth()
+def get_active_application_history(hostname):
+    """
+    GET /api/active-application-history/<hostname-or-device-id>
+    Returns recent active application timeline entries without recomputing
+    the full asset detail analytics payload.
+    """
+    try:
+        limit = int(request.args.get("limit") or "100")
+    except ValueError:
+        limit = 100
+    history = list_active_application_history_for_asset(hostname, _request_company_scope(), limit)
+    if history is None:
+        return jsonify({"error": "Asset not found"}), 404
+    return jsonify({"application_timeline": history})
 
 
 @app.route("/api/debug/startup-health", methods=["GET"])

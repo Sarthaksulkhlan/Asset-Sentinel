@@ -52,6 +52,8 @@ from api_client import (
 logger = logging.getLogger("asset_sentinel.active_application_user_agent")
 NO_FOREGROUND_LOG_INTERVAL_SECONDS = 30
 SPOOL_RETRY_INTERVAL_SECONDS = 15
+SPOOL_RETRY_MAX_EVENTS = int(os.environ.get("ASSET_SENTINEL_ACTIVE_APP_SPOOL_RETRY_MAX_EVENTS", "3"))
+SPOOL_RETRY_TIME_BUDGET_SECONDS = float(os.environ.get("ASSET_SENTINEL_ACTIVE_APP_SPOOL_RETRY_TIME_BUDGET_SECONDS", "5"))
 STARTUP_RETRY_INTERVAL_SECONDS = 15
 TOP_LEVEL_RESTART_INTERVAL_SECONDS = 10
 STATUS_PATH = LOG_DIR / "active_application_user_agent_status.json"
@@ -134,6 +136,8 @@ class ActiveApplicationUserAgent:
         self.last_activity_state_by_host: Dict[str, str] = {}
         self.last_no_foreground_log_at = 0.0
         self.last_spool_flush_at = 0.0
+        self._spool_flush_thread: Optional[threading.Thread] = None
+        self._spool_flush_lock = threading.Lock()
 
     def start(self) -> bool:
         logger.info("Active application user-session agent starting.")
@@ -192,7 +196,6 @@ class ActiveApplicationUserAgent:
             )
 
     def _tick(self) -> None:
-        self._flush_spool_periodically()
         record = collect_active_application_record()
         try:
             _record_unlock_fallback_if_needed(record)
@@ -201,6 +204,7 @@ class ActiveApplicationUserAgent:
         if not record:
             self._write_status("running", foreground_visible=False)
             self._log_no_foreground_window()
+            self._flush_spool_periodically()
             return
 
         hostname = record.get("hostname") or socket.gethostname()
@@ -215,6 +219,7 @@ class ActiveApplicationUserAgent:
         same_activity_state = self.last_activity_state_by_host.get(hostname) == activity_state
         if same_foreground and same_activity_state:
             self._write_status("running", record=record, foreground_visible=True, inserted=False)
+            self._flush_spool_periodically()
             return
         record["activity_state_changed"] = bool(same_foreground and not same_activity_state)
 
@@ -240,23 +245,46 @@ class ActiveApplicationUserAgent:
             logger.exception("Application event insert failed, spooling: %s", exc)
             self.spool.append("active_application", record, str(exc))
             self._write_status("spooled", record=record, foreground_visible=True, inserted=False, error=str(exc))
+        finally:
+            self._flush_spool_periodically()
 
     def _flush_spool_periodically(self) -> None:
         now = time.time()
         if now - self.last_spool_flush_at < SPOOL_RETRY_INTERVAL_SECONDS:
             return
         self.last_spool_flush_at = now
+        with self._spool_flush_lock:
+            if self._spool_flush_thread and self._spool_flush_thread.is_alive():
+                logger.debug("Active application spool flush already running; live foreground polling continues.")
+                return
+            self._spool_flush_thread = threading.Thread(
+                target=self._flush_spool_batch,
+                name="active-application-spool-retry",
+                daemon=True,
+            )
+            self._spool_flush_thread.start()
+
+    def _flush_spool_batch(self) -> None:
         entries = self.spool.read_all()
         if not entries:
             return
 
         remaining = []
         uploaded = 0
+        attempted = 0
+        started_at = time.monotonic()
         for entry in entries:
+            if (
+                attempted >= SPOOL_RETRY_MAX_EVENTS
+                or time.monotonic() - started_at >= SPOOL_RETRY_TIME_BUDGET_SECONDS
+            ):
+                remaining.append(entry)
+                continue
             try:
                 if entry.get("event_type") != "active_application":
                     remaining.append(entry)
                     continue
+                attempted += 1
                 send_application(entry.get("payload") or {}, record_sample=False)
                 uploaded += 1
             except Exception as exc:
@@ -265,7 +293,12 @@ class ActiveApplicationUserAgent:
                 remaining.append(entry)
         self.spool.replace_all(remaining)
         if uploaded:
-            logger.info("Active application spool flushed: uploaded=%s remaining=%s", uploaded, len(remaining))
+            logger.info(
+                "Active application spool flushed: uploaded=%s attempted=%s remaining=%s",
+                uploaded,
+                attempted,
+                len(remaining),
+            )
 
     def _log_no_foreground_window(self) -> None:
         now = time.time()
