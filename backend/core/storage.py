@@ -1,6 +1,5 @@
 import hashlib
 import logging
-import ctypes
 import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -1717,22 +1716,6 @@ def _inferred_active_session_start(
     return sorted(candidates)[0]
 
 
-class LASTINPUTINFO(ctypes.Structure):
-    _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
-
-
-def _local_user_idle_seconds() -> Optional[int]:
-    try:
-        info = LASTINPUTINFO()
-        info.cbSize = ctypes.sizeof(info)
-        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
-            return None
-        tick_count = ctypes.windll.kernel32.GetTickCount()
-        return max(0, int((tick_count - info.dwTime) / 1000))
-    except Exception:
-        return None
-
-
 def _period_start(period: str, session_start: Optional[datetime], now: datetime) -> datetime:
     local_now = now.astimezone(Config.DISPLAY_TZINFO)
     today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
@@ -2023,13 +2006,16 @@ def _application_usage_analytics(
     segment_keys = set()
     use_daily_usage = period != "current_session"
     latest_activity_end: Optional[datetime] = None
+    latest_activity_row: Optional[ActivitySession] = None
 
     for row in activity_sessions or []:
         start = _parse_datetime(row.start_time)
         end = _parse_datetime(row.end_time)
         if not start or not end or end <= started_at or start >= ended_at:
             continue
-        latest_activity_end = max(latest_activity_end, end) if latest_activity_end else end
+        if latest_activity_end is None or end > latest_activity_end:
+            latest_activity_end = end
+            latest_activity_row = row
         clipped_start = max(start, started_at)
         clipped_end = min(end, ended_at)
         clipped_seconds = max(0, int((clipped_end - clipped_start).total_seconds()))
@@ -2126,11 +2112,16 @@ def _application_usage_analytics(
         is_live_interval = index + 1 >= len(events)
         if interval_key in segment_keys or (has_daily_usage and not is_live_interval):
             continue
-        live_idle_seconds = _local_user_idle_seconds() if index + 1 >= len(events) and ended_at == now else None
         locked_seconds = _overlap_seconds(start, end, locked_intervals)
         idle_seconds = 0
-        if live_idle_seconds is not None and live_idle_seconds >= DEFAULT_IDLE_THRESHOLD_SECONDS:
-            idle_seconds = min(seconds - locked_seconds, live_idle_seconds - DEFAULT_IDLE_THRESHOLD_SECONDS)
+        if (
+            has_activity_sessions
+            and latest_activity_end
+            and latest_activity_row
+            and start >= latest_activity_end
+            and str(latest_activity_row.last_state or "").upper() == "IDLE"
+        ):
+            idle_seconds = seconds - locked_seconds
         _add_usage_duration(
             usage,
             app_name,
@@ -2141,6 +2132,26 @@ def _application_usage_analytics(
             window_title=event.get("window_title"),
             process_path=event.get("process_path"),
         )
+
+    if latest_activity_end and latest_activity_row and latest_activity_end < ended_at:
+        latest_event_time = max((event["timestamp"] for event in events), default=None)
+        if latest_event_time is None or latest_event_time < latest_activity_end:
+            start = max(latest_activity_end, started_at)
+            end = ended_at
+            seconds = max(0, int((end - start).total_seconds()))
+            if seconds:
+                locked_seconds = _overlap_seconds(start, end, locked_intervals)
+                latest_state = str(latest_activity_row.last_state or "").upper()
+                idle_seconds = seconds - locked_seconds if latest_state == "IDLE" else 0
+                _add_usage_duration(
+                    usage,
+                    latest_activity_row.app_name or "Unknown",
+                    seconds,
+                    idle_seconds,
+                    latest_activity_end,
+                    locked_seconds=locked_seconds,
+                    window_title=latest_activity_row.window_title,
+                )
 
     denominator = max(session_duration, sum(item["total_duration_seconds"] for item in usage.values()), 1)
     items = sorted(usage.values(), key=lambda item: item["total_duration_seconds"], reverse=True)
