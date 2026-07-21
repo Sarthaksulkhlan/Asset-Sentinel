@@ -370,6 +370,10 @@ def _is_lock_screen_application_record(record: Dict[str, Any]) -> bool:
     )
 
 
+def _has_confirmed_lock_transition(record: Dict[str, Any]) -> bool:
+    return bool(record.get("lock_state_transition") is True)
+
+
 def _is_lock_screen_history_row(row: ActiveApplicationHistory) -> bool:
     values = [row.application, row.window_title, row.process_path]
     return any(
@@ -1387,6 +1391,14 @@ def append_active_application(record: Dict[str, Any]) -> None:
         if latest and _is_lock_screen_history_row(latest) and _is_lock_screen_application_record(record):
             logger.info(
                 "Lock screen application event skipped as duplicate state: hostname=%s application=%s window=%s",
+                hostname,
+                application_name,
+                window_title,
+            )
+            return
+        if _is_lock_screen_application_record(record) and not _has_confirmed_lock_transition(record):
+            logger.info(
+                "Lock screen application event rejected without workstation transition proof: hostname=%s application=%s window=%s",
                 hostname,
                 application_name,
                 window_title,

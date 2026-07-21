@@ -162,6 +162,7 @@ def _locked_activity_record() -> Dict[str, Any]:
         "idle_threshold_seconds": IDLE_THRESHOLD_SECONDS,
         "is_user_idle": False,
         "windows_locked": True,
+        "lock_state_transition": True,
     }
 
 

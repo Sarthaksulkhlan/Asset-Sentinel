@@ -32,6 +32,7 @@ from active_application_monitor import (
     POLL_INTERVAL_SECONDS,
     _record_signature,
     _record_unlock_fallback_if_needed,
+    _is_lock_app,
     _log_activity_sample_state,
     activity_state_from_record,
     collect_active_application_record,
@@ -286,7 +287,14 @@ class ActiveApplicationUserAgent:
                     remaining.append(entry)
                     continue
                 attempted += 1
-                send_application(entry.get("payload") or {}, record_sample=False)
+                payload = entry.get("payload") or {}
+                if _is_lock_app(payload) and payload.get("lock_state_transition") is not True:
+                    logger.info(
+                        "Discarding spooled LockApp active-application event without workstation transition proof."
+                    )
+                    uploaded += 1
+                    continue
+                send_application(payload, record_sample=False)
                 uploaded += 1
             except Exception as exc:
                 entry["last_error"] = str(exc)

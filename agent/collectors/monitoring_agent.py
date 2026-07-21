@@ -31,6 +31,7 @@ from active_application_monitor import (
     POLL_INTERVAL_SECONDS,
     _record_signature,
     _record_unlock_fallback_if_needed,
+    _is_lock_app,
     _log_activity_sample_state,
     activity_state_from_record,
     collect_active_application_record,
@@ -256,6 +257,11 @@ class AssetSentinelAgent:
             if not record:
                 logger.info("Unlock foreground refresh skipped: no foreground application visible yet.")
                 return
+            if _is_lock_app(record):
+                logger.info(
+                    "Unlock foreground refresh skipped LockApp record; lock timeline events require workstation transition proof."
+                )
+                return
             try:
                 _log_activity_sample_state(record, "monitoring_agent_unlock_refresh")
                 send_activity_sample(record)
@@ -373,6 +379,11 @@ class AssetSentinelAgent:
 
     def _upload_event(self, event_type: str, payload: Dict[str, Any]) -> None:
         if event_type == "active_application":
+            if _is_lock_app(payload) and payload.get("lock_state_transition") is not True:
+                logger.info(
+                    "Skipping LockApp active-application upload without workstation transition proof."
+                )
+                return
             send_application(payload, record_sample=False)
             return
         if event_type == "hardware_inventory":
