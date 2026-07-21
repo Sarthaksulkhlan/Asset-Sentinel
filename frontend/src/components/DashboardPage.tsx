@@ -45,7 +45,7 @@ import {
   Gauge
 } from "lucide-react";
 import { Asset, AssetDetailPayload, SecurityFeedItem, KPIStats } from "../types";
-import { INITIAL_ASSETS } from "../data";
+import { DEMO_ASSET_DETAILS, DEMO_ASSETS, DEMO_SECURITY_FEED } from "../data";
 import { SentinelLogo } from "./SentinelLogo";
 import AssetHistory from "./AssetHistory";
 import { apiFetch } from "../lib/api";
@@ -751,7 +751,7 @@ const SUPPORT_PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 
 export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemoMode = false }: DashboardPageProps) {
   // Master fleet list held in state for fully reactive user experiences
-  const [assets, setAssets] = useState<Asset[]>(() => isDemoMode ? INITIAL_ASSETS : []);
+  const [assets, setAssets] = useState<Asset[]>(() => isDemoMode ? DEMO_ASSETS : []);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [selectedAssetDetail, setSelectedAssetDetail] = useState<AssetDetailPayload | null>(null);
   const [selectedUsagePeriod, setSelectedUsagePeriod] = useState<UsagePeriod>("current_session");
@@ -797,13 +797,9 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   const persistedDashboardState = useMemo(() => readDashboardState(), []);
   const [searchQuery, setSearchQuery] = useState(() => isDemoMode ? "" : (persistedDashboardState.searchQuery || ""));
   const [currentPage, setCurrentPage] = useState(() => isDemoMode ? 1 : (persistedDashboardState.currentPage || 1));
-  const [liveLogs, setLiveLogs] = useState<SecurityFeedItem[]>(() => {
-    // Starting logs pool
-    return [
-      ...(isDemoMode ? [{ timestamp: "08:15:02", node: "SYSTEM", message: "Demo telemetry stream ready.", type: "info" as const }] : [])
-    ];
-  });
+  const [liveLogs, setLiveLogs] = useState<SecurityFeedItem[]>(() => isDemoMode ? DEMO_SECURITY_FEED : []);
   const [alertRecords, setAlertRecords] = useState<BackendAlertRecord[]>([]);
+  const [lockedDemoAsset, setLockedDemoAsset] = useState<Asset | null>(null);
 
   // Local state to track tactical operation overrides and custom user-generated logs
   const [localLogs, setLocalLogs] = useState<SecurityFeedItem[]>([]);
@@ -1372,12 +1368,16 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
 
   // Handle opening of individual asset detail card drawer
   const handleSelectAsset = (asset: Asset) => {
+    if (isDemoMode && asset.hostname !== "DESKTOP-PETBKU1") {
+      setLockedDemoAsset(asset);
+      return;
+    }
     if (!isDemoMode) {
       writeDashboardState({ selectedHostname: asset.hostname, selectedDeviceId: asset.deviceId || null });
       restoredDetailScrollRef.current = false;
     }
     setSelectedAsset(asset);
-    setSelectedAssetDetail(null);
+    setSelectedAssetDetail(isDemoMode ? (DEMO_ASSET_DETAILS[asset.hostname] as AssetDetailPayload | undefined) || null : null);
     setAuditReport(null);
     setAuditRiskScore(null);
     setAuditSeverity(null);
@@ -1873,7 +1873,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     }
   };
 
-  if (isDemoMode) {
+  if (false && isDemoMode) {
     return (
       <div id="command-dashboard-screen" className="flex flex-col h-screen overflow-hidden antialiased bg-[#0A0C10] text-[#dae3ee] font-sans selection:bg-[#00d1ff]/20">
         
@@ -2292,17 +2292,15 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
               Devices ({assets.length})
             </button>
           </li>
-          {!isDemoMode && (
-            <li>
-              <button 
-                onClick={() => handleSidebarAction(handleNavigateReports)}
-                className="w-full text-[#bbc9cf] hover:text-[#00d1ff] hover:bg-[#2d363e]/40 transition-all flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider text-left"
-              >
-                <FileSpreadsheet className="w-4.5 h-4.5 text-[#bbc9cf]" />
-                Reports
-              </button>
-            </li>
-          )}
+          <li>
+            <button
+              onClick={() => handleSidebarAction(handleNavigateReports)}
+              className="w-full text-[#bbc9cf] hover:text-[#00d1ff] hover:bg-[#2d363e]/40 transition-all flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider text-left"
+            >
+              <FileSpreadsheet className="w-4.5 h-4.5 text-[#bbc9cf]" />
+              Reports
+            </button>
+          </li>
         </ul>
 
         {/* Critical Alerts Center CTA */}
@@ -2326,15 +2324,17 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
         {/* Navigation Sidebar Footer Links */}
         <div className="border-t border-[#3c494e]/30 pt-4 mt-auto">
           <ul className="flex flex-col gap-1.5 text-xs">
-            <li>
-              <button 
+            {!isDemoMode && (
+              <li>
+              <button
                 onClick={() => handleSidebarAction(() => setIsSupportCenterOpen(true))}
                 className="w-full text-[#bbc9cf] hover:text-[#00d1ff] hover:bg-[#2d363e]/40 transition-all flex items-center gap-3 px-3 py-2 rounded-lg text-left"
               >
                 <HelpCircle className="w-4.5 h-4.5 text-[#bbc9cf]" />
                 <span>Support Status</span>
               </button>
-            </li>
+              </li>
+            )}
             <li>
               <button 
                 id="sidebar-signout-btn"
@@ -2355,17 +2355,11 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
         
         {/* Demo Mode Banner */}
         {isDemoMode && (
-          <div id="demo-badge-banner" className="bg-amber-950/40 border-b border-amber-500/20 text-amber-300 px-6 py-2.5 flex items-center justify-between text-xs font-mono select-none">
+          <div id="demo-badge-banner" title="You are viewing pre-recorded demonstration data." className="absolute right-4 top-4 z-40 inline-flex items-center gap-2 rounded-full border border-amber-300/35 bg-[#101827]/88 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-amber-200 shadow-[0_0_20px_rgba(251,191,36,0.16)] backdrop-blur select-none">
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></div>
-              <span className="font-extrabold uppercase tracking-widest">Demo Mode – Read Only Preview</span>
+              <span>Demo Workspace</span>
             </div>
-            <button 
-              onClick={() => onNavigate("landing")}
-              className="text-[10px] uppercase font-bold tracking-widest px-2.5 py-1 rounded bg-amber-600/20 border border-amber-500/30 hover:bg-amber-600/30 transition-all active:scale-95 cursor-pointer text-amber-200"
-            >
-              Exit Demo
-            </button>
           </div>
         )}
 
@@ -2679,17 +2673,18 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                       const threatLevel = getThreatLevel(asset);
                       const lastSeen = asset.lastSeenHuman || asset.lastSeen || asset.lastActiveTime || "No heartbeat";
                       const cpuPercent = parseInt(asset.cpuUsage || "0", 10) || 0;
+                      const isDemoLocked = isDemoMode && asset.hostname !== "DESKTOP-PETBKU1";
 
                       return (
-                        <tr 
-                          key={assetIdentity(asset)} 
+                        <tr
+                          key={assetIdentity(asset)}
                           onClick={() => handleSelectAsset(asset)}
                           className={`group cursor-pointer transition-colors duration-150 ${
                             asset.status === "Online"
                               ? "bg-emerald-300/[0.035] hover:bg-emerald-300/[0.075] shadow-[inset_3px_0_0_rgba(52,211,153,0.8)]"
                               : "hover:bg-[#1B2338]/70 opacity-80 hover:opacity-100"
-                          } ${assetIdentity(selectedAsset) === assetIdentity(asset) ? "bg-[#00d1ff]/10" : ""}`}
-                          title={`Open complete asset profile for ${asset.hostname}`}
+                          } ${isDemoLocked ? "opacity-70 hover:opacity-90" : ""} ${assetIdentity(selectedAsset) === assetIdentity(asset) ? "bg-[#00d1ff]/10" : ""}`}
+                          title={isDemoLocked ? `${asset.hostname} is available only in the full version` : `Open complete asset profile for ${asset.hostname}`}
                         >
                           <td className="py-3 px-3 sm:px-4 font-bold text-white">
                             <div className="flex items-center gap-2 min-w-0">
@@ -2697,7 +2692,14 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                               <div className="min-w-0">
                                 <div className="flex items-center gap-2 truncate">
                                   <span className="truncate">{asset.hostname}</span>
-                                  {asset.status === "Online" ? <span className="rounded border border-emerald-300/30 bg-emerald-300/10 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-emerald-200">Live</span> : null}
+                                  {isDemoLocked ? (
+                                    <span className="inline-flex items-center gap-1 rounded border border-slate-400/25 bg-slate-400/10 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-slate-200">
+                                      <Lock className="h-2.5 w-2.5" />
+                                      Locked
+                                    </span>
+                                  ) : asset.status === "Online" ? (
+                                    <span className="rounded border border-emerald-300/30 bg-emerald-300/10 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-emerald-200">Live</span>
+                                  ) : null}
                                 </div>
                                 <div className="sm:hidden text-[10px] text-[#bbc9cf] font-normal truncate">{asset.employee}</div>
                               </div>
@@ -3728,6 +3730,49 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
                     No application events found for {selectedTimelineHistoryBounds.label}.
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {lockedDemoAsset && (
+          <div className="fixed inset-0 z-[82] flex items-center justify-center bg-[#020617]/80 px-4 py-6 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-xl border border-[#38BDF8]/25 bg-[linear-gradient(145deg,#101827_0%,#141B2D_58%,#0B1220_100%)] p-6 shadow-[0_28px_100px_rgba(2,8,23,0.72),0_0_36px_rgba(56,189,248,0.12)]">
+              <div className="mb-5 flex items-start justify-between gap-4">
+                <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-300/20 bg-slate-300/10 text-slate-200">
+                  <Lock className="h-5 w-5" />
+                </div>
+                <button
+                  onClick={() => setLockedDemoAsset(null)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#2B3752] bg-[#0F1728] text-[#A8B3C7] transition-colors hover:border-[#38BDF8]/45 hover:text-white"
+                  aria-label="Close locked device message"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <h3 className="text-xl font-black tracking-tight text-white">This device is available only in the full version.</h3>
+              <p className="mt-4 text-sm leading-relaxed text-[#A8B3C7]">
+                Sign in to access live telemetry, monitoring, login activity, application usage, reports and analytics.
+              </p>
+              <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <button
+                  onClick={() => onNavigate("login")}
+                  className="rounded-lg border border-[#00d1ff]/35 bg-[#00d1ff]/10 px-4 py-2.5 text-xs font-black uppercase tracking-widest text-[#7DD3FC] transition-colors hover:bg-[#00d1ff]/18"
+                >
+                  Sign In
+                </button>
+                <button
+                  onClick={() => onNavigate("admin-signup")}
+                  className="rounded-lg border border-emerald-300/35 bg-emerald-300/10 px-4 py-2.5 text-xs font-black uppercase tracking-widest text-emerald-100 transition-colors hover:bg-emerald-300/18"
+                >
+                  Sign Up
+                </button>
+                <button
+                  onClick={() => setLockedDemoAsset(null)}
+                  className="rounded-lg border border-[#2B3752] bg-[#0F1728] px-4 py-2.5 text-xs font-black uppercase tracking-widest text-[#A8B3C7] transition-colors hover:text-white"
+                >
+                  Close
+                </button>
               </div>
             </div>
           </div>

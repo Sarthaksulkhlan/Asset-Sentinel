@@ -497,9 +497,9 @@ function AnimatedBar({ label, value }: { label: string; value: number }) {
 }
 
 const KpiAndMonitoringSections = React.memo(function KpiAndMonitoringSections({
-  onNavigate
+  onLaunchDashboard
 }: {
-  onNavigate: LandingPageProps["onNavigate"];
+  onLaunchDashboard: () => void;
 }) {
   const chartWaveLineRef = useRef<SVGPathElement | null>(null);
   const chartWaveFillRef = useRef<SVGPathElement | null>(null);
@@ -762,7 +762,7 @@ const KpiAndMonitoringSections = React.memo(function KpiAndMonitoringSections({
             </div>
 
             <button 
-              onClick={() => onNavigate("dashboard")}
+              onClick={onLaunchDashboard}
               className="w-full bg-[#00d1ff]/10 hover:bg-[#00d1ff]/20 border border-[#00d1ff]/30 text-[#00d1ff] text-xs font-bold uppercase py-2.5 rounded-lg transition-all flex items-center justify-center gap-2 active:scale-95"
             >
               <Server className="w-4 h-4 text-[#00d1ff]" />
@@ -940,6 +940,8 @@ const HardwareCardsSection = React.memo(function HardwareCardsSection() {
 export default function LandingPage({ onNavigate }: LandingPageProps) {
   // Early access form states
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isLaunchChoiceOpen, setIsLaunchChoiceOpen] = useState(false);
+  const [launchChoice, setLaunchChoice] = useState<"demo" | "login" | "admin-signup">("demo");
   const [fullName, setFullName] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [businessEmail, setBusinessEmail] = useState("");
@@ -1017,7 +1019,15 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
     }
   };
 
+  const openLaunchChoice = useCallback(() => {
+    setLaunchChoice("demo");
+    setIsLaunchChoiceOpen(true);
+  }, []);
 
+  const continueLaunchChoice = useCallback(() => {
+    setIsLaunchChoiceOpen(false);
+    onNavigate(launchChoice);
+  }, [launchChoice, onNavigate]);
 
   const protocolCards = useMemo(() => {
     return CORE_TELEMETRY_PROTOCOLS.map((protocol, i) => {
@@ -1089,7 +1099,7 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
           </button>
           <button 
             id="nav-dashboard-btn"
-            onClick={() => onNavigate("dashboard")}
+            onClick={openLaunchChoice}
             className="enterprise-hero-button hidden md:flex items-center gap-2 px-4 py-2 border border-[#3c494e]/40 rounded-lg text-[#bbc9cf] text-sm font-medium tracking-wide"
           >
             Launch Command
@@ -1142,7 +1152,7 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
               </button>
               <button 
                 id="launch-dashboard-btn"
-                onClick={() => onNavigate("dashboard")}
+                onClick={openLaunchChoice}
                 className="enterprise-hero-button px-6 py-3 border border-[#3c494e]/50 text-[#dae3ee] font-bold rounded-lg cursor-pointer flex items-center justify-center text-xs uppercase tracking-wider"
               >
                 Launch Dashboard
@@ -1160,7 +1170,7 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
               onClick={() => onNavigate("demo")}
               className="inline-flex items-center gap-2 mt-4 text-[#bbc9cf] hover:text-[#00d1ff] transition-colors text-xs font-semibold uppercase tracking-widest border-b border-dashed border-[#bbc9cf]/40 hover:border-[#00d1ff]/50 pb-1 mt-1.5"
             >
-              Launch Command Fleet View Demo 
+              Asset Sentinel Live Demo
               <ArrowRight className="w-3.5 h-3.5 text-[#00d1ff]" />
             </button>
           </div>
@@ -1173,7 +1183,7 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
 
         </section>
 
-        <KpiAndMonitoringSections onNavigate={onNavigate} />
+        <KpiAndMonitoringSections onLaunchDashboard={openLaunchChoice} />
 
         <DeferredLandingSection minHeight={380}>
           <HardwareCardsSection />
@@ -1301,6 +1311,69 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
           © {new Date().getFullYear()} SENTINEL COMMAND. ENTERPRISE TELEMETRY SYSTEMS. ALL RIGHTS RESERVED.
         </div>
       </footer>
+
+      {isLaunchChoiceOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 px-4 py-6 backdrop-blur-md">
+          <div className="w-full max-w-lg rounded-xl border border-[#00d1ff]/30 bg-[#101827] p-6 shadow-[0_28px_100px_rgba(2,8,23,0.75),0_0_42px_rgba(0,209,255,0.12)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-black tracking-tight text-white">Welcome to Asset Sentinel</h2>
+                <p className="mt-1 text-sm text-[#bbc9cf]">Choose how you would like to continue.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsLaunchChoiceOpen(false)}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#2B3752] bg-[#0F1728] text-[#A8B3C7] transition-colors hover:border-[#00d1ff]/45 hover:text-white"
+                aria-label="Close launch options"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-6 grid gap-3" role="radiogroup" aria-label="Asset Sentinel launch options">
+              {[
+                { value: "demo" as const, label: "View Demo", detail: "Explore a pre-recorded workspace with realistic telemetry.", icon: Server },
+                { value: "login" as const, label: "Sign In", detail: "Access your live workspace and monitored devices.", icon: LogIn },
+                { value: "admin-signup" as const, label: "Sign Up", detail: "Create a new workspace for production monitoring.", icon: Shield }
+              ].map((option) => {
+                const Icon = option.icon;
+                const selected = launchChoice === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setLaunchChoice(option.value)}
+                    className={`flex items-center gap-4 rounded-lg border p-4 text-left transition-all ${
+                      selected
+                        ? "border-[#00d1ff]/60 bg-[#00d1ff]/12 text-white shadow-[0_0_24px_rgba(0,209,255,0.12)]"
+                        : "border-[#2B3752] bg-[#0B1220] text-[#dae3ee] hover:border-[#00d1ff]/35 hover:bg-[#101C2D]"
+                    }`}
+                    role="radio"
+                    aria-checked={selected}
+                  >
+                    <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#00d1ff]/25 bg-[#00d1ff]/8 text-[#00d1ff]">
+                      <Icon className="h-5 w-5" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-black uppercase tracking-wider">{option.label}</span>
+                      <span className="mt-0.5 block text-xs leading-relaxed text-[#A8B3C7]">{option.detail}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              type="button"
+              onClick={continueLaunchChoice}
+              className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-[#00d1ff] px-5 py-3 text-xs font-black uppercase tracking-widest text-[#003543] shadow-[0_0_22px_rgba(0,209,255,0.28)] transition-all active:scale-95"
+            >
+              Continue
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Early Access Program Sign up Modal Overlay */}
       {isModalOpen && (
