@@ -36,73 +36,53 @@ Root-level `.bat`, `app.py`, `resolve_python_exe.ps1`, and `launch_active_app_ag
 
 ![Asset Sentinel landing page](docs/screenshots/landing-page.png)
 
-*Screenshot not yet available; add `docs/screenshots/landing-page.png` later.*
-
 ### Login Page
 
-![Asset Sentinel login page](docs/screenshots/login-page.png)
-
-*Screenshot not yet available; add `docs/screenshots/login-page.png` later.*
+*A login-page screenshot was not included in the supplied files. Add `docs/screenshots/login-page.png` later.*
 
 ### Signup Page
 
 ![Asset Sentinel signup page](docs/screenshots/signup-page.png)
 
-*Screenshot not yet available; add `docs/screenshots/signup-page.png` later.*
-
 ### Dashboard Overview
 
 ![Asset Sentinel dashboard overview](docs/screenshots/dashboard-overview.png)
-
-*Screenshot not yet available; add `docs/screenshots/dashboard-overview.png` later.*
 
 ### Fleet Telemetry
 
 ![Asset Sentinel fleet telemetry](docs/screenshots/fleet-telemetry.png)
 
-*Screenshot not yet available; add `docs/screenshots/fleet-telemetry.png` later.*
-
 ### Device Monitoring
 
 ![Asset Sentinel device monitoring](docs/screenshots/device-monitoring.png)
-
-*Screenshot not yet available; add `docs/screenshots/device-monitoring.png` later.*
 
 ### Login Activity
 
 ![Asset Sentinel login activity](docs/screenshots/login-activity.png)
 
-*Screenshot not yet available; add `docs/screenshots/login-activity.png` later.*
-
 ### Active Application Timeline
 
 ![Asset Sentinel active application timeline](docs/screenshots/active-application-timeline.png)
-
-*Screenshot not yet available; add `docs/screenshots/active-application-timeline.png` later.*
 
 ### Application Usage
 
 ![Asset Sentinel application usage](docs/screenshots/application-usage.png)
 
-*Screenshot not yet available; add `docs/screenshots/application-usage.png` later.*
-
 ### Productivity Insights
 
 ![Asset Sentinel productivity insights](docs/screenshots/productivity-insights.png)
 
-*Screenshot not yet available; add `docs/screenshots/productivity-insights.png` later.*
+### System Metrics and Charts
+
+![Asset Sentinel system metrics and charts](docs/screenshots/system-metrics.png)
 
 ### Support Tickets
 
 ![Asset Sentinel support tickets](docs/screenshots/support-tickets.png)
 
-*Screenshot not yet available; add `docs/screenshots/support-tickets.png` later.*
-
 ### Super Admin Dashboard
 
 ![Asset Sentinel super admin dashboard](docs/screenshots/super-admin-dashboard.png)
-
-*Screenshot not yet available; add `docs/screenshots/super-admin-dashboard.png` later.*
 
 ## Features Preserved
 

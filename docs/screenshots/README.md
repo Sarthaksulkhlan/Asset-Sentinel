@@ -14,5 +14,6 @@ Place the production documentation screenshots in this directory using the exact
 - `productivity-insights.png` — productivity insights view
 - `support-tickets.png` — support ticket interface
 - `super-admin-dashboard.png` — super admin dashboard
+- `system-metrics.png` — system metrics, security alerts, and charts
 
 Use PNG format and keep each image readable at typical GitHub README width. Replace screenshots whenever the production UI changes materially.
