@@ -245,32 +245,6 @@ restart_service.bat
 uninstall_service.bat
 ```
 
-## Render Deployment
-
-Backend Web Service:
-
-```text
-Root Directory: leave blank
-Build Command: pip install -r requirements.txt
-Start Command: python -m backend.render_start && gunicorn --bind 0.0.0.0:$PORT --workers 1 app:app
-```
-
-Frontend Static Site:
-
-```text
-Root Directory: frontend
-Build Command: npm ci && npm run build
-Publish Directory: dist
-```
-
-React routes require this Render rewrite rule:
-
-```text
-Source: /*
-Destination: /index.html
-Action: Rewrite
-```
-
 ## Security
 
 - Agent-to-backend and frontend-to-backend traffic uses HTTPS in production.
