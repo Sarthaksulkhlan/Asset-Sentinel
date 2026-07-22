@@ -8,10 +8,11 @@ Asset Sentinel turns Windows session, application, hardware, and heartbeat event
 
 <br/>
 
-<a href="https://assetsentinel.onrender.com"><img src="https://img.shields.io/badge/OPEN_WEBSITE-00D1FF?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Open Asset Sentinel website"/></a>
 <a href="https://assetsentinel.onrender.com/demo"><img src="https://img.shields.io/badge/%E2%96%B6_LIVE_DEMO-0078D6?style=for-the-badge" alt="Open live demo"/></a>
 <a href="https://github.com/Sarthaksulkhlan/Asset-Sentinel"><img src="https://img.shields.io/badge/VIEW_ON-GITHUB-181717?style=for-the-badge&logo=github" alt="View Asset Sentinel on GitHub"/></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-MIT-2ea44f?style=for-the-badge" alt="Open MIT license"/></a>
+
+**Website:** [https://assetsentinel.onrender.com](https://assetsentinel.onrender.com)
 
 <br/><br/>
 
@@ -38,13 +39,21 @@ Asset Sentinel turns Windows session, application, hardware, and heartbeat event
 | **Trust boundary** | Agents and the dashboard communicate through one authenticated backend API; neither connects directly to the database or to each other. |
 | **Production shape** | Windows agent + Flask/Gunicorn backend + Supabase PostgreSQL + React/Vite frontend, deployed through Render. |
 
-> [Open the live demo](https://assetsentinel.onrender.com/demo) to explore the product with demonstration data, or [open the production website](https://assetsentinel.onrender.com).
+> [Open the live demo](https://assetsentinel.onrender.com/demo) to explore Asset Sentinel with demonstration data.
 
 ## The Problem
 
 Traditional asset registers and periodic inventory scans provide an outdated picture of a Windows fleet. They cannot reliably answer who is currently signed in, which application is active, whether a device is still online, or whether its hardware has changed since the last audit.
 
 Asset Sentinel continuously captures session, application, hardware, and liveness events from managed endpoints. The dashboard reflects the fleet's current state instead of its last scheduled scan.
+
+<div align="center">
+
+<img src="docs/screenshots/asset-sentinel-visibility.png" alt="Stale endpoint snapshots compared with live Asset Sentinel signals" width="100%"/>
+
+<sub><em>Periodic inventory leaves hardware changes, missed heartbeats, and session activity hidden. Asset Sentinel turns those gaps into live, attributable signals.</em></sub>
+
+</div>
 
 ## Why Asset Sentinel
 
@@ -71,23 +80,13 @@ Asset Sentinel continuously captures session, application, hardware, and livenes
 | Support Tickets | Ticketing connected to organization and device context |
 | Super Admin | Platform-level company and fleet administration |
 
-## Product Experience
+## From Endpoint Evidence to Fleet Intelligence
 
 <div align="center">
 
-<img src="docs/screenshots/landing-page.png" alt="Asset Sentinel production landing page" width="850"/>
+<img src="docs/screenshots/asset-sentinel-pipeline.png" alt="Asset Sentinel endpoint evidence and fleet intelligence pipeline" width="100%"/>
 
-<sub><em>The production entry point presents live-monitoring concepts, fleet indicators, and clear paths into the demo or authenticated dashboard.</em></sub>
-
-</div>
-
-## System Overview
-
-<div align="center">
-
-<img src="docs/screenshots/dashboard-overview.png" alt="Asset Sentinel system overview" width="850"/>
-
-<sub><em>Fleet-wide telemetry with online and offline devices, live status, and the activity stream.</em></sub>
+<sub><em>Session, application, hardware, and heartbeat evidence is authenticated and normalized before it becomes fleet health, timelines, usage insight, and actionable integrity alerts.</em></sub>
 
 </div>
 
