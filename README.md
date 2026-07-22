@@ -1,109 +1,183 @@
-# Asset Sentinel
+<div align="center">
 
-Centralized IT asset monitoring for Windows PCs, with a Flask backend, React frontend, Windows service support, and a user-session active-application agent.
+<img src="https://img.shields.io/badge/-ASSET%20SENTINEL-0078D6?style=for-the-badge&labelColor=000000" alt="Asset Sentinel" height="60"/>
 
-## Repository Layout
+# The Endpoint Truth Layer for Windows Fleets
+
+Most IT teams do not know what is happening on their machines right now—they know what a spreadsheet said last quarter. Asset Sentinel replaces the snapshot with a heartbeat.
+
+[Live Application](https://assetsentinel.onrender.com)
+
+</div>
+
+> **Status: Production.** The agent, backend, dashboard, and documented monitoring modules are live and operational. AI Audit is intentionally unavailable until its backend endpoint is implemented.
+
+<div align="center">
+
+<img src="docs/screenshots/landing-page.png" alt="Asset Sentinel landing page" width="850"/>
+
+<sub><em>The live product landing page with fleet telemetry, protected-device statistics, and system uptime.</em></sub>
+
+</div>
+
+## The Problem
+
+Traditional asset registers and periodic inventory scans provide an outdated picture of a Windows fleet. They cannot reliably answer who is currently signed in, which application is active, whether a device is still online, or whether its hardware has changed since the last audit.
+
+Asset Sentinel continuously captures session, application, hardware, and liveness events from managed endpoints. The dashboard reflects the fleet's current state instead of its last scheduled scan.
+
+## At a Glance
+
+| | Description |
+|---|---|
+| **What** | A continuously updated source of truth for Windows endpoints: users, applications, hardware, sessions, and availability. |
+| **Why it is different** | Persistent agent telemetry and heartbeat data replace scheduled inventory snapshots. |
+| **Who it is for** | IT administrators, security teams, and organization leaders who need fleet-wide visibility. |
+| **Current status** | Production deployment with the Windows agent, Flask backend, React dashboard, Render, and Supabase connected end to end. |
+
+## Key Features
+
+| Category | Capability |
+|---|---|
+| Real-Time Telemetry | Continuous heartbeat stream from registered endpoints |
+| Session Intelligence | Login, logout, lock, and unlock activity per device and user |
+| Application Monitoring | Active-window detection and per-application usage duration |
+| Productivity Analytics | Active, idle, locked, and productive time derived from telemetry |
+| Hardware Inventory | Hardware cataloging and change detection |
+| Device Monitoring | Online/offline state and detailed endpoint information |
+| Alerts and Reports | Fleet and device-level conditions presented for review |
+| Support Tickets | Ticketing connected to organization and device context |
+| Super Admin | Platform-level company and fleet administration |
+
+## System Overview
+
+<div align="center">
+
+<img src="docs/screenshots/dashboard-overview.png" alt="Asset Sentinel system overview" width="850"/>
+
+<sub><em>Fleet-wide telemetry with online and offline devices, live status, and the activity stream.</em></sub>
+
+</div>
+
+## System Architecture
+
+```mermaid
+flowchart TB
+    subgraph Fleet[Windows Fleet]
+        A1[Agent - Device 1]
+        A2[Agent - Device 2]
+        A3[Agent - Device N]
+    end
+
+    subgraph Backend[Flask Backend - Render Web Service]
+        API[REST API]
+        VAL[Validation]
+        PROC[Telemetry Processing]
+    end
+
+    subgraph Store[Supabase PostgreSQL]
+        DB[(Devices, Sessions, Applications,<br/>Hardware, Heartbeats, Alerts)]
+    end
+
+    subgraph Dashboard[React Dashboard - Render Static Site]
+        UI[React and Vite]
+    end
+
+    A1 -->|HTTPS and JSON| API
+    A2 -->|HTTPS and JSON| API
+    A3 -->|HTTPS and JSON| API
+    API --> VAL --> PROC --> DB
+    UI -->|HTTPS| API
+    API -->|JSON| UI
+```
+
+The agent never connects directly to the database, and the dashboard never connects directly to monitored devices. Telemetry passes through the backend API for authentication, validation, processing, and persistence.
+
+## How It Works
+
+1. The Windows agent runs continuously on each managed endpoint.
+2. It detects session state, foreground applications, hardware information, and device health.
+3. Timestamped telemetry is sent securely to the backend API.
+4. The backend validates and stores records in Supabase PostgreSQL.
+5. The React dashboard retrieves current and aggregated fleet information from the API.
+
+```mermaid
+flowchart LR
+    Start([Agent starts]) --> Observe[Observe session, application, and hardware state]
+    Observe --> Stamp[Timestamp and serialize]
+    Stamp --> Push[Send to backend API]
+    Push --> Store[(Supabase PostgreSQL)]
+    Push --> Beat[Continue heartbeat]
+    Beat --> Observe
+```
+
+## Technology Stack
+
+| Layer | Technology |
+|---|---|
+| Windows Agent | Python and Windows Service APIs |
+| Backend API | Python and Flask |
+| Database | Supabase PostgreSQL |
+| Frontend | React, TypeScript, and Vite |
+| Frontend Hosting | Render Static Site |
+| Backend Hosting | Render Web Service and Gunicorn |
+| Transport | HTTPS and JSON |
+
+## Repository Structure
 
 ```text
-backend/
-  api/          Flask API helpers for auth, assets, activity, and alerts
-  core/         configuration, database, logging, storage, and runtime health
-  models/       SQLAlchemy models
-  services/     notifications and telemetry bootstrap services
-  main.py       backend application entry point
-
-agent/
-  collectors/   hardware, login, heartbeat, active application, and agent loops
-  detectors/    RAM and motherboard change detectors
-  windows/      Windows service implementation and Python resolver
-  scripts/      service and active-application startup scripts
-
-database/
-  schemas/      PostgreSQL schema
-  migrations/   SQL migrations
-  data/         historical JSON backup/report files
-
-frontend/       existing React/Vite frontend
-docs/           architecture, setup, and installation notes
-tools/          migration and verification utilities
+asset-sentinel/
+├── agent/
+│   ├── collectors/       Session, heartbeat, hardware, and application collectors
+│   ├── detectors/        Hardware change detectors
+│   ├── scripts/          Agent and service management scripts
+│   └── windows/          Windows Service implementation
+├── backend/
+│   ├── api/              Flask API routes
+│   ├── core/             Configuration, database, storage, and health
+│   ├── models/           SQLAlchemy models
+│   └── services/         Backend services
+├── database/
+│   ├── migrations/       Database migrations
+│   └── schemas/          PostgreSQL schema
+├── frontend/             React and Vite dashboard
+├── docs/                 Architecture, setup, and installation documentation
+├── tools/                Migration and verification utilities
+├── app.py                Backend launcher and Gunicorn application export
+└── requirements.txt      Python dependencies
 ```
 
-Root-level `.bat`, `app.py`, `resolve_python_exe.ps1`, and `launch_active_app_agent.ps1` files are compatibility wrappers so existing commands continue to work.
+## Dashboard Modules
 
-## Screenshots
+- Real-Time Fleet Telemetry
+- Device Monitoring
+- Productivity Analytics
+- Login Activity
+- Active Application Timeline
+- Application Usage
+- Hardware and security alerts
+- Reports
+- Support Tickets
+- Super Admin Dashboard
 
-### Landing Page
+## Windows Monitoring Agent
 
-![Asset Sentinel landing page](docs/screenshots/landing-page.png)
+The agent runs on monitored Windows endpoints and reports:
 
-### Login Page
+| Data | Description |
+|---|---|
+| Login Activity | Genuine Windows login and unlock events |
+| Logout Activity | Logout, lock, and disconnect transitions |
+| Active Applications | Current foreground application |
+| Application Usage | Time spent in monitored applications |
+| Productivity | Active, idle, and locked time |
+| Hardware Inventory | Device specifications and identifiers |
+| Heartbeat | Periodic device liveness signal |
+| Device Information | Host, user, network, and operating-system metadata |
 
-*A login-page screenshot was not included in the supplied files. Add `docs/screenshots/login-page.png` later.*
+## Environment Setup
 
-### Signup Page
-
-![Asset Sentinel signup page](docs/screenshots/signup-page.png)
-
-### Dashboard Overview
-
-![Asset Sentinel dashboard overview](docs/screenshots/dashboard-overview.png)
-
-### Fleet Telemetry
-
-![Asset Sentinel fleet telemetry](docs/screenshots/fleet-telemetry.png)
-
-### Device Monitoring
-
-![Asset Sentinel device monitoring](docs/screenshots/device-monitoring.png)
-
-### Login Activity
-
-![Asset Sentinel login activity](docs/screenshots/login-activity.png)
-
-### Active Application Timeline
-
-![Asset Sentinel active application timeline](docs/screenshots/active-application-timeline.png)
-
-### Application Usage
-
-![Asset Sentinel application usage](docs/screenshots/application-usage.png)
-
-### Productivity Insights
-
-![Asset Sentinel productivity insights](docs/screenshots/productivity-insights.png)
-
-### System Metrics and Charts
-
-![Asset Sentinel system metrics and charts](docs/screenshots/system-metrics.png)
-
-### Support Tickets
-
-![Asset Sentinel support tickets](docs/screenshots/support-tickets.png)
-
-### Super Admin Dashboard
-
-![Asset Sentinel super admin dashboard](docs/screenshots/super-admin-dashboard.png)
-
-## Features Preserved
-
-- Device status and heartbeat tracking
-- Hardware collection
-- Login activity tracking and last successful login
-- Active application timeline
-- Windows service auto-start
-- Manual backend and frontend startup
-- Non-admin PC compatibility
-- Active application user-session agent
-
-## Environment
-
-Copy `.env.example` to `.env` and configure at least:
-
-```powershell
-ASSET_SENTINEL_DATABASE_URL=postgresql://username:password@host/database
-```
-
-Optional settings include JWT, SMTP, SQL echo, heartbeat timeout, and display timezone values. Do not commit production secrets.
+Copy `.env.example` to `.env` for local development and configure the required values. Production secrets must be set through Render environment variables and must never be committed.
 
 Install backend dependencies:
 
@@ -111,28 +185,9 @@ Install backend dependencies:
 pip install -r requirements.txt
 ```
 
-## Database
-
-The production schema and migrations live under `database/`:
-
-```powershell
-psql -d asset_sentinel -f database/schemas/schema.sql
-psql -d asset_sentinel -f database/migrations/enterprise_migration.sql
-psql -d asset_sentinel -f database/migrations/auth_login_activity_migration.sql
-psql -d asset_sentinel -f database/migrations/enterprise_registration_migration.sql
-```
-
-Historical JSON backups and migration reports are kept in `database/data/`.
-
-## Manual Development
+## Run Locally
 
 Backend:
-
-```powershell
-python backend/main.py
-```
-
-The legacy command still works:
 
 ```powershell
 python app.py
@@ -142,16 +197,11 @@ Frontend:
 
 ```powershell
 cd frontend
+npm install
 npm run dev
 ```
 
-Manual active-application agent:
-
-```bat
-start_active_app_agent.bat
-```
-
-Direct agent console run:
+Manual Windows agent:
 
 ```powershell
 python agent/collectors/monitoring_agent.py --console
@@ -159,13 +209,11 @@ python agent/collectors/monitoring_agent.py --console
 
 ## Windows Service
 
-Install from an elevated Command Prompt or PowerShell:
+Run the installation command from an elevated Windows Command Prompt or PowerShell:
 
 ```bat
 install_service.bat
 ```
-
-The wrapper delegates to `agent/scripts/install_service.bat`, which registers `agent/windows/asset_sentinel_service.py` as `AssetSentinelMonitoringService`, configures delayed auto-start, applies restart-on-failure recovery, starts the backend service, and attempts to install the user-session active-application helper.
 
 Service controls:
 
@@ -176,53 +224,58 @@ restart_service.bat
 uninstall_service.bat
 ```
 
-Active-application user-session controls:
+## Render Deployment
 
-```bat
-install_active_app_agent.bat
-start_active_app_agent.bat
-stop_active_app_agent.bat
-check_active_app_agent.bat
-uninstall_active_app_agent.bat
-```
-
-Runtime logs remain in root `logs/`:
+Backend Web Service:
 
 ```text
-logs/service.log
-logs/agent.log
-logs/app.log
-logs/error.log
-logs/active_application_launcher.log
-logs/telemetry_spool.jsonl
+Root Directory: leave blank
+Build Command: pip install -r requirements.txt
+Start Command: python -m backend.render_start && gunicorn --bind 0.0.0.0:$PORT --workers 1 app:app
 ```
 
-## Utilities
+Frontend Static Site:
 
-Migration and verification scripts are under `tools/verification/`:
-
-```powershell
-python tools/verification/migrate_json_to_postgres.py
-python tools/verification/validate_postgres_migration.py
+```text
+Root Directory: frontend
+Build Command: npm ci && npm run build
+Publish Directory: dist
 ```
 
-PyInstaller service packaging assets live in `agent/windows/`:
+React routes require this Render rewrite rule:
 
-```powershell
-pyinstaller agent/windows/nexis_agent.spec
+```text
+Source: /*
+Destination: /index.html
+Action: Rewrite
 ```
 
-## API Compatibility
+## Security
 
-The existing frontend API surface is preserved:
+- Agent-to-backend and frontend-to-backend traffic uses HTTPS in production.
+- Secrets are supplied through environment variables.
+- Agent telemetry requests are authenticated.
+- Dashboard access is protected by authentication and role checks.
+- Administrative functions are restricted to appropriate roles.
 
-- `GET /api/assets`
-- `GET /api/alerts`
-- `GET /api/active-applications`
-- `GET /api/sessions`
-- `GET /api/sessions/count`
-- `GET /current-user`
-- `GET /current-session`
-- `GET /device-status`
-- `GET /api/debug/startup-health`
-- `GET /api/debug/device-health/<hostname-or-device-id>`
+## Current Limitations
+
+| Feature | Status |
+|---|---|
+| AI Audit | Coming soon; its backend endpoint is not currently implemented |
+| Monitoring modules | Operational |
+
+## Roadmap
+
+- [ ] Implement the AI Audit backend endpoint
+- [ ] Expand automated report exports
+- [ ] Add more granular role-based permissions
+- [ ] Publish formal OpenAPI documentation
+- [ ] Add configurable historical data-retention policies
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Installation](docs/INSTALLATION.md)
+- [Setup](docs/SETUP.md)
+- [Screenshot guidance](docs/screenshots/README.md)
