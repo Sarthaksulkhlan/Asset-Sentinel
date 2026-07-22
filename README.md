@@ -32,20 +32,23 @@ Asset Sentinel turns Windows session, application, hardware, and heartbeat event
 
 | | Description |
 |---|---|
-| **What it sees** | Device identity, hardware, users, login and unlock events, foreground applications, idle time, and heartbeat health. |
-| **What it answers** | Which endpoints are alive, who is signed in, what is active, how time is distributed, and whether hardware state has changed. |
-| **Why it is different** | Event-driven telemetry and explicit heartbeats replace periodic scans and manually maintained asset registers. |
+| **What** | A Windows endpoint monitoring and asset-intelligence platform built around continuous agent telemetry rather than periodic fleet scans. |
+| **Why it is different** | Verified Windows events and frequent collectors report endpoint state close to when it changes instead of waiting for the next inventory cycle. |
 | **Who it is for** | IT operations, endpoint security, support teams, and organization administrators responsible for Windows fleets. |
-| **Trust boundary** | Agents and the dashboard communicate through one authenticated backend API; neither connects directly to the database or to each other. |
-| **Production shape** | Windows agent + Flask/Gunicorn backend + Supabase PostgreSQL + React/Vite frontend, deployed through Render. |
+| **Current coverage** | Heartbeat, hardware inventory, login/logout and lock/unlock state, active applications, usage aggregation, idle time, and productivity analytics. |
+| **Trust spine** | Agent → authenticated backend → PostgreSQL → dashboard. The backend validates and persists telemetry; agents and the dashboard never write directly to the database. |
+| **The moat** | A unified evidence pipeline whose per-device history becomes more valuable as session, application, hardware, and liveness records accumulate. |
+| **Built with** | Python Windows Agent, Flask/Gunicorn API, Supabase PostgreSQL, and a React/TypeScript/Vite dashboard deployed on Render. |
 
 > [Open the live demo](https://assetsentinel.onrender.com/demo) to explore Asset Sentinel with demonstration data.
 
 ## The Problem
 
-Traditional asset registers and periodic inventory scans provide an outdated picture of a Windows fleet. They cannot reliably answer who is currently signed in, which application is active, whether a device is still online, or whether its hardware has changed since the last audit.
+Enterprise IT teams are expected to answer a deceptively simple question at any moment: **what is the current state of every endpoint in the fleet?** In many organizations, they cannot answer without consulting several tools and manually correlating their results.
 
-Asset Sentinel continuously captures session, application, hardware, and liveness events from managed endpoints. The dashboard reflects the fleet's current state instead of its last scheduled scan.
+Periodic inventories begin aging as soon as they are produced. RAM is upgraded, storage is replaced, a laptop disappears from the network, or a user locks and resumes a session—but those facts may remain buried until another scan or investigation. Responders lose time establishing whether a machine is online, who used it, which application was active, and what changed before an issue surfaced.
+
+Hardware records, Windows session events, application activity, monitoring, and support workflows commonly live in disconnected systems. That creates an operating model based on stale snapshots and reactive reconstruction. Asset Sentinel replaces that gap with one continuously updated evidence pipeline and a fleet view grounded in endpoint records.
 
 <div align="center">
 
@@ -59,26 +62,35 @@ Asset Sentinel continuously captures session, application, hardware, and livenes
 
 | Traditional fleet visibility | Asset Sentinel |
 |---|---|
-| Inventory updated when someone runs a scan | Telemetry updated continuously from the endpoint |
-| Online state inferred from an old record | Explicit heartbeat establishes current liveness |
-| Hardware stored as a static specification | Hardware identity can be compared over time |
-| Application usage reconstructed from assumptions | Foreground, active, idle, and locked time come from measured events |
-| Monitoring, alerts, and support live in separate tools | The same telemetry supports dashboards, alerts, reports, and tickets |
-| Fleet totals hide the evidence behind them | Operators can move from fleet overview to device-level activity |
+| Periodic scans on a fixed schedule | Continuous agent reporting and verified Windows events |
+| Inventory snapshots age between scans | Endpoint records are refreshed throughout operation |
+| Availability inferred from an old scan | Explicit heartbeat determines online/offline state |
+| Hardware changes discovered during a later audit | Hardware identity is recorded and compared over time |
+| Session and usage data scattered across local logs | Login, lock/unlock, idle, and application activity are centralized per device |
+| Multiple tools require manual correlation | One backend pipeline supports monitoring, alerts, reports, and support workflows |
+| Fleet totals hide their underlying evidence | Operators can drill from fleet state into device-level history |
+
+This is an architectural distinction, not a cosmetic one: a scan describes what was observed at scan time, while continuous telemetry builds a trace of what happened between observations.
 
 ## Key Features
 
 | Category | Capability |
 |---|---|
-| Real-Time Telemetry | Continuous heartbeat stream from registered endpoints |
-| Session Intelligence | Login, logout, lock, and unlock activity per device and user |
-| Application Monitoring | Active-window detection and per-application usage duration |
-| Productivity Analytics | Active, idle, locked, and productive time derived from telemetry |
-| Hardware Inventory | Hardware cataloging and change detection |
-| Device Monitoring | Online/offline state and detailed endpoint information |
-| Alerts and Reports | Fleet and device-level conditions presented for review |
-| Support Tickets | Ticketing connected to organization and device context |
-| Super Admin | Platform-level company and fleet administration |
+| Endpoint Monitoring | Agents report device state continuously through authenticated backend telemetry. |
+| Heartbeat | Configurable liveness signals allow the backend to distinguish online, offline, and unresponsive devices. |
+| Device Inventory | Structured endpoint identity and status records remain connected to ongoing telemetry. |
+| Hardware Integrity | WMI-backed hardware details and identifiers provide a baseline for detecting configuration changes. |
+| Login and Logout Activity | Genuine Windows authentication and session-end records provide a per-device access history. |
+| Lock and Unlock Detection | Verified workstation transitions separate active use from locked sessions without creating heartbeat-based logins. |
+| Active Application Timeline | Foreground application changes form a chronological activity record for each endpoint. |
+| Application Usage | Application records are aggregated into open, active, and idle duration views. |
+| Productivity Analytics | Active, idle, and locked time is summarized into higher-level usage insights. |
+| Idle Tracking | User inactivity is measured separately from application-open time and device uptime. |
+| Fleet Overview | Device telemetry is aggregated into a current organization-wide operational view. |
+| Device Monitoring | Administrators can drill into hardware, connectivity, sessions, and activity history for one endpoint. |
+| Alerts and Reports | Telemetry conditions are surfaced for review and consolidated reporting. |
+| Support Tickets | Endpoint-related issues can be tracked alongside the operational context that informs them. |
+| Super Admin | Platform-level controls manage companies, administrators, devices, and support state. |
 
 ## From Endpoint Evidence to Fleet Intelligence
 
@@ -178,33 +190,11 @@ asset-sentinel/
 └── requirements.txt      Python dependencies
 ```
 
-## Dashboard Modules
-
-- Real-Time Fleet Telemetry
-- Device Monitoring
-- Productivity Analytics
-- Login Activity
-- Active Application Timeline
-- Application Usage
-- Hardware and security alerts
-- Reports
-- Support Tickets
-- Super Admin Dashboard
-
 ## Windows Monitoring Agent
 
-The agent runs on monitored Windows endpoints and reports:
+The Python agent runs on monitored Windows endpoints as either the installed Windows Service or an interactive console process. It combines verified native session notifications with scheduled heartbeat, hardware, and foreground-application collectors. Telemetry is authenticated and sent only to the backend API; the agent does not connect to PostgreSQL directly.
 
-| Data | Description |
-|---|---|
-| Login Activity | Genuine Windows login and unlock events |
-| Logout Activity | Logout, lock, and disconnect transitions |
-| Active Applications | Current foreground application |
-| Application Usage | Time spent in monitored applications |
-| Productivity | Active, idle, and locked time |
-| Hardware Inventory | Device specifications and identifiers |
-| Heartbeat | Periodic device liveness signal |
-| Device Information | Host, user, network, and operating-system metadata |
+The service path handles genuine Windows session changes through the Service Control Manager. Interactive runs register a native Windows session hook for real unlock notifications, keeping login creation separate from heartbeat, foreground-application changes, timers, and dashboard refreshes.
 
 ## Environment Setup
 
