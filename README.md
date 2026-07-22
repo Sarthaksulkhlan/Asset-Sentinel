@@ -8,9 +8,20 @@ Asset Sentinel turns Windows session, application, hardware, and heartbeat event
 
 <br/>
 
+<a href="https://assetsentinel.onrender.com"><img src="https://img.shields.io/badge/OPEN_WEBSITE-00D1FF?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Open Asset Sentinel website"/></a>
 <a href="https://assetsentinel.onrender.com/demo"><img src="https://img.shields.io/badge/%E2%96%B6_LIVE_DEMO-0078D6?style=for-the-badge" alt="Open live demo"/></a>
+<a href="https://github.com/Sarthaksulkhlan/Asset-Sentinel"><img src="https://img.shields.io/badge/VIEW_ON-GITHUB-181717?style=for-the-badge&logo=github" alt="View Asset Sentinel on GitHub"/></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-MIT-2ea44f?style=for-the-badge" alt="Open MIT license"/></a>
-<a href="https://assetsentinel.onrender.com"><img src="https://img.shields.io/badge/DEPLOYED_ON-RENDER-46E3B7?style=for-the-badge&logo=render&logoColor=white" alt="Open Asset Sentinel on Render"/></a>
+
+<br/><br/>
+
+<a href="https://www.microsoft.com/windows"><img src="https://img.shields.io/badge/Windows-Agent-0078D4?style=flat-square&logo=windows11&logoColor=white" alt="Windows agent"/></a>
+<a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-Backend-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python backend"/></a>
+<a href="https://flask.palletsprojects.com/"><img src="https://img.shields.io/badge/Flask-API-000000?style=flat-square&logo=flask&logoColor=white" alt="Flask API"/></a>
+<a href="https://react.dev/"><img src="https://img.shields.io/badge/React-Frontend-61DAFB?style=flat-square&logo=react&logoColor=000000" alt="React frontend"/></a>
+<a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"/></a>
+<a href="https://supabase.com/"><img src="https://img.shields.io/badge/Supabase-PostgreSQL-3FCF8E?style=flat-square&logo=supabase&logoColor=white" alt="Supabase PostgreSQL"/></a>
+<a href="https://render.com/"><img src="https://img.shields.io/badge/Deployed_on-Render-46E3B7?style=flat-square&logo=render&logoColor=white" alt="Deployed on Render"/></a>
 
 </div>
 
