@@ -19,7 +19,7 @@ const routeForView = (view: ViewState) => {
 
 const viewForPath = (path: string): ViewState => {
   if (path === "/login") return "login";
-  if (path === "/admin-signup") return "admin-signup";
+  if (path === "/admin-signup" || path === "/signup") return "admin-signup";
   if (path === "/dashboard") return "dashboard";
   if (path === "/super-admin") return "super-admin";
   if (path === "/demo") return "demo";

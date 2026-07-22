@@ -65,8 +65,10 @@ COUNTABLE_LOGIN_SOURCES = {
     "windows_interactive_logon",
     "windows_unlock",
     "windows_session_reconnect",
+    "windows_session_logon",
+    "windows_session_unlock",
 }
-COUNTABLE_LOGIN_EVENT_IDS = {"4624", "4801", "4778"}
+COUNTABLE_LOGIN_EVENT_IDS = {"4624", "4801", "4778", "WTS_SESSION_LOGON", "WTS_SESSION_UNLOCK"}
 SESSION_STATE_SOURCES = {
     "windows_lock",
     "windows_session_disconnect",
@@ -337,6 +339,40 @@ def _record_observed_session_login(session_info: Dict[str, Any], reason: str) ->
         session_info.get("session_id"),
     )
     return None
+
+
+def record_windows_session_notification(
+    event_id: str,
+    session_id: Optional[str],
+    event_timestamp: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Record a genuine Windows service session logon/unlock notification."""
+    if event_id not in {"WTS_SESSION_LOGON", "WTS_SESSION_UNLOCK"}:
+        return {}
+    session_info = get_current_session_info()
+    current_session_id = str(session_info.get("session_id") or "")
+    notified_session_id = str(session_id or "")
+    if notified_session_id and current_session_id and notified_session_id != current_session_id:
+        logger.info(
+            "Windows session notification ignored for non-console session: event=%s notified=%s current=%s",
+            event_id,
+            notified_session_id,
+            current_session_id,
+        )
+        return {}
+    timestamp = event_timestamp or datetime.now(timezone.utc).isoformat()
+    record_number = int(datetime.now(timezone.utc).timestamp() * 1_000_000)
+    record_id = f"{event_id.lower()}:{session_info.get('hostname') or socket.gethostname()}:{notified_session_id or current_session_id}:{record_number}"
+    if has_session_event_signature(session_info.get("hostname"), record_id):
+        return {}
+    return record_login({
+        **session_info,
+        "session_id": notified_session_id or current_session_id or session_info.get("session_id"),
+        "login_timestamp": timestamp,
+        "login_source": "windows_session_unlock" if event_id == "WTS_SESSION_UNLOCK" else "windows_session_logon",
+        "windows_event_id": event_id,
+        "windows_event_record_id": record_id,
+    })
 
 
 def _record_lockapp_unlocks_from_history(

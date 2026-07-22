@@ -88,6 +88,43 @@ class AssetSentinelMonitoringService(win32serviceutil.ServiceFramework):
                 logging.getLogger("asset_sentinel.service").exception("Agent shutdown failed: %s", exc)
         win32event.SetEvent(self.stop_event_handle)
 
+    def GetAcceptedControls(self):
+        return super().GetAcceptedControls() | win32service.SERVICE_ACCEPT_SESSIONCHANGE
+
+    def SvcOtherEx(self, control, event_type, data):
+        if control != win32service.SERVICE_CONTROL_SESSIONCHANGE:
+            return
+        event_names = {
+            0x5: "WTS_SESSION_LOGON",
+            0x8: "WTS_SESSION_UNLOCK",
+        }
+        event_id = event_names.get(int(event_type))
+        if not event_id:
+            return
+        session_id = str(data) if data is not None else None
+        logging.getLogger("asset_sentinel.service").info(
+            "Genuine Windows session notification received: event=%s session_id=%s",
+            event_id,
+            session_id,
+        )
+        threading.Thread(
+            target=self._record_windows_session_notification,
+            args=(event_id, session_id),
+            name="windows-session-notification",
+            daemon=True,
+        ).start()
+
+    @staticmethod
+    def _record_windows_session_notification(event_id: str, session_id: str) -> None:
+        try:
+            from login_tracker import record_windows_session_notification
+
+            record_windows_session_notification(event_id, session_id)
+        except Exception as exc:
+            logging.getLogger("asset_sentinel.service").exception(
+                "Windows session notification processing failed: %s", exc
+            )
+
     def SvcDoRun(self):
         root_dir = ROOT_DIR
         os.chdir(root_dir)

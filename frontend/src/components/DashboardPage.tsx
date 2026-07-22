@@ -1372,9 +1372,6 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     }
     setSelectedAsset(asset);
     setSelectedAssetDetail(isDemoMode ? (DEMO_ASSET_DETAILS[asset.hostname] as AssetDetailPayload | undefined) || null : null);
-    setAuditReport(null);
-    setAuditRiskScore(null);
-    setAuditSeverity(null);
     setTelemetryCPU(Number(String(asset.cpuUsage || "0").replace("%", "")) || 0);
     setTelemetryRAM(Number(String(asset.ramUsage || "0").replace("%", "")) || 0);
   };
@@ -1661,9 +1658,6 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
     setSelectedAsset((prev: Asset | null) => prev && prev.hostname === asset.hostname ? { ...prev, ...overrideVal } : prev);
     setTelemetryCPU(24);
     setTelemetryRAM(42);
-    setAuditReport(null);
-    setAuditRiskScore(null);
-    setAuditSeverity(null);
 
     const padZero = (n: number) => n.toString().padStart(2, '0');
     const now = new Date();
@@ -3245,8 +3239,8 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
               <DetailSection title="Login Activity" icon={<LogIn className="w-5 h-5 text-emerald-300" />} compact>
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                   <DetailField label="Current Logged-in User" value={selectedAsset.currentUser || selectedAsset.employee} compact />
-                  <DetailField label="Current Login Time" value={selectedAsset.lastLogin} compact />
-                  <DetailField label="Last Logout Time" value={selectedAsset.lastLogout || "No logout recorded"} compact />
+                  <DetailField label="Current Login Time" value={formatTelemetryTimestamp(selectedAsset.lastLogin)} compact />
+                  <DetailField label="Last Logout Time" value={formatTelemetryTimestamp(selectedAsset.lastLogout)} compact />
                   <DetailField label="Total Logins Today" value={selectedAsset.loginsToday ?? 0} compact />
                   <DetailField label="Total Logins This Week" value={selectedAsset.loginsThisWeek ?? 0} compact />
                   <DetailField label="Current Session Duration" value={selectedAsset.loginDuration} accent compact />

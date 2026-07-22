@@ -21,8 +21,10 @@ REAL_LOGIN_SOURCES = {
     "windows_interactive_logon",
     "windows_unlock",
     "windows_session_reconnect",
+    "windows_session_logon",
+    "windows_session_unlock",
 }
-REAL_LOGIN_EVENT_IDS = {"4624", "4801", "4778"}
+REAL_LOGIN_EVENT_IDS = {"4624", "4801", "4778", "WTS_SESSION_LOGON", "WTS_SESSION_UNLOCK"}
 NON_COUNTABLE_LOGIN_SOURCES = {
     "windows_lock",
     "windows_session_disconnect",
@@ -1893,7 +1895,7 @@ def _locked_intervals(sessions: Iterable[SessionRecord], window_start: datetime,
             if not stamp:
                 continue
             events.append(("lock", stamp))
-        elif source in {"windows_unlock", "windows_session_reconnect"} or event_id in {"4801", "4778"}:
+        elif source in {"windows_unlock", "windows_session_reconnect", "windows_session_unlock"} or event_id in {"4801", "4778", "WTS_SESSION_UNLOCK"}:
             stamp = _parse_datetime(row.login_timestamp or row.recorded_at or row.logout_timestamp)
             if not stamp:
                 continue
