@@ -2,6 +2,7 @@
 
 The main README intentionally uses only these primary product screenshots:
 
+- `asset-sentinel-hero.png` — original Asset Sentinel README hero artwork
 - `landing-page.png` — public product landing page
 - `dashboard-overview.png` — production System Overview and fleet telemetry dashboard
 

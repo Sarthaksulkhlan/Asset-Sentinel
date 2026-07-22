@@ -1,12 +1,10 @@
 <div align="center">
 
-<img src="https://img.shields.io/badge/-ASSET%20SENTINEL-0078D6?style=for-the-badge&labelColor=000000" alt="Asset Sentinel" height="60"/>
+<img src="docs/screenshots/asset-sentinel-hero.png" alt="Asset Sentinel endpoint truth layer" width="100%"/>
 
-# The Endpoint Truth Layer for Windows Fleets
+### Continuous visibility from the endpoint to the fleet
 
-**Real-time endpoint telemetry, session intelligence, hardware integrity, and application visibility for Windows fleets.**
-
-Most IT teams do not know what is happening on their machines right now—they know what a spreadsheet said last quarter. Asset Sentinel replaces the snapshot with a heartbeat.
+Asset Sentinel turns Windows session, application, hardware, and heartbeat events into a live operational picture—so teams can act on what is true now, not what an inventory sheet remembered.
 
 <br/>
 
@@ -16,24 +14,18 @@ Most IT teams do not know what is happening on their machines right now—they k
 
 </div>
 
-> **Status: Production.** The agent, backend, dashboard, and documented monitoring modules are live and operational. AI Audit is intentionally unavailable until its backend endpoint is implemented.
-
-<div align="center">
-
-<img src="docs/screenshots/landing-page.png" alt="Asset Sentinel landing page" width="850"/>
-
-<sub><em>The live product landing page with fleet telemetry, protected-device statistics, and system uptime.</em></sub>
-
-</div>
+> **Production status:** Windows Agent → Flask API → Supabase PostgreSQL → React dashboard is deployed end to end. AI Audit remains intentionally unavailable until its backend endpoint is implemented.
 
 ## At a Glance
 
 | | Description |
 |---|---|
-| **What** | A continuously updated source of truth for Windows endpoints: users, applications, hardware, sessions, and availability. |
-| **Why it is different** | Persistent agent telemetry and heartbeat data replace scheduled inventory snapshots. |
-| **Who it is for** | IT administrators, security teams, and organization leaders who need fleet-wide visibility. |
-| **Current status** | Production deployment with the Windows agent, Flask backend, React dashboard, Render, and Supabase connected end to end. |
+| **What it sees** | Device identity, hardware, users, login and unlock events, foreground applications, idle time, and heartbeat health. |
+| **What it answers** | Which endpoints are alive, who is signed in, what is active, how time is distributed, and whether hardware state has changed. |
+| **Why it is different** | Event-driven telemetry and explicit heartbeats replace periodic scans and manually maintained asset registers. |
+| **Who it is for** | IT operations, endpoint security, support teams, and organization administrators responsible for Windows fleets. |
+| **Trust boundary** | Agents and the dashboard communicate through one authenticated backend API; neither connects directly to the database or to each other. |
+| **Production shape** | Windows agent + Flask/Gunicorn backend + Supabase PostgreSQL + React/Vite frontend, deployed through Render. |
 
 > [Open the live demo](https://assetsentinel.onrender.com/demo) to explore the product with demonstration data, or [open the production website](https://assetsentinel.onrender.com).
 
@@ -42,6 +34,17 @@ Most IT teams do not know what is happening on their machines right now—they k
 Traditional asset registers and periodic inventory scans provide an outdated picture of a Windows fleet. They cannot reliably answer who is currently signed in, which application is active, whether a device is still online, or whether its hardware has changed since the last audit.
 
 Asset Sentinel continuously captures session, application, hardware, and liveness events from managed endpoints. The dashboard reflects the fleet's current state instead of its last scheduled scan.
+
+## Why Asset Sentinel
+
+| Traditional fleet visibility | Asset Sentinel |
+|---|---|
+| Inventory updated when someone runs a scan | Telemetry updated continuously from the endpoint |
+| Online state inferred from an old record | Explicit heartbeat establishes current liveness |
+| Hardware stored as a static specification | Hardware identity can be compared over time |
+| Application usage reconstructed from assumptions | Foreground, active, idle, and locked time come from measured events |
+| Monitoring, alerts, and support live in separate tools | The same telemetry supports dashboards, alerts, reports, and tickets |
+| Fleet totals hide the evidence behind them | Operators can move from fleet overview to device-level activity |
 
 ## Key Features
 
@@ -56,6 +59,16 @@ Asset Sentinel continuously captures session, application, hardware, and livenes
 | Alerts and Reports | Fleet and device-level conditions presented for review |
 | Support Tickets | Ticketing connected to organization and device context |
 | Super Admin | Platform-level company and fleet administration |
+
+## Product Experience
+
+<div align="center">
+
+<img src="docs/screenshots/landing-page.png" alt="Asset Sentinel production landing page" width="850"/>
+
+<sub><em>The production entry point presents live-monitoring concepts, fleet indicators, and clear paths into the demo or authenticated dashboard.</em></sub>
+
+</div>
 
 ## System Overview
 
