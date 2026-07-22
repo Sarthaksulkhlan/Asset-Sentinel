@@ -37,7 +37,11 @@ from active_application_monitor import (
     collect_active_application_record,
 )
 from collect_hardware import collect_foreground_diagnostics, collect_hardware
-from login_tracker import close_stale_sessions_from_previous_boot, detect_login
+from login_tracker import (
+    close_stale_sessions_from_previous_boot,
+    detect_login,
+    record_windows_session_notification,
+)
 from service_logging import LOG_DIR, configure_logging, ensure_log_dir
 from api_client import (
     client,
@@ -134,6 +138,8 @@ class AssetSentinelAgent:
         self._register_thread("hardware-inventory", self._hardware_loop)
         self._register_thread("heartbeat", self._heartbeat_loop)
         self._register_thread("login-activity", self._login_loop)
+        if self._manual_windows_session_hook_required():
+            self._register_thread("windows-session-hook", self._windows_session_hook_loop)
         self._register_thread("active-application", self._active_application_loop)
         self._register_thread("thread-watchdog", self._thread_watchdog_loop, supervised=False)
         logger.info("Asset Sentinel monitoring agent started.")
@@ -141,6 +147,97 @@ class AssetSentinelAgent:
         logger.info("Login Tracker: Running")
         logger.info("Session Manager: Running")
         self.print_startup_health_report()
+
+    @staticmethod
+    def _manual_windows_session_hook_required() -> bool:
+        """Use a window-message hook only for an interactively launched agent.
+
+        Windows services run in session 0 and receive the same notification through
+        ServiceFramework.SvcOtherEx, so registering both paths would risk duplicates.
+        """
+        if os.name != "nt":
+            return False
+        try:
+            import ctypes
+
+            session_id = ctypes.c_ulong()
+            if not ctypes.windll.kernel32.ProcessIdToSessionId(
+                os.getpid(), ctypes.byref(session_id)
+            ):
+                return False
+            return session_id.value != 0
+        except Exception as exc:
+            logger.warning("Could not determine whether the Windows session hook is required: %s", exc)
+            return False
+
+    def _windows_session_hook_loop(self) -> None:
+        """Receive genuine logon/unlock notifications for a manually run agent."""
+        import ctypes
+        import win32gui
+
+        wm_wts_session_change = 0x02B1
+        notify_for_this_session = 0
+        wts_session_logon = 0x5
+        wts_session_unlock = 0x8
+        class_name = f"AssetSentinelSessionHook_{os.getpid()}"
+
+        def window_proc(hwnd, message, wparam, lparam):
+            if message == wm_wts_session_change and int(wparam) in {wts_session_logon, wts_session_unlock}:
+                self._handle_windows_session_change(int(wparam), str(lparam))
+                return 0
+            return win32gui.DefWindowProc(hwnd, message, wparam, lparam)
+
+        window_class = win32gui.WNDCLASS()
+        window_class.lpfnWndProc = window_proc
+        window_class.lpszClassName = class_name
+        class_atom = win32gui.RegisterClass(window_class)
+        hwnd = win32gui.CreateWindow(
+            class_atom,
+            class_name,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            None,
+        )
+        registered = False
+        try:
+            registered = bool(
+                ctypes.windll.wtsapi32.WTSRegisterSessionNotification(
+                    hwnd, notify_for_this_session
+                )
+            )
+            if not registered:
+                raise ctypes.WinError()
+            logger.info("Native Windows session unlock hook registered for interactive agent.")
+            while not self.stop_event.wait(0.1):
+                win32gui.PumpWaitingMessages()
+        finally:
+            if registered:
+                ctypes.windll.wtsapi32.WTSUnRegisterSessionNotification(hwnd)
+            win32gui.DestroyWindow(hwnd)
+            win32gui.UnregisterClass(class_name, None)
+
+    def _handle_windows_session_change(self, event_type: int, session_id: str) -> None:
+        event_names = {0x5: "WTS_SESSION_LOGON", 0x8: "WTS_SESSION_UNLOCK"}
+        event_id = event_names.get(event_type)
+        if not event_id:
+            return
+        try:
+            record = record_windows_session_notification(event_id, session_id)
+            if record:
+                logger.info(
+                    "Genuine Windows session notification recorded: event=%s session_id=%s",
+                    event_id,
+                    session_id,
+                )
+                self._refresh_active_application_after_unlock(record)
+        except Exception as exc:
+            logger.exception("Windows session notification processing failed: %s", exc)
 
     def run_forever(self) -> None:
         self.start()
