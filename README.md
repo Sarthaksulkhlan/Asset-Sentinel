@@ -4,9 +4,15 @@
 
 # The Endpoint Truth Layer for Windows Fleets
 
+**Real-time endpoint telemetry, session intelligence, hardware integrity, and application visibility for Windows fleets.**
+
 Most IT teams do not know what is happening on their machines right now—they know what a spreadsheet said last quarter. Asset Sentinel replaces the snapshot with a heartbeat.
 
-[Live Application](https://assetsentinel.onrender.com)
+<br/>
+
+<a href="https://assetsentinel.onrender.com/demo"><img src="https://img.shields.io/badge/%E2%96%B6_LIVE_DEMO-0078D6?style=for-the-badge" alt="Open live demo"/></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-MIT-2ea44f?style=for-the-badge" alt="Open MIT license"/></a>
+<a href="https://assetsentinel.onrender.com"><img src="https://img.shields.io/badge/DEPLOYED_ON-RENDER-46E3B7?style=for-the-badge&logo=render&logoColor=white" alt="Open Asset Sentinel on Render"/></a>
 
 </div>
 
@@ -20,12 +26,6 @@ Most IT teams do not know what is happening on their machines right now—they k
 
 </div>
 
-## The Problem
-
-Traditional asset registers and periodic inventory scans provide an outdated picture of a Windows fleet. They cannot reliably answer who is currently signed in, which application is active, whether a device is still online, or whether its hardware has changed since the last audit.
-
-Asset Sentinel continuously captures session, application, hardware, and liveness events from managed endpoints. The dashboard reflects the fleet's current state instead of its last scheduled scan.
-
 ## At a Glance
 
 | | Description |
@@ -34,6 +34,14 @@ Asset Sentinel continuously captures session, application, hardware, and livenes
 | **Why it is different** | Persistent agent telemetry and heartbeat data replace scheduled inventory snapshots. |
 | **Who it is for** | IT administrators, security teams, and organization leaders who need fleet-wide visibility. |
 | **Current status** | Production deployment with the Windows agent, Flask backend, React dashboard, Render, and Supabase connected end to end. |
+
+> [Open the live demo](https://assetsentinel.onrender.com/demo) to explore the product with demonstration data, or [open the production website](https://assetsentinel.onrender.com).
+
+## The Problem
+
+Traditional asset registers and periodic inventory scans provide an outdated picture of a Windows fleet. They cannot reliably answer who is currently signed in, which application is active, whether a device is still online, or whether its hardware has changed since the last audit.
+
+Asset Sentinel continuously captures session, application, hardware, and liveness events from managed endpoints. The dashboard reflects the fleet's current state instead of its last scheduled scan.
 
 ## Key Features
 
