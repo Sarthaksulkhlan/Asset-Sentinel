@@ -2,6 +2,8 @@
 
 <img src="docs/screenshots/asset-sentinel-hero.png" alt="Asset Sentinel endpoint truth layer" width="100%"/>
 
+# Asset Sentinel
+
 ### Continuous visibility from the endpoint to the fleet
 
 Asset Sentinel turns Windows session, application, hardware, and heartbeat events into a live operational picture—so teams can act on what is true now, not what an inventory sheet remembered.
@@ -26,7 +28,11 @@ Asset Sentinel turns Windows session, application, hardware, and heartbeat event
 
 </div>
 
-> **Production status:** Windows Agent → Flask API → Supabase PostgreSQL → React dashboard is deployed end to end. AI Audit remains intentionally unavailable until its backend endpoint is implemented.
+> **Production status:** Windows Agent → Flask API → Supabase PostgreSQL → React dashboard is deployed end to end. The optional AI Audit currently exists only in the Express runtime and is not exposed by the static Render frontend deployment.
+
+## Explore
+
+[Why Asset Sentinel](#why-asset-sentinel) · [Features](#key-features) · [Architecture](#system-architecture) · [Quick Start](#quick-start) · [Configuration](#configuration) · [Security](#security) · [Roadmap](#roadmap)
 
 ## At a Glance
 
@@ -113,6 +119,7 @@ flowchart TB
     end
 
     subgraph Backend[Flask Backend - Render Web Service]
+        AUTH[JWT and Agent Authentication]
         API[REST API]
         VAL[Validation]
         PROC[Telemetry Processing]
@@ -123,18 +130,30 @@ flowchart TB
     end
 
     subgraph Dashboard[React Dashboard - Render Static Site]
-        UI[React and Vite]
+        ADMIN[Company Dashboard]
+        SUPER[Super Admin]
     end
 
-    A1 -->|HTTPS and JSON| API
-    A2 -->|HTTPS and JSON| API
-    A3 -->|HTTPS and JSON| API
+    A1 -->|HTTPS, JSON, Agent Token| AUTH
+    A2 -->|HTTPS, JSON, Agent Token| AUTH
+    A3 -->|HTTPS, JSON, Agent Token| AUTH
+    AUTH --> API
     API --> VAL --> PROC --> DB
-    UI -->|HTTPS| API
-    API -->|JSON| UI
+    ADMIN -->|HTTPS and JWT| AUTH
+    SUPER -->|HTTPS and JWT| AUTH
+    API -->|Tenant-scoped JSON| ADMIN
+    API -->|Platform JSON| SUPER
 ```
 
 The agent never connects directly to the database, and the dashboard never connects directly to monitored devices. Telemetry passes through the backend API for authentication, validation, processing, and persistence.
+
+### Architecture principles
+
+- **Separate trust channels:** Windows agents use a dedicated bearer token; dashboard users use JWT access and refresh tokens.
+- **Tenant-aware access:** company users are scoped to their organization, while platform-wide operations require the `SUPER_ADMIN` role.
+- **Evidence before analytics:** raw session, application, heartbeat, and hardware observations are normalized before they become timelines, alerts, and usage insights.
+- **Database as source of truth:** PostgreSQL holds operational state and history; the agent and dashboard never write to it directly.
+- **Deployment-aware design:** Render hosts the React application as a static site and the Flask API as a separate Gunicorn service.
 
 ## How It Works
 
@@ -156,15 +175,16 @@ flowchart LR
 
 ## Technology Stack
 
-| Layer | Technology |
-|---|---|
-| Windows Agent | Python and Windows Service APIs |
-| Backend API | Python and Flask |
-| Database | Supabase PostgreSQL |
-| Frontend | React, TypeScript, and Vite |
-| Frontend Hosting | Render Static Site |
-| Backend Hosting | Render Web Service and Gunicorn |
-| Transport | HTTPS and JSON |
+| Layer | Technology | Responsibility |
+|---|---|---|
+| Windows Agent | Python, pywin32, WMI, psutil | Hardware, session, heartbeat, foreground application, and usage collection |
+| Backend API | Python, Flask, Flask-CORS | Authentication, validation, tenant isolation, telemetry ingestion, and analytics |
+| Data Access | SQLAlchemy 2, psycopg2 | PostgreSQL models, constraints, transactions, and queries |
+| Authentication | PyJWT, bcrypt | Access/refresh tokens, password hashing, role checks, and password-reset OTPs |
+| Database | Supabase PostgreSQL | Operational state and historical evidence |
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS | Dashboard, administration, support, and responsive user experience |
+| Deployment | Render Static Site, Render Web Service, Gunicorn | Production hosting and process management |
+| Transport | HTTPS and JSON | Agent-to-API and browser-to-API communication |
 
 ## Repository Structure
 
@@ -196,17 +216,35 @@ The Python agent runs on monitored Windows endpoints as either the installed Win
 
 The service path handles genuine Windows session changes through the Service Control Manager. Interactive runs register a native Windows session hook for real unlock notifications, keeping login creation separate from heartbeat, foreground-application changes, timers, and dashboard refreshes.
 
-## Environment Setup
+## Quick Start
+
+### Prerequisites
+
+- Python 3.10 or newer
+- Node.js 20 or newer and npm
+- A PostgreSQL database
+- Windows for endpoint collectors and Windows Service operation
+
+### 1. Configure the environment
 
 Copy `.env.example` to `.env` for local development and configure the required values. Production secrets must be set through Render environment variables and must never be committed.
 
-Install backend dependencies:
-
 ```powershell
-pip install -r requirements.txt
+Copy-Item .env.example .env
 ```
 
-## Run Locally
+### 2. Install backend dependencies
+
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+### 3. Prepare the database
+
+Apply the base schema and migrations described in [docs/SETUP.md](docs/SETUP.md).
+
+### 4. Run locally
 
 Backend:
 
@@ -227,6 +265,23 @@ Manual Windows agent:
 ```powershell
 python agent/collectors/monitoring_agent.py --console
 ```
+
+## Configuration
+
+| Variable | Used by | Purpose |
+|---|---|---|
+| `ASSET_SENTINEL_DATABASE_URL` | Backend | PostgreSQL connection string |
+| `ASSET_SENTINEL_JWT_SECRET` | Backend | Signs and validates user tokens |
+| `ASSET_SENTINEL_AGENT_TOKEN` | Backend and agent | Authenticates endpoint telemetry |
+| `ASSET_SENTINEL_API_URL` | Windows agent | Base URL of the Flask API |
+| `VITE_API_BASE_URL` | Frontend | Base URL used for browser API requests |
+| `ASSET_SENTINEL_CORS_ORIGINS` | Backend | Comma-separated allowed frontend origins |
+| `SUPER_ADMIN_USERNAME`, `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD` | Backend | Bootstrap platform administrator |
+| `SMTP_*`, `ALERT_EMAIL` | Backend | OTP, alert, and support email delivery |
+
+Additional retry, timeout, spool, and collector settings are documented in [.env.example](.env.example).
+
+> **Important:** the source includes a development fallback agent token for local convenience. Always configure a strong, unique `ASSET_SENTINEL_AGENT_TOKEN` outside local development.
 
 ## Windows Service
 
@@ -249,24 +304,34 @@ uninstall_service.bat
 
 - Agent-to-backend and frontend-to-backend traffic uses HTTPS in production.
 - Secrets are supplied through environment variables.
-- Agent telemetry requests are authenticated.
-- Dashboard access is protected by authentication and role checks.
-- Administrative functions are restricted to appropriate roles.
+- Agent telemetry uses a dedicated bearer token with configurable request timeout and retry behavior.
+- User passwords are hashed with bcrypt.
+- Dashboard sessions use signed access tokens and database-backed, revocable refresh tokens.
+- Password-reset OTPs are hashed, expire, count failed attempts, and are single-use.
+- Company data is tenant-scoped; platform operations require the `SUPER_ADMIN` role.
+- Administrative functions are restricted by role and company status.
+
+For production deployments, rotate all sample credentials, restrict diagnostic endpoints, configure exact CORS origins, and define retention rules for session and application history. See [SECURITY.md](SECURITY.md) for the disclosure policy.
 
 ## Current Limitations
 
-| Feature | Status |
-|---|---|
-| AI Audit | Coming soon; its backend endpoint is not currently implemented |
-| Monitoring modules | Operational |
+| Feature | Status | Notes |
+|---|---|---|
+| Agent telemetry pipeline | Operational | Hardware, heartbeat, sessions, applications, usage, alerts, and changes |
+| Company and super-admin dashboards | Operational | Tenant-aware monitoring, support, and platform administration |
+| Email and password-reset delivery | Configuration-dependent | Requires valid SMTP settings |
+| AI Audit | Experimental | Implemented in `frontend/server.ts`; unavailable through the current static Render frontend |
+| Formal OpenAPI specification | Planned | Routes are currently documented in source and project documentation |
+| Automated exports and retention controls | Planned | Not yet exposed as complete workflows |
 
 ## Roadmap
 
-- [ ] Implement the AI Audit backend endpoint
+- [ ] Move AI Audit behind a production API or deploy the Express runtime explicitly
 - [ ] Expand automated report exports
 - [ ] Add more granular role-based permissions
 - [ ] Publish formal OpenAPI documentation
 - [ ] Add configurable historical data-retention policies
+- [ ] Add automated contract tests for tenant isolation, token lifecycle, and telemetry deduplication
 
 ## Documentation
 
@@ -274,3 +339,14 @@ uninstall_service.bat
 - [Installation](docs/INSTALLATION.md)
 - [Setup](docs/SETUP.md)
 - [Screenshot guidance](docs/screenshots/README.md)
+- [Security policy](SECURITY.md)
+- [MIT license](LICENSE)
+
+## Contributing
+
+Keep agent payloads, backend models, database migrations, and frontend types aligned. Before submitting a change:
+
+1. Run `npm run lint` from `frontend/`.
+2. Run the relevant checks under `tools/verification/`.
+3. Document new environment variables, routes, migrations, and operational behavior.
+4. Never commit `.env`, credentials, access tokens, database URLs, or sensitive endpoint telemetry.
