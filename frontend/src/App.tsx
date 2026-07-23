@@ -140,7 +140,7 @@ function AppShell() {
 
   return (
     <div className="w-screen min-h-screen bg-[#0A0C10] selection:bg-[#00d1ff]/20 animate-fade-in relative">
-      {isAuthLoading ? (
+      {isAuthLoading && (view === "dashboard" || view === "super-admin") ? (
         <div className="flex min-h-screen items-center justify-center text-sm font-semibold text-[#00d1ff]">
           Restoring secure session...
         </div>
