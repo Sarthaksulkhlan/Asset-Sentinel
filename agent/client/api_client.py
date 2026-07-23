@@ -158,7 +158,20 @@ def _parse_timestamp(value: Any) -> datetime:
 
 
 def _activity_state(record: Dict[str, Any]) -> str:
-    if record.get("windows_locked"):
+    lock_screen_values = (
+        record.get("application_name"),
+        record.get("application"),
+        record.get("executable_name"),
+        record.get("window_title"),
+        record.get("process_path"),
+        record.get("active_process_path"),
+    )
+    is_lock_screen = any(
+        "lockapp" in str(value or "").lower()
+        or "lock screen" in str(value or "").lower()
+        for value in lock_screen_values
+    )
+    if record.get("windows_locked") or is_lock_screen:
         return "LOCKED"
     if record.get("is_user_idle"):
         return "IDLE"
