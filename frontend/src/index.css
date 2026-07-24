@@ -496,26 +496,32 @@ body {
   }
 
   #landing-screen main {
-    padding-left: 0.75rem;
-    padding-right: 0.75rem;
-    padding-top: 0.55rem;
+    padding-left: 0.9rem;
+    padding-right: 0.9rem;
+    padding-top: 0.75rem;
     padding-bottom: 2rem;
   }
 
   #landing-screen #hero-heading {
     display: flex;
     flex-direction: column;
-    gap: 0.56rem;
-    margin-bottom: 0.55rem;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
   }
 
   #landing-screen #hero-heading > div:first-child {
-    gap: 0.5rem;
+    gap: 0.7rem;
     width: 100%;
+    min-width: 0;
   }
 
   #landing-screen #hero-heading > div:first-child > .inline-flex {
-    display: none;
+    display: inline-flex;
+    max-width: 100%;
+    padding: 0.3rem 0.55rem;
+    font-size: 0.55rem;
+    line-height: 1.2;
+    letter-spacing: 0.035em;
   }
 
   #landing-screen .hero-typewriter {
@@ -525,24 +531,29 @@ body {
   }
 
   #landing-screen #hero-heading p {
-    display: none;
+    display: block;
+    max-width: 100%;
+    font-size: 0.76rem;
+    line-height: 1.5;
   }
 
   #landing-screen #hero-heading > div:first-child > button {
-    display: none;
+    display: inline-flex;
+    margin-top: 0.15rem;
+    font-size: 0.58rem;
   }
 
   #landing-screen .hero-action-grid {
     display: grid !important;
-    grid-template-columns: 1fr;
-    gap: 0.42rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
     padding-top: 0.05rem;
     width: 100%;
   }
 
   #landing-screen #launch-dashboard-btn,
   #landing-screen .hero-action-grid > button:nth-child(4) {
-    display: none !important;
+    display: flex !important;
   }
 
   #landing-screen #hero-heading .enterprise-hero-button {
@@ -556,12 +567,47 @@ body {
   }
 
   #landing-screen .hero-preview-fade {
-    gap: 0;
+    gap: 0.7rem;
     width: 100%;
+    min-width: 0;
   }
 
   #landing-screen .hero-dashboard-preview {
-    display: none;
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    margin-left: 0;
+    padding: 0.75rem;
+  }
+
+  #landing-screen .hero-dashboard-preview .grid-cols-3 {
+    gap: 0.45rem;
+  }
+
+  #landing-screen .hero-dashboard-preview .grid-cols-3 > div {
+    min-width: 0;
+    padding: 0.6rem 0.45rem;
+  }
+
+  #landing-screen .hero-dashboard-preview .grid-cols-3 > div > span:last-child {
+    font-size: 0.95rem;
+  }
+
+  #landing-screen .hero-telemetry-layer {
+    opacity: 0.58;
+  }
+
+  #landing-screen .hero-radar-sweep {
+    top: 7.5rem;
+    right: -32%;
+    width: min(88vw, 22rem);
+  }
+
+  #landing-screen .hero-network-lines {
+    top: 4%;
+    width: 170%;
+    height: 42rem;
+    transform: translateX(-22%);
   }
 
   #landing-screen .hero-early-access-card {
@@ -584,7 +630,7 @@ body {
   }
 
   #landing-screen .hero-early-access-card .inline-flex {
-    display: none;
+    display: inline-flex;
   }
 
   #landing-screen .hero-early-access-card h3 {
@@ -601,7 +647,16 @@ body {
   }
 
   #landing-screen .hero-early-access-card .grid-cols-3 {
-    display: none;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.35rem;
+  }
+
+  #landing-screen .hero-early-access-card .grid-cols-3 > span {
+    min-width: 0;
+    padding: 0.35rem;
+    font-size: 0.48rem;
+    line-height: 1.25;
   }
 
   #landing-screen .hero-stats-strip {
