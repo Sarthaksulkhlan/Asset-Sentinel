@@ -47,6 +47,11 @@ type SignupForm = {
 
 type StepId = "company" | "admin" | "security";
 
+type PairingCode = {
+  code: string;
+  expiresAt: string;
+};
+
 const initialForm: SignupForm = {
   companyName: "",
   companyWebsite: "",
@@ -137,6 +142,7 @@ export default function AdminSignupPage({ onNavigate }: AdminSignupPageProps) {
   const [toast, setToast] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [copiedToken, setCopiedToken] = useState(false);
+  const [pairingCode, setPairingCode] = useState<PairingCode | null>(null);
 
   const checks = useMemo(() => passwordChecks(form.password), [form.password]);
   const validPasswordChecks = checks.filter((check) => check.valid).length;
@@ -250,6 +256,7 @@ export default function AdminSignupPage({ onNavigate }: AdminSignupPageProps) {
         return;
       }
       setCompletedSteps(new Set(steps.map((step) => step.id)));
+      setPairingCode(payload.pairingCode || null);
       setIsSubmitted(true);
       if (payload.emailNotificationSent === false) {
         setToast(payload.message || "Workspace created, but email notification could not be sent.");
@@ -264,7 +271,8 @@ export default function AdminSignupPage({ onNavigate }: AdminSignupPageProps) {
   };
 
   const copyEnrollmentToken = async () => {
-    await navigator.clipboard?.writeText("************").catch(() => undefined);
+    if (!pairingCode?.code) return;
+    await navigator.clipboard?.writeText(pairingCode.code).catch(() => undefined);
     setCopiedToken(true);
     window.setTimeout(() => setCopiedToken(false), 1600);
   };
@@ -300,9 +308,12 @@ export default function AdminSignupPage({ onNavigate }: AdminSignupPageProps) {
                     <KeyRound className="h-5 w-5" />
                   </div>
                   <div>
-                    <p className="text-xs font-bold uppercase tracking-widest text-[#00d1ff]">Agent Enrollment Token Generated</p>
-                    <p className="mt-2 font-mono text-lg tracking-[0.22em] text-white">************</p>
-                    <p className="mt-2 text-xs text-[#8fa3ad]">The token is masked and reserved for the Windows agent installer workflow.</p>
+                    <p className="text-xs font-bold uppercase tracking-widest text-[#00d1ff]">Your Device Pairing Code</p>
+                    <p className="mt-2 font-mono text-3xl font-black tracking-[0.32em] text-white">{pairingCode?.code || "----"}</p>
+                    <p className="mt-2 text-xs text-[#8fa3ad]">Valid for 20 hours. Use this code while running install_service.bat.</p>
+                    {pairingCode?.expiresAt ? (
+                      <p className="mt-1 text-[10px] font-mono text-[#6f8792]">Expires {new Date(pairingCode.expiresAt).toLocaleString()}</p>
+                    ) : null}
                   </div>
                 </div>
                 <button
@@ -311,7 +322,7 @@ export default function AdminSignupPage({ onNavigate }: AdminSignupPageProps) {
                   className="inline-flex items-center justify-center gap-2 rounded-lg border border-[#00d1ff]/35 bg-[#00d1ff]/10 px-4 py-3 text-xs font-bold uppercase tracking-wider text-[#a4e6ff] transition-all hover:border-[#00d1ff] hover:bg-[#00d1ff]/15"
                 >
                   <Clipboard className="h-4 w-4" />
-                  {copiedToken ? "Copied" : "Copy Enrollment Token"}
+                  {copiedToken ? "Copied" : "Copy Pairing Code"}
                 </button>
               </div>
             </div>

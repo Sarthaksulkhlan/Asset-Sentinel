@@ -24,6 +24,7 @@ class Asset(Base):
 
     id = Column(BigInteger, primary_key=True)
     company_id = Column(BigInteger, ForeignKey("companies.id", ondelete="SET NULL"))
+    owner_user_id = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"))
     device_uid = Column(String(255), nullable=False)
     hostname = Column(String(255), nullable=False)
     ip_address = Column(INET)
@@ -59,6 +60,7 @@ class Asset(Base):
         UniqueConstraint("device_uid", name="uq_assets_device_uid"),
         UniqueConstraint("hostname", "collected_at", name="uq_assets_hostname_collected_at"),
         Index("idx_assets_company_id", "company_id"),
+        Index("idx_assets_owner_user_id", "owner_user_id"),
         Index("idx_assets_device_uid", "device_uid"),
         Index("idx_assets_hostname_collected_at", "hostname", collected_at.desc()),
         Index("idx_assets_last_seen", last_seen.desc()),
@@ -413,6 +415,28 @@ class PasswordResetOtp(Base):
     __table_args__ = (
         Index("idx_password_reset_otps_user_created", "user_id", created_at.desc()),
         Index("idx_password_reset_otps_expires_at", expires_at),
+    )
+
+
+class DevicePairingCode(Base):
+    __tablename__ = "device_pairing_codes"
+
+    id = Column(BigInteger, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    code = Column(String(4), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    used_at = Column(DateTime(timezone=True))
+    paired_device_uid = Column(String(255))
+
+    user = relationship("User")
+
+    __table_args__ = (
+        CheckConstraint("code ~ '^[0-9]{4}$'", name="chk_device_pairing_codes_numeric"),
+        Index("idx_device_pairing_codes_code", "code"),
+        Index("idx_device_pairing_codes_user_created", "user_id", created_at.desc()),
+        Index("idx_device_pairing_codes_expires_at", expires_at),
     )
 
 

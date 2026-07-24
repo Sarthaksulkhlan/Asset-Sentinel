@@ -95,6 +95,7 @@ REQUIRED_TABLES = {
     "companies",
     "refresh_tokens",
     "password_reset_otps",
+    "device_pairing_codes",
     "support_tickets",
     "admin_users",
     "early_access_requests",

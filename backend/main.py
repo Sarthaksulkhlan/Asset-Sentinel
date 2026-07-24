@@ -34,6 +34,7 @@ from storage import (
 )
 from startup_health import device_health_response, run_startup_checks, startup_health_response
 from registration import register_admin, submit_early_access
+from pairing import get_pairing_code, issue_pairing_code
 from backend.api.agent import agent_api
 from auth import (
     ROLE_SUPER_ADMIN,
@@ -95,6 +96,13 @@ def _request_company_scope():
         return None
     return getattr(user, "company_id", None)
 
+
+def _request_owner_scope():
+    user = getattr(g, "current_user", None)
+    if not user or normalize_role(user.role) == ROLE_SUPER_ADMIN:
+        return None
+    return int(user.id)
+
 # ---------------------------------------------------------------------------
 # API endpoints
 # ---------------------------------------------------------------------------
@@ -106,7 +114,7 @@ def get_assets():
     GET /api/assets
     Returns all hardware snapshots from PostgreSQL.
     """
-    return jsonify(list_assets(_request_company_scope()))
+    return jsonify(list_assets(_request_company_scope(), _request_owner_scope()))
 
 
 @app.route("/api/assets/<path:hostname>/details", methods=["GET"])
@@ -117,7 +125,7 @@ def get_asset_detail(hostname):
     Returns a single asset with PostgreSQL-backed sessions, alerts,
     application timeline, hardware changes, device timeline, and chart data.
     """
-    detail = get_asset_details(hostname, _request_company_scope())
+    detail = get_asset_details(hostname, _request_company_scope(), _request_owner_scope())
     if detail is None:
         return jsonify({"error": "Asset not found"}), 404
     return jsonify(detail)
@@ -136,7 +144,7 @@ def get_alerts():
     GET /api/alerts
     Returns all alert records from PostgreSQL.
     """
-    return jsonify(list_alerts(_request_company_scope()))
+    return jsonify(list_alerts(_request_company_scope(), _request_owner_scope()))
 
 
 @app.route("/api/active-applications", methods=["GET"])
@@ -146,7 +154,7 @@ def get_active_applications():
     GET /api/active-applications
     Returns the latest active Windows application seen for each monitored host.
     """
-    return jsonify(get_latest_active_applications(_request_company_scope()))
+    return jsonify(get_latest_active_applications(_request_company_scope(), _request_owner_scope()))
 
 
 @app.route("/api/active-application-history/<path:hostname>", methods=["GET"])
@@ -161,7 +169,7 @@ def get_active_application_history(hostname):
         limit = int(request.args.get("limit") or "100")
     except ValueError:
         limit = 100
-    history = list_active_application_history_for_asset(hostname, _request_company_scope(), limit)
+    history = list_active_application_history_for_asset(hostname, _request_company_scope(), limit, _request_owner_scope())
     if history is None:
         return jsonify({"error": "Asset not found"}), 404
     return jsonify({"application_timeline": history})
@@ -203,6 +211,18 @@ def admin_signup():
     payload = request.get_json(silent=True) or {}
     data, status_code = register_admin(payload, request)
     return jsonify(data), status_code
+
+
+@app.route("/api/device-pairing/code", methods=["GET"])
+@require_auth()
+def current_device_pairing_code():
+    return jsonify(get_pairing_code(int(g.current_user.id)))
+
+
+@app.route("/api/device-pairing/code", methods=["POST"])
+@require_auth()
+def regenerate_device_pairing_code():
+    return jsonify(issue_pairing_code(int(g.current_user.id)))
 
 
 @app.route("/api/auth/refresh", methods=["POST"])

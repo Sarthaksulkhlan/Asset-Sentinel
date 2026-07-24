@@ -520,6 +520,9 @@ def ensure_auth_schema() -> None:
             if not column_exists(table_name, "company_id"):
                 session.execute(text(f"ALTER TABLE {table_name} ADD COLUMN company_id BIGINT REFERENCES companies(id) ON DELETE SET NULL"))
             session.execute(text(f"CREATE INDEX IF NOT EXISTS idx_{table_name}_company_id ON {table_name} (company_id)"))
+        if not column_exists("assets", "owner_user_id"):
+            session.execute(text("ALTER TABLE assets ADD COLUMN owner_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL"))
+        session.execute(text("CREATE INDEX IF NOT EXISTS idx_assets_owner_user_id ON assets (owner_user_id)"))
         if not column_exists("users", "company_id"):
             session.execute(text("ALTER TABLE users ADD COLUMN company_id BIGINT REFERENCES companies(id) ON DELETE SET NULL"))
         session.execute(text("CREATE INDEX IF NOT EXISTS idx_users_company_id ON users (company_id)"))

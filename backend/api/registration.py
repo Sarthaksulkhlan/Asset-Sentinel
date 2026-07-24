@@ -9,6 +9,7 @@ from auth import ROLE_COMPANY_ADMIN, hash_password
 from database import get_db_session
 from models import AdminUser, Company, EarlyAccessRequest, User
 from notifications import get_last_email_error, send_alert_email
+from pairing import issue_pairing_code
 
 
 EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$")
@@ -249,8 +250,7 @@ def register_admin(payload: Dict[str, Any], request) -> Tuple[Dict[str, Any], in
                     user_agent=user_agent,
                 )
             )
-            session.add(
-                User(
+            user = User(
                     username=username,
                     email=email,
                     display_name=values["fullName"],
@@ -261,9 +261,13 @@ def register_admin(payload: Dict[str, Any], request) -> Tuple[Dict[str, Any], in
                     external_provider="local",
                     external_subject=username,
                 )
-            )
+            session.add(user)
+            session.flush()
+            user_id = int(user.id)
     except IntegrityError:
         return _error("Username or email is already registered.", "username", 409)
+
+    pairing_code = issue_pairing_code(user_id)
 
     sent = send_alert_email(
         "New Admin Registration - Asset Sentinel",
@@ -292,7 +296,12 @@ def register_admin(payload: Dict[str, Any], request) -> Tuple[Dict[str, Any], in
         message = "Registration was saved, but the email notification could not be sent."
         if detail:
             message = f"{message} SMTP detail: {detail}."
-        return _email_failure_response(
-            message
-        )
-    return {"ok": True, "message": "Enterprise registration completed.", "emailNotificationSent": True}, 201
+        response, status = _email_failure_response(message)
+        response["pairingCode"] = pairing_code
+        return response, status
+    return {
+        "ok": True,
+        "message": "Enterprise registration completed.",
+        "emailNotificationSent": True,
+        "pairingCode": pairing_code,
+    }, 201

@@ -383,13 +383,15 @@ def _is_lock_screen_history_row(row: ActiveApplicationHistory) -> bool:
     )
 
 
-def list_assets(company_id: Optional[int] = None) -> List[Dict[str, Any]]:
+def list_assets(company_id: Optional[int] = None, owner_user_id: Optional[int] = None) -> List[Dict[str, Any]]:
     with get_db_session() as session:
         reference_now = _database_now(session)
         merge_duplicate_assets(session)
         query = select(Asset).order_by(Asset.hostname.asc())
         if company_id is not None:
             query = query.where(Asset.company_id == company_id)
+        if owner_user_id is not None:
+            query = query.where(or_(Asset.owner_user_id == owner_user_id, Asset.owner_user_id.is_(None)))
         rows = session.execute(query).scalars().all()
         assets = []
         for row in rows:
@@ -514,11 +516,15 @@ def _legacy_build_asset(record: Dict[str, Any]) -> Asset:
     )
 
 
-def list_alerts(company_id: Optional[int] = None) -> List[Dict[str, Any]]:
+def list_alerts(company_id: Optional[int] = None, owner_user_id: Optional[int] = None) -> List[Dict[str, Any]]:
     with get_db_session() as session:
         query = select(Alert).order_by(Alert.timestamp.asc(), Alert.id.asc())
         if company_id is not None:
             query = query.where(Alert.company_id == company_id)
+        if owner_user_id is not None:
+            query = query.where(Alert.hostname.in_(
+                select(Asset.hostname).where(or_(Asset.owner_user_id == owner_user_id, Asset.owner_user_id.is_(None)))
+            ))
         rows = session.execute(query).scalars().all()
         return [serialize_alert(row) for row in rows]
 
@@ -998,7 +1004,7 @@ def _build_session_record(record: Dict[str, Any], company_id: Optional[int] = No
     )
 
 
-def list_active_applications_history(company_id: Optional[int] = None) -> List[Dict[str, Any]]:
+def list_active_applications_history(company_id: Optional[int] = None, owner_user_id: Optional[int] = None) -> List[Dict[str, Any]]:
     with get_db_session() as session:
         query = (
             select(ActiveApplicationHistory)
@@ -1007,6 +1013,10 @@ def list_active_applications_history(company_id: Optional[int] = None) -> List[D
         )
         if company_id is not None:
             query = query.where(ActiveApplicationHistory.company_id == company_id)
+        if owner_user_id is not None:
+            query = query.where(ActiveApplicationHistory.hostname.in_(
+                select(Asset.hostname).where(or_(Asset.owner_user_id == owner_user_id, Asset.owner_user_id.is_(None)))
+            ))
         rows = session.execute(query).scalars().all()
         return [serialize_active_application_history(row) for row in rows]
 
@@ -1015,6 +1025,7 @@ def list_active_application_history_for_asset(
     identifier: str,
     company_id: Optional[int] = None,
     limit: int = 100,
+    owner_user_id: Optional[int] = None,
 ) -> Optional[List[Dict[str, Any]]]:
     if not identifier:
         return None
@@ -1025,6 +1036,8 @@ def list_active_application_history_for_asset(
             return None
         if company_id is not None and asset_row.company_id != company_id:
             return None
+        if owner_user_id is not None and asset_row.owner_user_id not in {None, owner_user_id}:
+            return None
         query = (
             select(ActiveApplicationHistory)
             .where(ActiveApplicationHistory.hostname == asset_row.hostname)
@@ -1033,6 +1046,10 @@ def list_active_application_history_for_asset(
         )
         if company_id is not None:
             query = query.where(ActiveApplicationHistory.company_id == company_id)
+        if owner_user_id is not None:
+            query = query.where(ActiveApplicationHistory.hostname.in_(
+                select(Asset.hostname).where(or_(Asset.owner_user_id == owner_user_id, Asset.owner_user_id.is_(None)))
+            ))
         rows = session.execute(query).scalars().all()
         return [serialize_active_application_history(row) for row in rows]
 
@@ -1534,8 +1551,8 @@ def update_asset_heartbeat(hostname: str, cpu_usage: Any = None, ram_usage: Any 
         )
 
 
-def get_latest_active_applications(company_id: Optional[int] = None) -> List[Dict[str, Any]]:
-    history = list_active_applications_history(company_id)
+def get_latest_active_applications(company_id: Optional[int] = None, owner_user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    history = list_active_applications_history(company_id, owner_user_id)
     latest_by_host: Dict[str, Dict[str, Any]] = {}
     for record in history:
         hostname = record.get("hostname")
@@ -2190,7 +2207,7 @@ def _application_usage_analytics(
     }
 
 
-def get_asset_details(hostname: str, company_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+def get_asset_details(hostname: str, company_id: Optional[int] = None, owner_user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
     if not hostname:
         return None
 
@@ -2200,6 +2217,8 @@ def get_asset_details(hostname: str, company_id: Optional[int] = None) -> Option
         if asset_row is None:
             return None
         if company_id is not None and asset_row.company_id != company_id:
+            return None
+        if owner_user_id is not None and asset_row.owner_user_id not in {None, owner_user_id}:
             return None
 
         asset = serialize_asset(asset_row, reference_now)

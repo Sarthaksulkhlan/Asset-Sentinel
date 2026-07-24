@@ -28,6 +28,7 @@ from storage import (
     update_asset_heartbeat,
     upsert_asset,
 )
+from pairing import pair_device, pairing_status
 
 
 agent_api = Blueprint("agent_api", __name__, url_prefix="/api/agent")
@@ -142,6 +143,19 @@ def register_asset():
     _record_hardware_change_if_needed(_find_existing_asset(device_uid, payload.get("hostname")), payload)
     upsert_asset(payload)
     return jsonify({"ok": True, "device_uid": device_uid})
+
+
+@agent_api.route("/pairing/status", methods=["POST"])
+@require_agent_token
+def device_pairing_status():
+    return jsonify(pairing_status(_json_payload()))
+
+
+@agent_api.route("/pair", methods=["POST"])
+@require_agent_token
+def pair_agent_device():
+    data, status_code = pair_device(_json_payload())
+    return jsonify(data), status_code
 
 
 @agent_api.route("/heartbeat", methods=["POST"])
