@@ -236,7 +236,7 @@ def save_alert(alert_type: str, hostname: str, severity: str, details: Dict[str,
 # Login Detection Logic
 # ============================================================================
 
-def get_last_recorded_session() -> Optional[Dict[str, Any]]:
+def get_last_recorded_session(hostname: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Get the most recent session record.
     
@@ -244,6 +244,8 @@ def get_last_recorded_session() -> Optional[Dict[str, Any]]:
         dict: Last session record, or None if no sessions recorded yet
     """
     sessions = load_sessions()
+    if hostname:
+        sessions = [session for session in sessions if session.get("hostname") == hostname]
     if not sessions:
         return None
     return sessions[-1]
@@ -258,8 +260,10 @@ def _is_countable_login_record(session: Dict[str, Any]) -> bool:
     )
 
 
-def get_last_countable_login_session() -> Optional[Dict[str, Any]]:
+def get_last_countable_login_session(hostname: Optional[str] = None) -> Optional[Dict[str, Any]]:
     for session in reversed(load_sessions()):
+        if hostname and session.get("hostname") != hostname:
+            continue
         if _is_countable_login_record(session):
             return session
     return None
@@ -517,8 +521,9 @@ def detect_login() -> Optional[Dict[str, Any]]:
         dict: New login record if login detected, None otherwise
     """
     current_session = get_current_session_info()
-    last_session = get_last_recorded_session()
-    last_countable_session = get_last_countable_login_session()
+    current_hostname = current_session.get("hostname")
+    last_session = get_last_recorded_session(current_hostname)
+    last_countable_session = get_last_countable_login_session(current_hostname)
     current_user = current_session.get("username")
     current_session_id = current_session.get("session_id")
     current_event_record_id = current_session.get("windows_event_record_id")

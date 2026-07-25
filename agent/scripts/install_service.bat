@@ -87,11 +87,6 @@ if errorlevel 1 (
 exit /b 0
 
 :pair_device
-"%PYTHON_EXE%" agent\scripts\pair_device.py --status >nul 2>&1
-if not errorlevel 1 (
-  echo Device is already paired. Continuing installation.
-  exit /b 0
-)
 echo ==================================
 echo.
 echo Asset Sentinel Device Pairing

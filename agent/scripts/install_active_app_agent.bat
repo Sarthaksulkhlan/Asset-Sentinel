@@ -11,7 +11,7 @@ set "WATCHDOG_SCRIPT=%CD%\logs\AssetSentinelActiveApplicationAgentWatchdog.vbs"
 set "STARTUP_DIR=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
 set "STARTUP_SCRIPT=%STARTUP_DIR%\AssetSentinelActiveApplicationAgent.vbs"
 set "STARTUP_SHORTCUT=%STARTUP_DIR%\AssetSentinelActiveApplicationAgent.lnk"
-if not defined VERIFY_SECONDS set "VERIFY_SECONDS=600"
+if not defined VERIFY_SECONDS set "VERIFY_SECONDS=150"
 
 echo Installing Asset Sentinel Active Application user-session agent...
 if not exist "logs" mkdir "logs"
