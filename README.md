@@ -32,7 +32,7 @@ Asset Sentinel turns Windows session, application, hardware, and heartbeat event
 
 ## Explore
 
-[Why Asset Sentinel](#why-asset-sentinel) · [Features](#key-features) · [Architecture](#system-architecture) · [Quick Start](#quick-start) · [Configuration](#configuration) · [Security](#security) · [Roadmap](#roadmap)
+[Why Asset Sentinel](#why-asset-sentinel) · [Features](#key-features) · [Architecture](#system-architecture) · [Quick Start](#quick-start) · [Configuration](#configuration-reference) · [Security](#security) · [Roadmap](#roadmap)
 
 ## At a Glance
 
@@ -218,87 +218,206 @@ The service path handles genuine Windows session changes through the Service Con
 
 ## Quick Start
 
-### Prerequisites
+Choose the path that matches what you are trying to do:
 
+- **Install a monitored Windows device:** use the deployed Asset Sentinel website and backend. This is the normal endpoint setup.
+- **Run the complete project locally:** start PostgreSQL, the Flask backend, and the React frontend for development.
+
+## Install the Windows Agent
+
+Use these steps on every Windows computer that should report to the deployed Asset Sentinel dashboard.
+
+### Requirements
+
+- Windows 10 or Windows 11
 - Python 3.10 or newer
-- Node.js 20 or newer and npm
-- A PostgreSQL database
-- Windows for endpoint collectors and Windows Service operation
+- Administrator access to install a Windows Service
+- An Asset Sentinel account
+- The agent token supplied by the Asset Sentinel deployment administrator
 
-### 1. Configure the environment
+### 1. Download the project
 
-Copy `.env.example` to `.env` for local development and configure the required values. Production secrets must be set through Render environment variables and must never be committed.
+Either select **Code -> Download ZIP** on GitHub and extract it, or clone the repository:
 
 ```powershell
-Copy-Item .env.example .env
+git clone https://github.com/Sarthaksulkhlan/Asset-Sentinel.git
+cd Asset-Sentinel
 ```
 
-### 2. Install backend dependencies
+Run all remaining commands from the repository root.
 
+### 2. Install the Python dependencies
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-### 3. Prepare the database
+### 3. Configure the Windows Agent
 
-Apply the base schema and migrations described in [docs/SETUP.md](docs/SETUP.md).
+Create a local `.env` file from the example:
 
-### 4. Run locally
+```powershell
+Copy-Item .env.example .env
+```
 
-Backend:
+For a monitored Windows device, these are the only required settings:
+
+```dotenv
+ASSET_SENTINEL_API_URL=https://asset-sentinel-backend.onrender.com
+ASSET_SENTINEL_AGENT_TOKEN=replace_with_the_token_from_your_deployment_administrator
+```
+
+The Windows Agent does not connect directly to PostgreSQL. It does not need `ASSET_SENTINEL_DATABASE_URL`, JWT, SMTP, or super-admin settings. Keep `.env` private and never commit it.
+
+### 4. Get a pairing code
+
+1. Open [Asset Sentinel](https://assetsentinel.onrender.com) and sign in.
+2. Open **Settings -> Device Pairing**.
+3. Use the active pairing code, or select **Generate New Pairing Code**.
+4. Keep the four-digit code ready. It is valid for 20 hours and can be used only once.
+
+New accounts receive a pairing code during signup. Existing users, administrators, and super administrators can generate a fresh code from Settings whenever they reinstall the Agent or pair another device.
+
+### 5. Install and pair the device
+
+Open PowerShell or VS Code **as Administrator**, return to the repository root, and run:
+
+```powershell
+.\install_service.bat
+```
+
+The installer pauses and asks:
+
+```text
+Enter your 4-digit Pairing Code:
+```
+
+After the backend accepts the code, the installer:
+
+1. Pairs the Windows device with the signed-in Asset Sentinel account.
+2. Replaces an older `AssetSentinelMonitoringService` registration when present.
+3. Installs the service with delayed automatic startup and recovery actions.
+4. Starts the Windows Monitoring Service.
+5. Installs the independent Active Application user-session agent.
+
+An invalid, expired, or previously used code stops installation. Pairing codes are requested only by `install_service.bat`; Windows startup and the service-control scripts never request one.
+
+### 6. Verify the installation
+
+Confirm that the Windows Service is running:
+
+```powershell
+sc.exe query AssetSentinelMonitoringService
+```
+
+The result should contain:
+
+```text
+STATE : 4  RUNNING
+```
+
+Confirm that the Active Application Agent is running in the signed-in Windows session:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\agent\scripts\check_active_app_agent.ps1
+```
+
+Wait a few minutes, then open the dashboard and confirm that the device heartbeat, hardware inventory, login activity, application timeline, and productivity data are updating.
+
+### Reinstall or update the Agent
+
+Generate a fresh pairing code and run the installer again:
+
+```powershell
+.\install_service.bat
+```
+
+The installer safely stops and removes the existing service registration before installing the current version. You do not need to run `uninstall_service.bat` first.
+
+### Service controls
+
+Run service-management scripts from an Administrator shell:
+
+| Action | Command | Pairing code required |
+|---|---|---|
+| Start the Windows Service | `.\start_service.bat` | No |
+| Stop the Windows Service | `.\stop_service.bat` | No |
+| Restart the Windows Service | `.\restart_service.bat` | No |
+| Uninstall the Windows Service | `.\uninstall_service.bat` | No |
+| Start the Active Application Agent | `.\start_active_app_agent.bat` | No |
+| Stop the Active Application Agent | `.\stop_active_app_agent.bat` | No |
+
+The Windows Service starts automatically after a reboot without asking for a pairing code. The Active Application Agent is a separate user-session process configured to start when the monitored Windows user signs in.
+
+## Local Development
+
+Use this path only when developing or self-hosting the backend and frontend.
+
+### Requirements
+
+- Python 3.10 or newer
+- Node.js 20 or newer and npm
+- A reachable PostgreSQL database
+
+### 1. Configure the environment
+
+```powershell
+Copy-Item .env.example .env
+Copy-Item frontend/.env.example frontend/.env
+```
+
+Set the backend database URL, JWT secret, agent token, administrator credentials, and CORS origins in `.env`. Set `VITE_API_BASE_URL` in `frontend/.env` to the backend URL. SMTP settings are required only for email delivery.
+
+### 2. Install dependencies
+
+```powershell
+python -m pip install -r requirements.txt
+cd frontend
+npm install
+cd ..
+```
+
+### 3. Prepare PostgreSQL
+
+For a clean database, the backend creates the current SQLAlchemy tables during startup. When upgrading an existing database, apply the required SQL migrations from `database/migrations/`. See [docs/SETUP.md](docs/SETUP.md) for the project setup notes.
+
+### 4. Start the applications
+
+Backend, from the repository root:
 
 ```powershell
 python app.py
 ```
 
-Frontend:
+Frontend, from a second terminal:
 
 ```powershell
 cd frontend
-npm install
 npm run dev
 ```
 
-Manual Windows agent:
+Optional interactive Windows agent, from a third terminal:
 
 ```powershell
 python agent/collectors/monitoring_agent.py --console
 ```
 
-## Configuration
+## Configuration Reference
 
 | Variable | Used by | Purpose |
 |---|---|---|
-| `ASSET_SENTINEL_DATABASE_URL` | Backend | PostgreSQL connection string |
-| `ASSET_SENTINEL_JWT_SECRET` | Backend | Signs and validates user tokens |
-| `ASSET_SENTINEL_AGENT_TOKEN` | Backend and agent | Authenticates endpoint telemetry |
-| `ASSET_SENTINEL_API_URL` | Windows agent | Base URL of the Flask API |
-| `VITE_API_BASE_URL` | Frontend | Base URL used for browser API requests |
-| `ASSET_SENTINEL_CORS_ORIGINS` | Backend | Comma-separated allowed frontend origins |
-| `SUPER_ADMIN_USERNAME`, `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD` | Backend | Bootstrap platform administrator |
-| `SMTP_*`, `ALERT_EMAIL` | Backend | OTP, alert, and support email delivery |
+| `ASSET_SENTINEL_API_URL` | Windows Agent | Base URL of the Flask backend |
+| `ASSET_SENTINEL_AGENT_TOKEN` | Backend and Windows Agent | Authenticates endpoint telemetry; both sides must use the same value |
+| `ASSET_SENTINEL_DATABASE_URL` | Backend only | PostgreSQL connection string |
+| `ASSET_SENTINEL_JWT_SECRET` | Backend only | Signs and validates dashboard user tokens |
+| `VITE_API_BASE_URL` | Frontend only | Backend URL used for browser API requests |
+| `ASSET_SENTINEL_CORS_ORIGINS` | Backend only | Comma-separated allowed frontend origins |
+| `SUPER_ADMIN_USERNAME`, `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD` | Backend only | Bootstrap platform administrator |
+| `SMTP_*`, `ALERT_EMAIL` | Backend only | OTP, alert, and support email delivery |
 
 Additional retry, timeout, spool, and collector settings are documented in [.env.example](.env.example).
 
-> **Important:** the source includes a development fallback agent token for local convenience. Always configure a strong, unique `ASSET_SENTINEL_AGENT_TOKEN` outside local development.
-
-## Windows Service
-
-Run the installation command from an elevated Windows Command Prompt or PowerShell:
-
-```bat
-install_service.bat
-```
-
-Service controls:
-
-```bat
-start_service.bat
-stop_service.bat
-restart_service.bat
-uninstall_service.bat
-```
+> **Security:** never commit `.env`, database credentials, JWT secrets, SMTP passwords, or the production agent token. Replace all example credentials before deployment.
 
 ## Security
 
