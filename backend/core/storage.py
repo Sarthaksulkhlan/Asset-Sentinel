@@ -2628,6 +2628,8 @@ def _merge_asset_row(owner: Asset, duplicate: Asset) -> None:
         preferred = duplicate
     if owner.company_id is None and duplicate.company_id is not None:
         owner.company_id = duplicate.company_id
+    if owner.owner_user_id is None and duplicate.owner_user_id is not None:
+        owner.owner_user_id = duplicate.owner_user_id
     for attr in (
         "hostname", "ip_address", "mac_address", "bios_serial", "baseboard_serial", "uuid",
         "composite_id", "cpu_name", "ram_total_gb", "baseboard_manufacturer",

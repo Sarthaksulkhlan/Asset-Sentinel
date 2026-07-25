@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Building2, CheckCircle2, CircleDot, LifeBuoy, LogOut, Monitor, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
+import { AlertTriangle, Building2, CheckCircle2, CircleDot, LifeBuoy, LogOut, Monitor, RefreshCw, Settings, ShieldCheck, XCircle } from "lucide-react";
 import { apiFetch } from "../lib/api";
+import DevicePairingCard from "./DevicePairingCard";
 
 type Overview = {
   totalCompanies: number;
@@ -45,6 +46,7 @@ export default function SuperAdminDashboard({ onSignOut }: { onSignOut: () => vo
   const [selectedCompany, setSelectedCompany] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const loadData = async () => {
     setLoading(true);
@@ -123,6 +125,9 @@ export default function SuperAdminDashboard({ onSignOut }: { onSignOut: () => vo
             <h1 className="mt-1 text-2xl font-black text-white">Command Center</h1>
           </div>
           <div className="flex gap-2">
+            <button onClick={() => setIsSettingsOpen((current) => !current)} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold ${isSettingsOpen ? "border-[#00d1ff]/35 bg-[#00d1ff]/10 text-[#00d1ff]" : "border-white/10 bg-white/[0.03] text-[#a4e6ff]"}`}>
+              <Settings className="h-4 w-4" /> Settings
+            </button>
             <button onClick={loadData} className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs font-bold text-[#a4e6ff]">
               <RefreshCw className="h-4 w-4" /> Refresh
             </button>
@@ -134,6 +139,13 @@ export default function SuperAdminDashboard({ onSignOut }: { onSignOut: () => vo
       </header>
 
       <main className="mx-auto grid max-w-7xl gap-5 px-5 py-6">
+        {isSettingsOpen ? (
+          <>
+            <h2 className="text-2xl font-black text-white">Settings</h2>
+            <DevicePairingCard />
+          </>
+        ) : (
+          <>
         {error && <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>}
 
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -211,6 +223,8 @@ export default function SuperAdminDashboard({ onSignOut }: { onSignOut: () => vo
             {!loading && tickets.length === 0 && <p className="py-6 text-center text-sm text-[#8fa3ad]">No support tickets yet.</p>}
           </div>
         </section>
+          </>
+        )}
       </main>
 
       {selectedCompany && (

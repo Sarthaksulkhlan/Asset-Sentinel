@@ -76,6 +76,7 @@ app.register_blueprint(agent_api)
 def add_live_api_cache_headers(response):
     if (
         request.path.startswith("/api/assets")
+        or request.path == "/api/device-pairing/code"
         or request.path.startswith("/api/active-application-history")
         or request.path in {"/api/active-applications", "/api/sessions", "/api/sessions/count"}
         or request.path in {"/sessions", "/sessions/count", "/device-status", "/current-session", "/current-user"}

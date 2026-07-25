@@ -40,12 +40,14 @@ import {
   BarChart3,
   Info,
   AlertCircle,
-  Gauge
+  Gauge,
+  Settings
 } from "lucide-react";
 import { Asset, AssetDetailPayload, SecurityFeedItem, KPIStats } from "../types";
 import { DEMO_ASSET_DETAILS, DEMO_ASSETS, DEMO_SECURITY_FEED } from "../data";
 import { SentinelLogo } from "./SentinelLogo";
 import AssetHistory from "./AssetHistory";
+import DevicePairingCard from "./DevicePairingCard";
 import { apiFetch } from "../lib/api";
 
 interface DashboardPageProps {
@@ -761,6 +763,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   const [isMonitoringOpen, setIsMonitoringOpen] = useState(false);
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const defaultHistoryEnd = useMemo(() => new Date(), []);
   const defaultHistoryStart = useMemo(() => {
     const value = new Date(defaultHistoryEnd);
@@ -913,6 +916,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
   };
 
   const handleSidebarAction = (action: () => void) => {
+    setIsSettingsOpen(false);
     action();
     setIsMobileSidebarOpen(false);
   };
@@ -2184,8 +2188,11 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
         <ul className="flex-1 flex flex-col gap-1.5 overflow-y-auto">
           <li>
             <button 
-              onClick={() => setIsMobileSidebarOpen(false)}
-              className="w-full bg-[#00d1ff]/10 text-[#00d1ff] border-r-4 border-[#00d1ff] flex items-center gap-3 px-3 py-2.5 rounded-l-lg hover:bg-[#00d1ff]/15 transition-all text-xs font-bold uppercase tracking-wider text-left"
+              onClick={() => {
+                setIsSettingsOpen(false);
+                setIsMobileSidebarOpen(false);
+              }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-l-lg transition-all text-xs font-bold uppercase tracking-wider text-left ${!isSettingsOpen ? "bg-[#00d1ff]/10 text-[#00d1ff] border-r-4 border-[#00d1ff] hover:bg-[#00d1ff]/15" : "text-[#bbc9cf] hover:text-[#00d1ff] hover:bg-[#2d363e]/40"}`}
             >
               <Activity className="w-4.5 h-4.5" />
               Dashboard
@@ -2261,6 +2268,20 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
           <ul className="flex flex-col gap-1.5 text-xs">
             {!isDemoMode && (
               <li>
+                <button
+                  onClick={() => {
+                    setIsSettingsOpen(true);
+                    setIsMobileSidebarOpen(false);
+                  }}
+                  className={`w-full transition-all flex items-center gap-3 px-3 py-2 rounded-lg text-left ${isSettingsOpen ? "bg-[#00d1ff]/10 text-[#00d1ff]" : "text-[#bbc9cf] hover:text-[#00d1ff] hover:bg-[#2d363e]/40"}`}
+                >
+                  <Settings className="w-4.5 h-4.5" />
+                  <span>Settings</span>
+                </button>
+              </li>
+            )}
+            {!isDemoMode && (
+              <li>
               <button
                 onClick={() => handleSidebarAction(() => setIsSupportCenterOpen(true))}
                 className="w-full text-[#bbc9cf] hover:text-[#00d1ff] hover:bg-[#2d363e]/40 transition-all flex items-center gap-3 px-3 py-2 rounded-lg text-left"
@@ -2308,7 +2329,7 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
             >
               <Menu className="w-5 h-5" />
             </button>
-            <span className="font-extrabold text-[#dae3ee] tracking-tight">System Overview</span>
+            <span className="font-extrabold text-[#dae3ee] tracking-tight">{isSettingsOpen ? "Settings" : "System Overview"}</span>
           </div>
           <button 
             onClick={isDemoMode ? () => onNavigate("landing") : onSignOut}
@@ -2318,6 +2339,17 @@ export default function DashboardPage({ userEmail, onSignOut, onNavigate, isDemo
             {isDemoMode ? "Exit Demo" : "Exit"}
           </button>
         </header>
+
+        {isSettingsOpen && (
+          <div className="absolute inset-x-0 bottom-0 top-16 z-20 overflow-y-auto bg-[#0b141c] p-4 md:top-0 md:p-8">
+            <div className="mx-auto w-full max-w-6xl">
+              <div className="mb-6">
+                <h1 className="text-2xl font-black text-[#dae3ee] sm:text-3xl">Settings</h1>
+              </div>
+              <DevicePairingCard />
+            </div>
+          </div>
+        )}
 
         {/* Scrollable command workspace content */}
         <div

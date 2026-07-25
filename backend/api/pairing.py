@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 from uuid import UUID
 
-from sqlalchemy import or_, select, text
+from sqlalchemy import or_, select, text, update
 
 from database import get_db_session
 from models import Asset, DevicePairingCode, User
@@ -26,23 +26,35 @@ def _serialize(code: DevicePairingCode) -> Dict[str, Any]:
     }
 
 
+def _empty_pairing_code() -> Dict[str, Any]:
+    return {
+        "code": None,
+        "createdAt": None,
+        "expiresAt": None,
+        "used": False,
+    }
+
+
 def issue_pairing_code(user_id: int) -> Dict[str, Any]:
     now = _utcnow()
     with get_db_session() as session:
         session.execute(text("SELECT pg_advisory_xact_lock(827364910)"))
-        active = session.execute(
-            select(DevicePairingCode)
+        previous_unused_codes = set(session.execute(
+            select(DevicePairingCode.code)
             .where(DevicePairingCode.user_id == user_id)
             .where(DevicePairingCode.used.is_(False))
-            .where(DevicePairingCode.expires_at > now)
-            .order_by(DevicePairingCode.created_at.desc(), DevicePairingCode.id.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-        if active:
-            return _serialize(active)
+        ).scalars().all())
+        session.execute(
+            update(DevicePairingCode)
+            .where(DevicePairingCode.user_id == user_id)
+            .where(DevicePairingCode.used.is_(False))
+            .values(used=True, used_at=now)
+        )
 
         for _ in range(100):
             value = f"{secrets.randbelow(10000):04d}"
+            if value in previous_unused_codes:
+                continue
             collision = session.execute(
                 select(DevicePairingCode.id)
                 .where(DevicePairingCode.code == value)
@@ -56,6 +68,7 @@ def issue_pairing_code(user_id: int) -> Dict[str, Any]:
                     code=value,
                     expires_at=now + PAIRING_CODE_LIFETIME,
                     used=False,
+                    created_at=now,
                 )
                 session.add(code)
                 session.flush()
@@ -64,7 +77,17 @@ def issue_pairing_code(user_id: int) -> Dict[str, Any]:
 
 
 def get_pairing_code(user_id: int) -> Dict[str, Any]:
-    return issue_pairing_code(user_id)
+    now = _utcnow()
+    with get_db_session() as session:
+        active = session.execute(
+            select(DevicePairingCode)
+            .where(DevicePairingCode.user_id == user_id)
+            .where(DevicePairingCode.used.is_(False))
+            .where(DevicePairingCode.expires_at > now)
+            .order_by(DevicePairingCode.created_at.desc(), DevicePairingCode.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        return _serialize(active) if active else _empty_pairing_code()
 
 
 def _find_device(session, payload: Dict[str, Any]) -> Optional[Asset]:
@@ -112,7 +135,7 @@ def pair_device(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
         if not code:
             return {"error": "Invalid or Expired Pairing Code."}, 400
         user = session.get(User, code.user_id)
-        if not user or not user.is_active or not user.company_id:
+        if not user or not user.is_active:
             return {"error": "Invalid or Expired Pairing Code."}, 400
 
         device_record = {
@@ -153,7 +176,8 @@ def pair_device(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
                 collected_at=now,
             )
             session.add(asset)
-        asset.company_id = user.company_id
+        if user.company_id is not None:
+            asset.company_id = user.company_id
         asset.owner_user_id = user.id
         code.used = True
         code.used_at = now
