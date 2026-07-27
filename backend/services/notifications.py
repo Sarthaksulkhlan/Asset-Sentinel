@@ -1,3 +1,4 @@
+import os
 import smtplib
 from email.message import EmailMessage
 import errno
@@ -9,6 +10,8 @@ from config import Config
 
 logger = logging.getLogger("asset_sentinel.notifications")
 _last_email_error = ""
+ADMIN_ALERT_SENDER = "onboarding@resend.dev"
+ADMIN_ALERT_RECIPIENT = "assetsentinel.alerts@gmail.com"
 
 
 def get_last_email_error() -> str:
@@ -120,15 +123,44 @@ def _send_email(to_email: str, subject: str, body: str) -> bool:
         return False
 
 
-def send_alert_email(subject: str, fields: Dict[str, Any]) -> bool:
+def _send_admin_alert_with_resend(subject: str, body: str) -> bool:
+    _set_last_email_error("")
     Config.reload_local_env()
-    if not Config.ALERT_EMAIL:
-        _set_last_email_error(
-            "missing environment variable(s): ALERT_EMAIL. Configure ALERT_EMAIL in .env."
-        )
-        logger.error("Email notification skipped: %s", get_last_email_error())
+    api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    if not api_key:
+        error_message = "missing environment variable(s): RESEND_API_KEY. Configure RESEND_API_KEY for administrator alert emails."
+        _set_last_email_error(error_message)
+        logger.error("Administrator alert email skipped: %s", error_message)
         return False
-    return _send_email(Config.ALERT_EMAIL, subject, _build_email_body(subject, fields))
+
+    try:
+        import resend
+    except ImportError as exc:
+        error_message = "Resend Python SDK is not installed. Add resend to requirements.txt and redeploy."
+        _set_last_email_error(error_message)
+        logger.exception("Administrator alert email skipped: %s", error_message)
+        return False
+
+    try:
+        resend.api_key = api_key
+        resend.Emails.send(
+            {
+                "from": ADMIN_ALERT_SENDER,
+                "to": [ADMIN_ALERT_RECIPIENT],
+                "subject": subject,
+                "text": body,
+            }
+        )
+        logger.info("Administrator alert email sent to %s with subject %s", ADMIN_ALERT_RECIPIENT, subject)
+        return True
+    except Exception as exc:
+        _set_last_email_error(f"Resend API send failed for administrator alert email: {exc}")
+        logger.exception("Resend API send failed for administrator alert email with subject %s: %s", subject, exc)
+        return False
+
+
+def send_alert_email(subject: str, fields: Dict[str, Any]) -> bool:
+    return _send_admin_alert_with_resend(subject, _build_email_body(subject, fields))
 
 
 def send_password_reset_otp_email(to_email: str, otp: str) -> bool:
