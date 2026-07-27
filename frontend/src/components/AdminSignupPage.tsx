@@ -35,6 +35,7 @@ type SignupForm = {
   country: string;
   fullName: string;
   workEmail: string;
+  mobileCountryCode: string;
   mobileNumber: string;
   jobTitle: string;
   department: string;
@@ -60,6 +61,7 @@ const initialForm: SignupForm = {
   country: "",
   fullName: "",
   workEmail: "",
+  mobileCountryCode: "+91",
   mobileNumber: "",
   jobTitle: "",
   department: "",
@@ -79,6 +81,16 @@ const steps: Array<{ id: StepId; title: string; eyebrow: string }> = [
 const industries = ["Cybersecurity", "Financial Services", "Healthcare", "Manufacturing", "Technology", "Government", "Education", "Retail", "Other"];
 const companySizes = ["1-50", "51-200", "201-500", "501-1,000", "1,001-5,000", "5,001+"];
 const countries = ["United States", "India", "United Kingdom", "Canada", "Australia", "Germany", "Singapore", "United Arab Emirates", "Other"];
+const callingCodes = [
+  { country: "India", code: "+91" },
+  { country: "United States", code: "+1" },
+  { country: "United Kingdom", code: "+44" },
+  { country: "Canada", code: "+1" },
+  { country: "Australia", code: "+61" },
+  { country: "Germany", code: "+49" },
+  { country: "Singapore", code: "+65" },
+  { country: "United Arab Emirates", code: "+971" },
+];
 
 const emailRegex = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 const mobileRegex = /^\+[1-9]\d{7,14}$/;
@@ -127,6 +139,12 @@ const websiteValidationError = (value: string) => {
 };
 
 const normalizeMobileNumber = (value: string) => value.trim().replace(/[\s().-]/g, "");
+
+const buildMobileNumber = (countryCode: string, number: string) => {
+  const normalizedNumber = normalizeMobileNumber(number);
+  if (normalizedNumber.startsWith("+")) return normalizedNumber;
+  return `${countryCode}${normalizedNumber.replace(/^0+/, "")}`;
+};
 
 const strengthLabel = (validCount: number) => {
   if (validCount <= 2) return "Weak";
@@ -181,7 +199,7 @@ export default function AdminSignupPage({ onNavigate }: AdminSignupPageProps) {
       const emailError = emailValidationError(form.workEmail);
       if (emailError) next.workEmail = emailError;
     }
-    if (fields.includes("mobileNumber") && form.mobileNumber && !mobileRegex.test(normalizeMobileNumber(form.mobileNumber))) {
+    if (fields.includes("mobileNumber") && form.mobileNumber && !mobileRegex.test(buildMobileNumber(form.mobileCountryCode, form.mobileNumber))) {
       next.mobileNumber = "Use country code, for example +919876543210.";
     }
     if (fields.includes("username") && form.username && !usernameRegex.test(form.username.trim())) {
@@ -243,13 +261,14 @@ export default function AdminSignupPage({ onNavigate }: AdminSignupPageProps) {
     }
     setIsSubmitting(true);
     try {
+      const { mobileCountryCode, ...signupPayload } = form;
       const response = await authFetch("/api/admin-signup", {
         method: "POST",
         body: JSON.stringify({
-          ...form,
+          ...signupPayload,
           username: form.username.trim(),
           workEmail: form.workEmail.trim(),
-          mobileNumber: normalizeMobileNumber(form.mobileNumber),
+          mobileNumber: buildMobileNumber(mobileCountryCode, form.mobileNumber),
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -467,7 +486,10 @@ export default function AdminSignupPage({ onNavigate }: AdminSignupPageProps) {
                     <input className={inputClass(errors.workEmail)} value={form.workEmail} onChange={(e) => updateField("workEmail", e.target.value)} autoComplete="email" />
                   </Field>
                   <Field label="Mobile Number" error={errors.mobileNumber} icon={<Phone className="h-4 w-4" />}>
-                    <input className={inputClass(errors.mobileNumber)} placeholder="+919876543210" value={form.mobileNumber} onChange={(e) => updateField("mobileNumber", e.target.value)} autoComplete="tel" />
+                    <div className="grid gap-2 sm:grid-cols-[10.5rem_1fr]">
+                      <CallingCodeSelect value={form.mobileCountryCode} onChange={(value) => updateField("mobileCountryCode", value)} error={errors.mobileNumber} />
+                      <input className={inputClass(errors.mobileNumber)} placeholder="98765 43210" value={form.mobileNumber} onChange={(e) => updateField("mobileNumber", e.target.value)} autoComplete="tel-national" />
+                    </div>
                   </Field>
                   <Field label="Job Title" error={errors.jobTitle}>
                     <input className={inputClass(errors.jobTitle)} value={form.jobTitle} onChange={(e) => updateField("jobTitle", e.target.value)} />
@@ -645,6 +667,26 @@ function Select({ value, onChange, options, error }: { value: string; onChange: 
       >
         <option value="">Select</option>
         {options.map((option) => <option key={option} value={option}>{option}</option>)}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8fa3ad]" />
+    </div>
+  );
+}
+
+function CallingCodeSelect({ value, onChange, error }: { value: string; onChange: (value: string) => void; error?: string }) {
+  return (
+    <div className="relative">
+      <select
+        className={`${inputClass(error)} appearance-none pr-10`}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        aria-label="Country calling code"
+      >
+        {callingCodes.map((item) => (
+          <option key={`${item.code}-${item.country}`} value={item.code}>
+            {item.code} {item.country}
+          </option>
+        ))}
       </select>
       <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8fa3ad]" />
     </div>
