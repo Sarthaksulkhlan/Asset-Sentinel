@@ -126,6 +126,8 @@ const websiteValidationError = (value: string) => {
   }
 };
 
+const normalizeMobileNumber = (value: string) => value.trim().replace(/[\s().-]/g, "");
+
 const strengthLabel = (validCount: number) => {
   if (validCount <= 2) return "Weak";
   if (validCount <= 4) return "Medium";
@@ -168,6 +170,7 @@ export default function AdminSignupPage({ onNavigate }: AdminSignupPageProps) {
         if (!form[field]) next[field] = "Required for enterprise enrollment.";
         return;
       }
+      if (field === "companyWebsite") return;
       if (!String(form[field]).trim()) next[field] = "Required";
     });
     if (fields.includes("companyWebsite") && form.companyWebsite) {
@@ -178,8 +181,8 @@ export default function AdminSignupPage({ onNavigate }: AdminSignupPageProps) {
       const emailError = emailValidationError(form.workEmail);
       if (emailError) next.workEmail = emailError;
     }
-    if (fields.includes("mobileNumber") && form.mobileNumber && !mobileRegex.test(form.mobileNumber.trim())) {
-      next.mobileNumber = "Use country code, for example +14155552671.";
+    if (fields.includes("mobileNumber") && form.mobileNumber && !mobileRegex.test(normalizeMobileNumber(form.mobileNumber))) {
+      next.mobileNumber = "Use country code, for example +919876543210.";
     }
     if (fields.includes("username") && form.username && !usernameRegex.test(form.username.trim())) {
       next.username = "Use 4-64 letters, numbers, dots, underscores, or hyphens.";
@@ -246,7 +249,7 @@ export default function AdminSignupPage({ onNavigate }: AdminSignupPageProps) {
           ...form,
           username: form.username.trim(),
           workEmail: form.workEmail.trim(),
-          mobileNumber: form.mobileNumber.trim(),
+          mobileNumber: normalizeMobileNumber(form.mobileNumber),
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -464,7 +467,7 @@ export default function AdminSignupPage({ onNavigate }: AdminSignupPageProps) {
                     <input className={inputClass(errors.workEmail)} value={form.workEmail} onChange={(e) => updateField("workEmail", e.target.value)} autoComplete="email" />
                   </Field>
                   <Field label="Mobile Number" error={errors.mobileNumber} icon={<Phone className="h-4 w-4" />}>
-                    <input className={inputClass(errors.mobileNumber)} placeholder="+14155552671" value={form.mobileNumber} onChange={(e) => updateField("mobileNumber", e.target.value)} autoComplete="tel" />
+                    <input className={inputClass(errors.mobileNumber)} placeholder="+919876543210" value={form.mobileNumber} onChange={(e) => updateField("mobileNumber", e.target.value)} autoComplete="tel" />
                   </Field>
                   <Field label="Job Title" error={errors.jobTitle}>
                     <input className={inputClass(errors.jobTitle)} value={form.jobTitle} onChange={(e) => updateField("jobTitle", e.target.value)} />
