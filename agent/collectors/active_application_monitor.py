@@ -242,7 +242,9 @@ def is_windows_locked() -> Optional[bool]:
 
 
 def _locked_activity_record(lock_event: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    timestamp = (lock_event or {}).get("event_timestamp") or datetime.now().astimezone().isoformat()
+    if not lock_event or not lock_event.get("event_timestamp"):
+        raise ValueError("A genuine Windows session-lock event is required for a Locked timeline record.")
+    timestamp = lock_event["event_timestamp"]
     return {
         "hostname": socket.gethostname(),
         "username": _current_username(),
@@ -319,27 +321,21 @@ def _log_activity_sample_state(
 def collect_active_application_record() -> Optional[Dict[str, Any]]:
     locked = is_windows_locked()
     username = _current_username()
-    lock_event = _latest_confirmed_windows_lock_event(username) if locked is not False else None
-    unlock_event = _latest_confirmed_windows_unlock_event(username) if locked is not False else None
-    if locked is True or (locked is None and _lock_event_is_current(socket.gethostname(), lock_event, unlock_event)):
+    lock_event = _latest_confirmed_windows_lock_event(username)
+    if lock_event and not _lock_event_already_emitted(socket.gethostname(), lock_event):
         record = _locked_activity_record(lock_event)
-        previous_state = _current_workstation_state(record.get("hostname"))
-        if _apply_workstation_state(record.get("hostname"), True):
-            _remember_lock_event_emitted(record.get("hostname"), lock_event)
-            return record
-        if (
-            previous_state is None
-            and lock_event
-            and not _lock_event_already_emitted(record.get("hostname"), lock_event)
-        ):
-            logger.info(
-                "Confirmed Windows lock event emitted to active application timeline: event_id=%s record_id=%s",
-                lock_event.get("event_id"),
-                lock_event.get("event_record_id"),
-            )
-            _remember_lock_event_emitted(record.get("hostname"), lock_event)
-            return record
-        logger.debug("Workstation remains locked; no duplicate LockApp active-application event emitted.")
+        _remember_lock_event_emitted(record.get("hostname"), lock_event)
+        logger.info(
+            "Confirmed Windows lock event emitted to active application timeline: event_id=%s record_id=%s",
+            lock_event.get("event_id"),
+            lock_event.get("event_record_id"),
+        )
+        return record
+
+    if locked is True:
+        # Track the observed state while waiting for Windows to publish its
+        # Security event. Never turn a state probe into a timestamped event.
+        _apply_workstation_state(socket.gethostname(), True)
         return None
 
     activity = collect_current_active_path()
@@ -391,7 +387,12 @@ def _is_lock_app(record: Optional[Dict[str, Any]]) -> bool:
         record.get("window_title"),
         record.get("process_path"),
     ]
-    return any("lockapp" in str(value or "").lower() for value in values)
+    return any(
+        str(value or "").strip().lower() == "locked"
+        or "lockapp" in str(value or "").lower()
+        or "windows workstation locked" in str(value or "").lower()
+        for value in values
+    )
 
 
 def _record_unlock_fallback_if_needed(record: Optional[Dict[str, Any]]) -> None:
