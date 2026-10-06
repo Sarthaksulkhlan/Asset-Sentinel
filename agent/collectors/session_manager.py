@@ -471,6 +471,11 @@ def get_latest_windows_unlock_event(username: Optional[str]) -> Optional[Dict[st
     return _read_latest_windows_security_event(username, {4801, 4778}, False)
 
 
+def get_latest_windows_lock_event(username: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Return the newest genuine workstation lock event for this user."""
+    return _read_latest_windows_security_event(username, {4800}, False)
+
+
 def get_latest_windows_logout_event(username: Optional[str]) -> Optional[Dict[str, Any]]:
     """Return the newest Windows lock, disconnect, or logoff event for this user."""
     return _read_latest_windows_security_event(username, {4634, 4647, 4779, 4800}, False)
