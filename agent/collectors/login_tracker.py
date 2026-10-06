@@ -45,6 +45,7 @@ Requires: session_manager, pywin32 (for Session ID)
 import json
 import logging
 import socket
+import threading
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
@@ -84,6 +85,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("login_tracker")
 SESSION_STATE_PATH = ROOT_DIR / "logs" / "session_event_state.json"
+_login_detection_lock = threading.Lock()
 
 
 def _load_login_state() -> Dict[str, Any]:
@@ -350,7 +352,7 @@ def record_windows_session_notification(
     session_id: Optional[str],
     event_timestamp: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Record a genuine Windows service session logon/unlock notification."""
+    """Use the real Security-log event behind a WTS notification, when available."""
     if event_id not in {"WTS_SESSION_LOGON", "WTS_SESSION_UNLOCK"}:
         return {}
     session_info = get_current_session_info()
@@ -511,7 +513,7 @@ def close_active_sessions(
     return sessions
 
 
-def detect_login() -> Optional[Dict[str, Any]]:
+def _detect_login() -> Optional[Dict[str, Any]]:
     """
     Detect if a new login has occurred.
     
@@ -742,6 +744,12 @@ def detect_login() -> Optional[Dict[str, Any]]:
     )
     logger.debug(f"No login detected - user {current_user} still in session {current_session_id}")
     return None
+
+
+def detect_login() -> Optional[Dict[str, Any]]:
+    """Serialize the periodic and WTS-triggered processing of Windows events."""
+    with _login_detection_lock:
+        return _detect_login()
 
 
 def record_login(session_info: Dict[str, Any]) -> Dict[str, Any]:
