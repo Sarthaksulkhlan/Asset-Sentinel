@@ -364,19 +364,24 @@ def record_windows_session_notification(
             current_session_id,
         )
         return {}
-    timestamp = event_timestamp or datetime.now(timezone.utc).isoformat()
-    record_number = int(datetime.now(timezone.utc).timestamp() * 1_000_000)
-    record_id = f"{event_id.lower()}:{session_info.get('hostname') or socket.gethostname()}:{notified_session_id or current_session_id}:{record_number}"
-    if has_session_event_signature(session_info.get("hostname"), record_id):
+    if event_id == "WTS_SESSION_UNLOCK":
+        actual_event_id = str(session_info.get("latest_unlock_event_id") or "")
+        actual_record_id = session_info.get("latest_unlock_event_record_id")
+    else:
+        actual_event_id = str(session_info.get("windows_event_id") or "")
+        actual_record_id = session_info.get("windows_event_record_id")
+    expected_event = actual_event_id in ({"4801", "4778"} if event_id == "WTS_SESSION_UNLOCK" else {"4624"})
+    if not expected_event or not actual_record_id:
+        logger.info(
+            "WTS session notification deferred until its real Security event is available: event=%s session=%s",
+            event_id,
+            notified_session_id or current_session_id,
+        )
         return {}
-    return record_login({
-        **session_info,
-        "session_id": notified_session_id or current_session_id or session_info.get("session_id"),
-        "login_timestamp": timestamp,
-        "login_source": "windows_session_unlock" if event_id == "WTS_SESSION_UNLOCK" else "windows_session_logon",
-        "windows_event_id": event_id,
-        "windows_event_record_id": record_id,
-    })
+    # The normal detector reads the Windows-generated event timestamp and
+    # record ID. It is shared with the one-second poller and serialized there,
+    # so a WTS notification cannot create a second row for the same event.
+    return detect_login() or {}
 
 
 def _record_lockapp_unlocks_from_history(
